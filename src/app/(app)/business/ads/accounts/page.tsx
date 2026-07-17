@@ -9,6 +9,7 @@ import {
 } from "@/lib/fb-store"
 import { useActivePages } from "@/lib/pages-store"
 import { OwnerCombo } from "@/components/business/OwnerCombo"
+import { useFinanceCards } from "@/lib/cards-store"
 
 // Map Facebook's account_status code → our registration status.
 function fbStatusToLocal(code: number): FBStatus | null {
@@ -288,8 +289,9 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
     name: initial?.name || "", owner: initial?.owner || "", page_name: initial?.page_name || "",
     page_url: initial?.page_url || "", ad_account_id: initial?.ad_account_id || "", token: initial?.token || "",
     platform: initial?.platform || "Facebook", focus: initial?.focus || "Conversions", currency: initial?.currency || "PHP",
-    status: initial?.status || "Active", remarks: initial?.remarks || "",
+    status: initial?.status || "Active", remarks: initial?.remarks || "", card_id: initial?.card_id || "",
   })
+  const { cards } = useFinanceCards()   // Finance → Cards registry (kung saang card naka-register)
   const [err, setErr] = useState("")
   const set = (k: keyof NewFBInput, v: string) => setF(p => ({ ...p, [k]: v }))
   // Token defaults to the shared default token (locked) unless this account uses a custom one.
@@ -353,6 +355,13 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
               {pages.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </FormRow>
+          <FormRow label="Card Used">
+            <select className={INP} value={f.card_id || ""} onChange={e => set("card_id", e.target.value)}>
+              <option value="">— none —</option>
+              {cards.map(c => <option key={c.id} value={c.id}>{c.provider} — {c.name}</option>)}
+            </select>
+            <p className="text-[11px] text-slate-400 mt-1">Saang card naka-register ang ad account na ito (Finance → Cards).</p>
+          </FormRow>
           <FormRow label="Status">
             <select className={INP} value={f.status} onChange={e => set("status", e.target.value)}>
               {FB_STATUSES.map(s => <option key={s}>{s}</option>)}
@@ -371,6 +380,8 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
 }
 
 function ViewScreen({ account, onBack, onEdit }: { account: FBAccount; onBack: () => void; onEdit: () => void }) {
+  const { cards } = useFinanceCards()
+  const card = cards.find(c => c.id === account.card_id)
   const F = ({ l, v }: { l: string; v: string }) => (
     <div className="grid grid-cols-[160px_1fr] gap-3 py-2.5 border-b border-slate-100">
       <span className="text-sm text-slate-500 text-right pr-2">{l}</span><span className="text-sm text-slate-800">{v || "—"}</span>
@@ -384,6 +395,7 @@ function ViewScreen({ account, onBack, onEdit }: { account: FBAccount; onBack: (
         <F l="Name" v={account.name} /><F l="Owner" v={account.owner} /><F l="Platform" v={account.platform} /><F l="Focus" v={account.focus} />
         <F l="Ad Account ID" v={actId(account.ad_account_id)} /><F l="API Token" v={account.token ? "•••••• (set)" : "missing"} />
         <F l="Mapped Page" v={account.page_name} />
+        <F l="Card Used" v={card ? `${card.provider} — ${card.name}` : ""} />
         <F l="Status" v={account.status} /><F l="Remarks" v={account.remarks} />
         <div className="flex gap-2 mt-4">
           <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={onEdit}><Pencil className="w-3.5 h-3.5" /> Edit</Button>

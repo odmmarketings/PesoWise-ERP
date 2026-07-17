@@ -30,6 +30,7 @@ export interface FBAccount {
   currency: string
   status: FBStatus
   remarks: string
+  card_id: string           // Finance CARDS registry — kung saang card naka-register ang ad account
   archived: boolean
   created_at: string
 }
@@ -37,7 +38,7 @@ export interface FBAccount {
 export interface NewFBInput {
   name: string; owner: string; page_name: string; page_url: string
   ad_account_id: string; token: string; platform: string; focus: string; currency: string
-  status?: FBStatus; remarks: string
+  status?: FBStatus; remarks: string; card_id?: string
 }
 
 function uid() { return `fb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` }
@@ -62,6 +63,7 @@ function normalize(r: Partial<FBAccount>): FBAccount {
     currency: r.currency || "PHP",
     status: r.status || "Active",
     remarks: r.remarks || "",
+    card_id: r.card_id || "",
     archived: r.archived ?? false,
     created_at: r.created_at || new Date().toISOString(),
   }

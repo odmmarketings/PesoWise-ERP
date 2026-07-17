@@ -9,7 +9,7 @@ import {
   Activity, Store, PieChart, ShoppingCart, FlaskConical,
   Shield, Calculator, Boxes, BookOpen, ChevronDown, Banknote, Droplet,
   ClipboardList, Factory, Warehouse, Undo2,
-  Megaphone, Link2, BarChart3, Award, Coins
+  Megaphone, Link2, BarChart3, Award, Coins, CreditCard
 } from "lucide-react"
 import type { AppMode, Plan } from "@/lib/types"
 import { useState, useEffect, useMemo } from "react"
@@ -104,6 +104,7 @@ export const businessNav: NavSection[] = [
       { href: "/business/finance/bookkeeping", icon: BookOpen, label: "Bookkeeping" },
       { href: "/business/finance/reimbursement", icon: Banknote, label: "Reimbursement" },
       { href: "/business/finance/utility-expense", icon: Droplet, label: "Utility Expense" },
+      { href: "/business/finance/cards", icon: CreditCard, label: "Cards" },
       { href: "/business/finance/settings", icon: Settings, label: "Settings" },
     ],
   },
