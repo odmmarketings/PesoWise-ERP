@@ -8,6 +8,7 @@ import {
   type FBAccount, type NewFBInput, type FBStatus,
 } from "@/lib/fb-store"
 import { useActivePages } from "@/lib/pages-store"
+import { OwnerCombo, useOwnerOptions } from "@/components/business/OwnerCombo"
 
 // Map Facebook's account_status code → our registration status.
 function fbStatusToLocal(code: number): FBStatus | null {
@@ -103,7 +104,10 @@ export default function AdAccountsPage() {
     return true
   }), [inView, qName, qOwner, fStatus, fPlatform])
 
-  const owners = useMemo(() => Array.from(new Set(pages.map((p: any) => p.owner).filter(Boolean))).sort(), [pages])
+  const existingOwners = useMemo(
+    () => Array.from(new Set([...pages.map((p: any) => p.owner), ...fb.accounts.map(a => a.owner)].filter(Boolean))),
+    [pages, fb.accounts])
+  const owners = useOwnerOptions(existingOwners)
 
   if (screen === "add" || (screen === "edit" && active))
     return <FormScreen mode={screen === "edit" ? "edit" : "add"} initial={screen === "edit" ? active! : undefined} pages={pages.map(p => p.name)} owners={owners} defaultToken={def.token}
@@ -276,28 +280,7 @@ export default function AdAccountsPage() {
   )
 }
 
-// Searchable owner dropdown (Pages & Store owners) that also accepts free text.
-function OwnerCombo({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
-  const [open, setOpen] = useState(false)
-  const [q, setQ] = useState("")
-  const filtered = options.filter(o => o.toLowerCase().includes((open ? q : "").toLowerCase()))
-  return (
-    <div className="relative">
-      <input className={INP} value={open ? q : value} placeholder="Search or type owner…" spellCheck={false}
-        onFocus={() => { setQ(value); setOpen(true) }}
-        onChange={e => { setQ(e.target.value); onChange(e.target.value); setOpen(true) }}
-        onBlur={() => setTimeout(() => setOpen(false), 150)} />
-      {open && filtered.length > 0 && (
-        <div className="absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-auto scrollbar-dark">
-          {filtered.map(o => (
-            <button key={o} type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
-              onMouseDown={() => { onChange(o); setQ(o); setOpen(false) }}>{o}</button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
+// Owner dropdown is the shared OwnerCombo (existing owners + User Management roster).
 
 function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave }: {
   mode: "add" | "edit"; initial?: FBAccount; pages: string[]; owners: string[]; defaultToken: string

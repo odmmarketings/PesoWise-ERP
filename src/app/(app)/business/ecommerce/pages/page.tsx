@@ -7,6 +7,7 @@ import { Search, Eye, Pencil, X, FolderOpen, ChevronDown, Plus, Upload, Settings
 
 import { type PageStore, type PageStatus as Status, type Platform } from "@/lib/pages-data"
 import { usePages } from "@/lib/pages-store"
+import { OwnerCombo, useOwnerOptions } from "@/components/business/OwnerCombo"
 
 const STATUS_COLORS: Record<Status, string> = {
   active: "bg-green-100 text-green-700",
@@ -145,7 +146,7 @@ function ViewScreen({ page, onBack, onEdit }: { page: PageStore; onBack: () => v
   )
 }
 
-function EditScreen({ page, onBack, onSave }: { page: PageStore | null; onBack: () => void; onSave: (p: Partial<PageStore>) => void }) {
+function EditScreen({ page, owners, onBack, onSave }: { page: PageStore | null; owners: string[]; onBack: () => void; onSave: (p: Partial<PageStore>) => void }) {
   const [form, setForm] = useState<Partial<PageStore>>(page || { status: "active", platform: "Facebook Ecom" })
   const [showPancake, setShowPancake] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -215,11 +216,12 @@ function EditScreen({ page, onBack, onSave }: { page: PageStore | null; onBack: 
             placeholder="Description" value={(form as any).description || ""}
             onChange={e => set("description", e.target.value)} />
         </div>
-        {/* Owner */}
+        {/* Owner — dropdown ng existing owners + User Management roster (pwede pa ring mag-type ng bago) */}
         <div className="flex items-center gap-4 px-6 py-4 border-b border-slate-100">
           <label className="text-sm text-slate-600 w-44 flex-shrink-0">Owner <span className="text-red-500">*</span></label>
-          <Input className="flex-1 max-w-xl" placeholder="Owner name" value={(form as any).owner || ""}
-            onChange={e => set("owner", e.target.value)} />
+          <div className="flex-1 max-w-xl">
+            <OwnerCombo value={(form as any).owner || ""} onChange={v => set("owner", v)} options={owners} placeholder="Owner name" />
+          </div>
         </div>
         {/* Status — radio buttons */}
         <div className="flex items-center gap-4 px-6 py-4 border-b border-slate-100">
@@ -333,6 +335,10 @@ export default function PagesStorePage() {
   const [tab, setTab] = useState<"active" | "archives">("active")
   const [searchName, setSearchName] = useState("")
   const [searchOwner, setSearchOwner] = useState("")
+
+  // Owner dropdown options: distinct existing page owners + User Management roster names.
+  const existingOwners = useMemo(() => Array.from(new Set(pages.map(p => p.owner).filter(Boolean))), [pages])
+  const ownerOptions = useOwnerOptions(existingOwners)
   const [filterStatus, setFilterStatus] = useState("All")
   const [filterPlatform, setFilterPlatform] = useState("All")
   const [screen, setScreen] = useState<{ mode: "view" | "edit"; page: PageStore } | { mode: "new" } | null>(null)
@@ -375,10 +381,10 @@ export default function PagesStorePage() {
     return <ViewScreen page={screen.page} onBack={() => setScreen(null)} onEdit={() => setScreen({ mode: "edit", page: screen.page })} />
   }
   if (screen?.mode === "edit") {
-    return <EditScreen page={screen.page} onBack={() => setScreen(null)} onSave={handleSave} />
+    return <EditScreen page={screen.page} owners={ownerOptions} onBack={() => setScreen(null)} onSave={handleSave} />
   }
   if (screen?.mode === "new") {
-    return <EditScreen page={null} onBack={() => setScreen(null)} onSave={handleSave} />
+    return <EditScreen page={null} owners={ownerOptions} onBack={() => setScreen(null)} onSave={handleSave} />
   }
 
   return (
