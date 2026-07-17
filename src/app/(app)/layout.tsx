@@ -50,6 +50,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         try { localStorage.setItem("pesowise_current_user", JSON.stringify({ name: profile.name, email: profile.email })) } catch {}
       }
 
+      // ERP roster gate: kung nasa roster ang account pero DISABLED (hindi pa in-ENABLE ng
+      // admin, o tinanggalan ng access later), palabasin agad — kahit may dati pang session.
+      const { data: member } = await supabase
+        .from("business_users").select("enabled").eq("user_id", session.user.id).maybeSingle()
+      if (member && !member.enabled) {
+        await supabase.auth.signOut()
+        document.cookie = "sb-access-token=; Max-Age=0; path=/"
+        document.cookie = "sb-refresh-token=; Max-Age=0; path=/"
+        router.push("/login")
+        return
+      }
+
       // Refresh the ERP roster/permissions cache from Supabase so accessFor() (Sidebar) and
       // User Management see the latest shared state on every app load, not stale per-browser data.
       syncRosterFromSupabase()
