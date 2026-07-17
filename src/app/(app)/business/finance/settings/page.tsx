@@ -322,6 +322,8 @@ function AccountsTab({ fs }: { fs: FS }) {
   const [editAcct, setEditAcct] = useState<FinanceAccount | null>(null)
   const [bankAcct, setBankAcct] = useState<FinanceAccount | null>(null)
   const [view, setView] = useState<FinanceAccount | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<FinanceAccount | null>(null)
+  const admin = isMotherAccount()   // delete is admin-only (Mother Account); system accounts never deletable
 
   const [perPage, setPerPage] = useState(10)
   const [page, setPage] = useState(1)
@@ -429,6 +431,10 @@ function AccountsTab({ fs }: { fs: FS }) {
                           className={`w-8 h-8 flex items-center justify-center rounded text-white ${a.status === "active" ? "bg-teal-400 hover:bg-teal-500" : "bg-slate-300 hover:bg-slate-400"}`}><Check className="w-4 h-4" /></button>
                         <button onClick={() => fs.toggleAccountVoucher(a.id)} title="With/No Voucher"
                           className="w-8 h-8 flex items-center justify-center rounded bg-slate-200 hover:bg-slate-300 text-slate-600"><FileText className="w-4 h-4" /></button>
+                        {admin && (
+                          <button onClick={() => setConfirmDelete(a)} title="Delete (admin)"
+                            className="w-8 h-8 flex items-center justify-center rounded border border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                        )}
                       </div>
                     )}
                   </td>
@@ -450,6 +456,19 @@ function AccountsTab({ fs }: { fs: FS }) {
           </div>
         )}
       </div>
+
+      {confirmDelete && (
+        <Modal title="Delete Account" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
+          <div className="px-6 py-5 text-sm text-slate-700">
+            Sigurado ka bang buburahin ang account na <span className="font-semibold">{confirmDelete.name}</span>?
+            <p className="text-xs text-slate-500 mt-2">Mawawala ang tab nito sa Book Keeping at sa Account dropdown ng lahat ng users. Hindi nito babaguhin ang mga dating Book Keeping entries na naka-post dito.</p>
+          </div>
+          <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={() => { fs.removeAccount(confirmDelete.id); setConfirmDelete(null) }}>Delete</Button>
+          </div>
+        </Modal>
+      )}
 
       {(add || editAcct) && (
         <AccountModal account={editAcct} banks={fs.activeBanks} onClose={() => { setAdd(false); setEditAcct(null) }}

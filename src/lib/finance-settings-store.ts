@@ -149,6 +149,9 @@ export function useFinanceSettings() {
   // so deleting/adding a bank reflows those automatically. Accounts assigned to the deleted
   // bank keep their bank_id but resolve to no name — reassign them in the Accounts tab.
   const removeBank = (id: string) => update(s => ({ ...s, banks: s.banks.filter(b => b.id !== id) }))
+  // Admin-only sa UI. The 3 hardcoded system accounts (!Cash Advance / !Reimbursement /
+  // !Utility Expense) can NEVER be deleted — the approval workflows post through them.
+  const removeAccount = (id: string) => update(s => ({ ...s, accounts: s.accounts.filter(a => a.id !== id || a.hardcoded) }))
 
   // ── Types of Expense ──
   const addType = (t: Omit<FinanceTypeOfExpense, "id" | "status">) => update(s => ({ ...s, types: [...s.types, { ...t, id: uid("toe"), status: "active" }] }))
@@ -188,6 +191,6 @@ export function useFinanceSettings() {
     addBank, updateBank, toggleBank, removeBank,
     addDepartment, updateDepartment, toggleDepartment, removeDepartment,
     addType, updateType, toggleType,
-    addAccount, updateAccount, toggleAccount, toggleAccountVoucher,
+    addAccount, updateAccount, toggleAccount, toggleAccountVoucher, removeAccount,
   }
 }
