@@ -3,7 +3,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
-  Plus, X, Check, Eye, Power, Menu, Search, FileText, Settings as SettingsIcon, Trash2, AlertTriangle,
+  Plus, X, Check, Eye, Power, Menu, Search, FileText, Settings as SettingsIcon, Trash2, AlertTriangle, Pencil,
 } from "lucide-react"
 import {
   useFinanceSettings, MEMBERS,
@@ -46,10 +46,10 @@ function Modal({ title, icon: Icon, onClose, children, width = "max-w-lg" }: {
 }
 
 // Generic name-only add modal (Banks, Departments)
-function NameModal({ title, label, onClose, onSave }: { title: string; label: string; onClose: () => void; onSave: (name: string) => void }) {
-  const [name, setName] = useState("")
+function NameModal({ title, label, initial, onClose, onSave }: { title: string; label: string; initial?: string; onClose: () => void; onSave: (name: string) => void }) {
+  const [name, setName] = useState(initial || "")
   return (
-    <Modal title={title} icon={Plus} onClose={onClose}>
+    <Modal title={title} icon={initial ? Pencil : Plus} onClose={onClose}>
       <div className="px-6 py-5">
         <label className="text-sm text-slate-600">{label}<span className="text-red-500">*</span></label>
         <Input className="mt-1.5" value={name} autoFocus placeholder={`Enter ${label.toLowerCase()}`} onChange={e => setName(e.target.value)} />
@@ -126,6 +126,7 @@ function GeneralTab({ fs }: { fs: FS }) {
 function BanksTab({ fs }: { fs: FS }) {
   const [add, setAdd] = useState(false)
   const [view, setView] = useState<string | null>(null)
+  const [edit, setEdit] = useState<{ id: string; name: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null)
   const bank = fs.banks.find(b => b.id === view)
   const admin = isMotherAccount()   // delete is admin-only (Mother Account)
@@ -144,12 +145,14 @@ function BanksTab({ fs }: { fs: FS }) {
             <td className="px-3 py-2.5 text-slate-400">{i + 1}</td>
             <td className="px-3 py-2.5 font-medium text-slate-800">{b.name}</td>
             <td className="px-3 py-2.5"><StatusPill active={b.status === "active"} /></td>
-            <td className="px-3 py-2.5"><RowActions onView={() => setView(b.id)} active={b.status === "active"} onToggle={() => fs.toggleBank(b.id)}
+            <td className="px-3 py-2.5"><RowActions onView={() => setView(b.id)} onEdit={() => setEdit({ id: b.id, name: b.name })}
+              active={b.status === "active"} onToggle={() => fs.toggleBank(b.id)}
               onDelete={admin ? () => setConfirmDelete({ id: b.id, name: b.name }) : undefined} /></td>
           </tr>
         ))}
       />
       {add && <NameModal title="Add Bank" label="Bank Name" onClose={() => setAdd(false)} onSave={n => { fs.addBank(n); setAdd(false) }} />}
+      {edit && <NameModal title="Edit Bank" label="Bank Name" initial={edit.name} onClose={() => setEdit(null)} onSave={n => { fs.updateBank(edit.id, n); setEdit(null) }} />}
       {confirmDelete && (
         <Modal title="Delete Bank" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
           <div className="px-6 py-5 text-sm text-slate-700">
@@ -624,10 +627,11 @@ function IconBtn({ children, onClick, title, disabled, danger }: { children: Rea
     </button>
   )
 }
-function RowActions({ onView, active, onToggle, onDelete }: { onView: () => void; active: boolean; onToggle: () => void; onDelete?: () => void }) {
+function RowActions({ onView, onEdit, active, onToggle, onDelete }: { onView: () => void; onEdit?: () => void; active: boolean; onToggle: () => void; onDelete?: () => void }) {
   return (
     <div className="flex items-center gap-1">
       <IconBtn title="View" onClick={onView}><Eye className="w-4 h-4" /></IconBtn>
+      {onEdit && <IconBtn title="Edit" onClick={onEdit}><Pencil className="w-4 h-4" /></IconBtn>}
       <IconBtn title={active ? "Deactivate" : "Activate"} onClick={onToggle} danger={active}><Power className="w-4 h-4" /></IconBtn>
       {onDelete && <IconBtn title="Delete (admin)" onClick={onDelete} danger><Trash2 className="w-4 h-4" /></IconBtn>}
     </div>
