@@ -64,6 +64,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, account_status: j.account_status, name: j.name, currency: j.currency })
     }
 
+    // ── Funding source (payment method) — display_string tulad ng "VISA *9850" (FB Billing) ─
+    if (sp.get("funding")) {
+      if (!accountId) return NextResponse.json({ success: false, error: "Missing account_id" }, { status: 400 })
+      const j = await fbGet(`${accountId}?fields=name,funding_source_details&access_token=${enc}`)
+      const d = j.funding_source_details || {}
+      const display = String(d.display_string || "")
+      const last4 = (display.match(/(\d{4})\s*$/) || [])[1] || ""
+      return NextResponse.json({ success: true, display, last4, type: d.type ?? null })
+    }
+
     // ── Ad preview: rendered ad iframe (video/creative/caption/headline) per placement format ─
     if (sp.get("preview")) {
       const adId = sp.get("ad_id") || ""

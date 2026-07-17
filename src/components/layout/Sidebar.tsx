@@ -105,6 +105,7 @@ export const businessNav: NavSection[] = [
       { href: "/business/finance/reimbursement", icon: Banknote, label: "Reimbursement" },
       { href: "/business/finance/utility-expense", icon: Droplet, label: "Utility Expense" },
       { href: "/business/finance/cards", icon: CreditCard, label: "Cards" },
+      { href: "/business/finance/fb-billing", icon: Receipt, label: "FB Billing" },
       { href: "/business/finance/settings", icon: Settings, label: "Settings" },
     ],
   },
