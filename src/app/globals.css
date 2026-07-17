@@ -1,0 +1,185 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --primary: #16a34a;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f8fafc;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --ring: #16a34a;
+  --radius: 0.5rem;
+  --sidebar-bg: #0f172a;
+  --sidebar-fg: #f8fafc;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --card: #1e293b;
+  --card-foreground: #f8fafc;
+  --secondary: #1e293b;
+  --secondary-foreground: #f8fafc;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --border: #334155;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.scrollbar-thin::-webkit-scrollbar { width: 4px; height: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.scrollbar-dark { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+.scrollbar-dark::-webkit-scrollbar { width: 4px; }
+.scrollbar-dark::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-dark::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+.scrollbar-dark::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* ─── Download Sales spinner ─── */
+@keyframes spin-dot {
+  0%   { opacity: 0.15; }
+  100% { opacity: 1; }
+}
+
+/* ─── Global page title ─── */
+.page-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+/* ─── Global interactive element behavior ─── */
+
+/* Pointer cursor on all clickable elements */
+a,
+button,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+[role="option"],
+[role="checkbox"],
+[role="radio"],
+[role="switch"],
+select,
+label[for],
+summary,
+input[type="checkbox"],
+input[type="radio"],
+input[type="file"],
+input[type="submit"],
+input[type="reset"] {
+  cursor: pointer;
+}
+
+/* Disabled elements — override cursor and mute interactions */
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+[aria-disabled="true"],
+.cursor-not-allowed {
+  cursor: not-allowed !important;
+  pointer-events: auto;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+/* ─── Links ─── */
+a:not([class*="bg-"]):not([class*="btn"]):not([class*="rounded"]) {
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+a:not([class*="bg-"]):not([class*="btn"]):not([class*="rounded"]):hover {
+  opacity: 0.8;
+}
+
+/* ─── Buttons — generic fallback for unstyled buttons ─── */
+button:not(:disabled) {
+  transition: filter 0.15s ease, opacity 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* ─── Clickable table rows ─── */
+tr[onClick],
+tr.clickable {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+tr[onClick]:hover,
+tr.clickable:hover {
+  background-color: rgba(0, 0, 0, 0.03);
+}
+
+/* ─── Clickable cards — any div/section with onClick ─── */
+div[onClick],
+section[onClick] {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+/* ─── Select elements ─── */
+select {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+select:hover:not(:disabled) {
+  border-color: #94a3b8;
+}
+select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.25);
+}
+
+/* ─── Input focus rings (consistent across the app) ─── */
+input:focus,
+textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
+  border-color: #16a34a !important;
+}
+
+/* ─── Icon buttons — small square/round icon-only buttons ─── */
+.icon-btn {
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  border-radius: 0.375rem;
+  padding: 0.375rem;
+}
+.icon-btn:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+/* ─── Sidebar nav items already handled via Tailwind hover: classes ─── */
+
+/* ─── Smooth transitions on all interactive Tailwind-styled elements ─── */
+.transition-colors { transition-duration: 150ms !important; }
+.transition-shadow { transition-duration: 150ms !important; }
+.transition-opacity { transition-duration: 150ms !important; }
+.transition-all    { transition-duration: 150ms !important; }
