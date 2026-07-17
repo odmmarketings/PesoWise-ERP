@@ -142,6 +142,9 @@ export function useFinanceSettings() {
   const addDepartment = (name: string) => update(s => ({ ...s, departments: [...s.departments, { id: uid("dept"), name, status: "active" }] }))
   const updateDepartment = (id: string, name: string) => update(s => ({ ...s, departments: s.departments.map(d => d.id === id ? { ...d, name } : d) }))
   const toggleDepartment = (id: string) => update(s => ({ ...s, departments: s.departments.map(d => d.id === id ? { ...d, status: d.status === "active" ? "inactive" : "active" } : d) }))
+  // Admin-only sa UI (Mother Account). Existing Book Keeping entries keep the department
+  // as plain text, so deleting here never rewrites history.
+  const removeDepartment = (id: string) => update(s => ({ ...s, departments: s.departments.filter(d => d.id !== id) }))
 
   // ── Types of Expense ──
   const addType = (t: Omit<FinanceTypeOfExpense, "id" | "status">) => update(s => ({ ...s, types: [...s.types, { ...t, id: uid("toe"), status: "active" }] }))
@@ -179,7 +182,7 @@ export function useFinanceSettings() {
     bankName: (id: string) => (s?.banks ?? []).find(b => b.id === id)?.name ?? "",
     save, setGeneral,
     addBank, updateBank, toggleBank,
-    addDepartment, updateDepartment, toggleDepartment,
+    addDepartment, updateDepartment, toggleDepartment, removeDepartment,
     addType, updateType, toggleType,
     addAccount, updateAccount, toggleAccount, toggleAccountVoucher,
   }

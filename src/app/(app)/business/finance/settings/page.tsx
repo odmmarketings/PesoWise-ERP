@@ -3,12 +3,13 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
-  Plus, X, Check, Eye, Power, Menu, Search, FileText, Settings as SettingsIcon,
+  Plus, X, Check, Eye, Power, Menu, Search, FileText, Settings as SettingsIcon, Trash2, AlertTriangle,
 } from "lucide-react"
 import {
   useFinanceSettings, MEMBERS,
   type FinanceAccount, type FinanceTypeOfExpense, type ExpenseType,
 } from "@/lib/finance-settings-store"
+import { isMotherAccount } from "@/lib/users-store"
 
 const TABS = ["General", "Accounts", "Banks", "Department", "Type of Expense"] as const
 type Tab = typeof TABS[number]
@@ -161,7 +162,9 @@ function BanksTab({ fs }: { fs: FS }) {
 function DepartmentsTab({ fs }: { fs: FS }) {
   const [add, setAdd] = useState(false)
   const [view, setView] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null)
   const dept = fs.departments.find(d => d.id === view)
+  const admin = isMotherAccount()   // delete is admin-only (Mother Account)
   return (
     <div>
       <div className="flex justify-between items-center mb-3">
@@ -175,11 +178,24 @@ function DepartmentsTab({ fs }: { fs: FS }) {
             <td className="px-3 py-2.5 text-slate-400">{i + 1}</td>
             <td className="px-3 py-2.5 font-medium text-slate-800">{d.name}</td>
             <td className="px-3 py-2.5"><StatusPill active={d.status === "active"} /></td>
-            <td className="px-3 py-2.5"><RowActions onView={() => setView(d.id)} active={d.status === "active"} onToggle={() => fs.toggleDepartment(d.id)} /></td>
+            <td className="px-3 py-2.5"><RowActions onView={() => setView(d.id)} active={d.status === "active"} onToggle={() => fs.toggleDepartment(d.id)}
+              onDelete={admin ? () => setConfirmDelete({ id: d.id, name: d.name }) : undefined} /></td>
           </tr>
         ))}
       />
       {add && <NameModal title="Add Department" label="Department Name" onClose={() => setAdd(false)} onSave={n => { fs.addDepartment(n); setAdd(false) }} />}
+      {confirmDelete && (
+        <Modal title="Delete Department" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
+          <div className="px-6 py-5 text-sm text-slate-700">
+            Sigurado ka bang buburahin ang <span className="font-semibold">{confirmDelete.name}</span>?
+            <p className="text-xs text-slate-500 mt-2">Mawawala ito sa mga dropdown para sa lahat ng users. Hindi nito babaguhin ang mga dating Book Keeping entries na gumamit nito.</p>
+          </div>
+          <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={() => { fs.removeDepartment(confirmDelete.id); setConfirmDelete(null) }}>Delete</Button>
+          </div>
+        </Modal>
+      )}
       {dept && (
         <Modal title="View Department" icon={Eye} onClose={() => setView(null)}>
           <div className="px-6 py-5 space-y-2 text-sm">
@@ -566,11 +582,12 @@ function IconBtn({ children, onClick, title, disabled, danger }: { children: Rea
     </button>
   )
 }
-function RowActions({ onView, active, onToggle }: { onView: () => void; active: boolean; onToggle: () => void }) {
+function RowActions({ onView, active, onToggle, onDelete }: { onView: () => void; active: boolean; onToggle: () => void; onDelete?: () => void }) {
   return (
     <div className="flex items-center gap-1">
       <IconBtn title="View" onClick={onView}><Eye className="w-4 h-4" /></IconBtn>
       <IconBtn title={active ? "Deactivate" : "Activate"} onClick={onToggle} danger={active}><Power className="w-4 h-4" /></IconBtn>
+      {onDelete && <IconBtn title="Delete (admin)" onClick={onDelete} danger><Trash2 className="w-4 h-4" /></IconBtn>}
     </div>
   )
 }

@@ -183,6 +183,24 @@ export function accessFor(navHrefs: string[]): { full: boolean; allowed: Set<str
   } catch { return { full: true, allowed: new Set() } }
 }
 
+// True ONLY when the logged-in user matches a roster row flagged as the Mother Account —
+// used to gate admin-only actions (e.g. deleting Finance Settings reference data).
+// Stricter than accessFor(): an unknown/unmatched user is NOT treated as admin here.
+export function isMotherAccount(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    const me = currentUserName().toLowerCase()
+    let email = ""
+    try { email = String(JSON.parse(localStorage.getItem("pesowise_current_user") || "{}").email || "").toLowerCase() } catch {}
+    const u = readCache().find(x =>
+      (x.username && x.username.toLowerCase() === me) ||
+      (x.full_name && x.full_name.toLowerCase() === me) ||
+      (x.email && email && x.email.toLowerCase() === email)
+    )
+    return !!u?.mother
+  } catch { return false }
+}
+
 // ── Company logo (shown on the login page) — still local-only for now; not part of the
 // shared-roster scope. Can move to Supabase Storage in a later pass if needed. ──
 export function getCompanyLogo(): string {
