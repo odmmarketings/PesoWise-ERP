@@ -49,14 +49,14 @@ export interface FinanceSettings {
 }
 
 // Members available to assign to accounts (no user directory yet — seed a list).
-export const MEMBERS = ["Larry Lobitana", "Admin User", "Staff 1", "Staff 2", "IT Intern", "Warehouse Staff"]
+export const MEMBERS = ["Larry Lobitana", "Admin User", "Staff 1", "Staff 2", "Warehouse Staff"]
 
 const KEY = "pesowise_finance_settings"
 const uid = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
 
 function seed(): FinanceSettings {
   const banks: FinanceBank[] = ["CHINA BANK", "BPI", "GCASH", "PETTY CASH", "GOTYME"].map((n, i) => ({ id: `bank-${i + 1}`, name: n, status: "active" }))
-  const departments: FinanceDepartment[] = ["DEPARTMENT 1", "IT Department", "Warehouse Department", "Marketing"].map((n, i) => ({ id: `dept-${i + 1}`, name: n, status: "active" }))
+  const departments: FinanceDepartment[] = ["DEPARTMENT 1", "Warehouse Department", "Marketing"].map((n, i) => ({ id: `dept-${i + 1}`, name: n, status: "active" }))
   const types: FinanceTypeOfExpense[] = [
     { id: "toe-1", name: "Expense Example 1", opex: true, type: "Debit", status: "active" },
     { id: "toe-2", name: "Utilities", opex: true, type: "Debit", status: "active" },
@@ -78,7 +78,6 @@ function seed(): FinanceSettings {
     mk("!Reimbursement", true, "bank-1"),
     mk("!Utility Expense", true, "bank-1"),
     mk("For Test", false, "bank-2"),
-    mk("IT Interns", false, "bank-2"),
     mk("Warehouse Department", false, "bank-1"),
   ]
   return { general: { hide_shared_expense: false, hide_type_request: false }, banks, departments, types, accounts }

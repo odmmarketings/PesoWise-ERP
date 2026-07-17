@@ -10,7 +10,7 @@ import { PieChart, Pie, Cell, Tooltip as RTooltip, Legend, ResponsiveContainer }
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import * as XLSX from "xlsx-js-style"
 import {
-  useBookkeeping, SEED_CATEGORIES, fmtAmount, exportTxnsCSV, downloadCSV,
+  useBookkeeping, fmtAmount, exportTxnsCSV, downloadCSV,
   UPLOAD_COLUMNS, splitAmount, type BookTxn, type NewTxnInput,
 } from "@/lib/bookkeeping-store"
 import {
@@ -70,6 +70,24 @@ function AddTransactionModal({ accounts, departments, types, banks, onClose, onS
   const selectedAccount = accounts.find(a => a.name === f.account)
   const { debit, credit } = splitAmount(f.expense_type, Number(f.amount) || 0)
 
+  // Category (LHIKE): picks the posting side, then filters the Type of Expense list.
+  const CATEGORY_OPTIONS: { label: string; type: ExpenseType }[] = [
+    { label: "Expense - Debit", type: "Debit" },
+    { label: "Income - Credit", type: "Credit" },
+    { label: "Others - Not Debit/Credit", type: "Not Applicable" },
+  ]
+  const categoryType = CATEGORY_OPTIONS.find(c => c.label === f.category)?.type
+  const filteredTypes = categoryType ? types.filter(t => t.type === categoryType) : types
+
+  function pickCategory(label: string) {
+    const c = CATEGORY_OPTIONS.find(x => x.label === label)
+    // Reset the Type of Expense when it no longer matches the chosen category.
+    setF(p => {
+      const keep = c && types.find(t => t.name === p.type_of_expense)?.type === c.type
+      return { ...p, category: label, type_of_expense: keep ? p.type_of_expense : "", expense_type: (c?.type ?? "Debit") as ExpenseType }
+    })
+    setErrors([])
+  }
   function pickType(name: string) {
     const t = types.find(x => x.name === name)
     setF(p => ({ ...p, type_of_expense: name, expense_type: (t?.type ?? "Debit") as ExpenseType }))
@@ -82,6 +100,7 @@ function AddTransactionModal({ accounts, departments, types, banks, onClose, onS
     if (!f.posted_date) m.push("Posted Date")
     if (!f.transaction.trim()) m.push("Transaction")
     if (!f.department) m.push("Department")
+    if (!f.category) m.push("Category")
     if (!f.type_of_expense) m.push("Type of Expense")
     if (!(Number(f.amount) > 0)) m.push("Amount")
     if (!f.bank) m.push("Bank")
@@ -122,14 +141,16 @@ function AddTransactionModal({ accounts, departments, types, banks, onClose, onS
             {departments.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}
           </select>
         </FormRow>
-        <FormRow label="Category">
-          <input list="bk-categories" className={SEL} value={f.category} placeholder="Select or type a category" onChange={e => set("category", e.target.value)} />
-          <datalist id="bk-categories">{SEED_CATEGORIES.map(c => <option key={c} value={c} />)}</datalist>
+        <FormRow label="Category" required>
+          <select className={SEL} value={f.category} onChange={e => pickCategory(e.target.value)}>
+            <option value="">-- SELECT TYPE --</option>
+            {CATEGORY_OPTIONS.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}
+          </select>
         </FormRow>
         <FormRow label="Type of Expense" required>
           <select className={SEL} value={f.type_of_expense} onChange={e => pickType(e.target.value)}>
-            <option value="">-- SELECT TYPE OF EXPENSE --</option>
-            {types.map(t => <option key={t.id} value={t.name}>{t.name} ({t.type})</option>)}
+            <option value="">-- SELECT TYPE --</option>
+            {filteredTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
           </select>
         </FormRow>
         <FormRow label="Amount" required>
