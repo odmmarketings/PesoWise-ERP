@@ -7,7 +7,7 @@ import { Search, Eye, Pencil, X, FolderOpen, ChevronDown, Plus, Upload, Settings
 
 import { type PageStore, type PageStatus as Status, type Platform } from "@/lib/pages-data"
 import { usePages } from "@/lib/pages-store"
-import { OwnerCombo, useOwnerOptions } from "@/components/business/OwnerCombo"
+import { OwnerCombo } from "@/components/business/OwnerCombo"
 
 const STATUS_COLORS: Record<Status, string> = {
   active: "bg-green-100 text-green-700",
@@ -336,9 +336,8 @@ export default function PagesStorePage() {
   const [searchName, setSearchName] = useState("")
   const [searchOwner, setSearchOwner] = useState("")
 
-  // Owner dropdown options: distinct existing page owners + User Management roster names.
-  const existingOwners = useMemo(() => Array.from(new Set(pages.map(p => p.owner).filter(Boolean))), [pages])
-  const ownerOptions = useOwnerOptions(existingOwners)
+  // Owner dropdown options: distinct EXISTING page owners only (not the user roster).
+  const ownerOptions = useMemo(() => Array.from(new Set(pages.map(p => p.owner).filter(Boolean))).sort(), [pages])
   const [filterStatus, setFilterStatus] = useState("All")
   const [filterPlatform, setFilterPlatform] = useState("All")
   const [screen, setScreen] = useState<{ mode: "view" | "edit"; page: PageStore } | { mode: "new" } | null>(null)

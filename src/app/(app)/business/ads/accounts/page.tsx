@@ -8,7 +8,7 @@ import {
   type FBAccount, type NewFBInput, type FBStatus,
 } from "@/lib/fb-store"
 import { useActivePages } from "@/lib/pages-store"
-import { OwnerCombo, useOwnerOptions } from "@/components/business/OwnerCombo"
+import { OwnerCombo } from "@/components/business/OwnerCombo"
 
 // Map Facebook's account_status code → our registration status.
 function fbStatusToLocal(code: number): FBStatus | null {
@@ -104,10 +104,8 @@ export default function AdAccountsPage() {
     return true
   }), [inView, qName, qOwner, fStatus, fPlatform])
 
-  const existingOwners = useMemo(
-    () => Array.from(new Set([...pages.map((p: any) => p.owner), ...fb.accounts.map(a => a.owner)].filter(Boolean))),
-    [pages, fb.accounts])
-  const owners = useOwnerOptions(existingOwners)
+  // Owner options = Pages & Store owners only (people who actually registered pages).
+  const owners = useMemo(() => Array.from(new Set(pages.map((p: any) => p.owner).filter(Boolean))).sort(), [pages])
 
   if (screen === "add" || (screen === "edit" && active))
     return <FormScreen mode={screen === "edit" ? "edit" : "add"} initial={screen === "edit" ? active! : undefined} pages={pages.map(p => p.name)} owners={owners} defaultToken={def.token}

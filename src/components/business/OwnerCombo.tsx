@@ -1,23 +1,11 @@
 "use client"
-import { useMemo, useState } from "react"
-import { useErpUsers } from "@/lib/users-store"
+import { useState } from "react"
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Shared searchable "Owner" dropdown (Pages & Store, Ad Accounts, …): shows the
-// existing owner values plus the User Management roster names, and still accepts
-// free text for a brand-new owner.
+// Shared searchable "Owner" dropdown (Pages & Store, Ad Accounts): lists the
+// EXISTING page/store owners only (people who actually registered pages — not the
+// whole User Management roster), and still accepts free text for a new owner.
 // ──────────────────────────────────────────────────────────────────────────────
-
-// Merge distinct existing owner values with the ERP roster full names.
-export function useOwnerOptions(existing: string[]) {
-  const { users } = useErpUsers()
-  return useMemo(() => {
-    const set = new Set<string>()
-    for (const u of users) if (u.full_name && !u.deleteAt) set.add(u.full_name)
-    for (const o of existing) if (o) set.add(o)
-    return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [users, existing])
-}
 
 const DEFAULT_INP = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
 
