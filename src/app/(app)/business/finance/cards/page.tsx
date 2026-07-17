@@ -60,7 +60,7 @@ function Modal({ title, icon: Icon, onClose, children, width = "max-w-lg" }: {
   )
 }
 
-const EMPTY: NewCardInput = { name: "", account_number: "", qr_data: "", expiry: "", cvv: "", provider: "", remarks: "" }
+const EMPTY: NewCardInput = { name: "", account_number: "", card_number: "", qr_data: "", expiry: "", cvv: "", provider: "", remarks: "" }
 
 function CardFormModal({ initial, onClose, onSave }: {
   initial?: FinanceCard; onClose: () => void; onSave: (input: NewCardInput) => void
@@ -94,8 +94,12 @@ function CardFormModal({ initial, onClose, onSave }: {
           <Input className="mt-1" value={f.name} placeholder="Pangalan sa card/wallet" onChange={e => set("name", e.target.value)} />
         </div>
         <div>
+          <label className="text-sm text-slate-600">Card Number</label>
+          <Input className="mt-1" value={f.card_number} placeholder="16-digit number sa card" onChange={e => set("card_number", e.target.value)} />
+        </div>
+        <div>
           <label className="text-sm text-slate-600">Account Number <span className="text-red-500">*</span></label>
-          <Input className="mt-1" value={f.account_number} placeholder="Card / account number" onChange={e => set("account_number", e.target.value)} />
+          <Input className="mt-1" value={f.account_number} placeholder="Wallet / bank account number" onChange={e => set("account_number", e.target.value)} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -184,7 +188,12 @@ export default function FinanceCardsPage() {
                     </div>
                   </div>
 
-                  <p className="mt-5 text-lg font-semibold tracking-widest tabular-nums">{shown ? c.account_number : maskCardNumber(c.account_number)}</p>
+                  <p className="mt-5 text-lg font-semibold tracking-widest tabular-nums">
+                    {(() => { const big = c.card_number || c.account_number; return shown ? big : maskCardNumber(big) })()}
+                  </p>
+                  <p className="text-[11px] opacity-75 tabular-nums mt-0.5">
+                    Acct #: {shown ? c.account_number : maskCardNumber(c.account_number)}
+                  </p>
                   <div className="mt-3 flex items-end justify-between gap-2">
                     <div>
                       <p className="text-[10px] uppercase tracking-wider opacity-70">Account Name</p>

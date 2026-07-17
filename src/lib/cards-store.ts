@@ -16,7 +16,8 @@ export const CARD_PROVIDERS = [
 export interface FinanceCard {
   id: string
   name: string              // Account Name
-  account_number: string
+  account_number: string    // wallet/bank account number
+  card_number: string       // 16-digit number sa mismong card
   qr_data: string           // uploaded QR image (data URL) or ""
   expiry: string            // MM/YY
   cvv: string
@@ -33,6 +34,7 @@ function normalize(r: Partial<FinanceCard>): FinanceCard {
     id: r.id || uid(),
     name: r.name || "",
     account_number: r.account_number || "",
+    card_number: r.card_number || "",
     qr_data: r.qr_data || "",
     expiry: r.expiry || "",
     cvv: r.cvv || "",
