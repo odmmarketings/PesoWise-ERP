@@ -54,10 +54,10 @@ function Modal({ title, icon: Icon, onClose, children, width = "max-w-2xl" }: {
   )
 }
 
-// ── Add Transaction ───────────────────────────────────────────────────────────
-function AddTransactionModal({ accounts, departments, types, banks, onClose, onSave }: {
+// ── Add Transaction — full-page screen (LHIKE reference) ─────────────────────
+function AddTransactionScreen({ accounts, departments, types, banks, onBack, onSave }: {
   accounts: FinanceAccount[]; departments: { name: string }[]; types: FinanceTypeOfExpense[]; banks: { name: string }[]
-  onClose: () => void; onSave: (t: NewTxnInput) => void
+  onBack: () => void; onSave: (t: NewTxnInput) => void
 }) {
   const today = new Date().toISOString().slice(0, 10)
   const [f, setF] = useState<NewTxnInput>({
@@ -114,14 +114,23 @@ function AddTransactionModal({ accounts, departments, types, banks, onClose, onS
   }
 
   return (
-    <Modal title="Add Transaction" icon={Plus} onClose={onClose}>
-      <div className="overflow-auto px-6 py-4">
+    <div className="space-y-3">
+      <span className="text-sm text-slate-500 font-medium">Book Keeping / Add Transaction</span>
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
+          <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Settings className="w-5 h-5" /> ADD TRANSACTION</h1>
+          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors">
+            <ChevronLeft className="w-4 h-4" /> Back
+          </button>
+        </div>
+
         {errors.length > 0 && (
-          <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+          <div className="mb-3 max-w-3xl p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
             <p className="font-medium mb-1">Please fill in required fields:</p>
             <ul className="list-disc pl-4 space-y-0.5">{errors.map(e => <li key={e}>{e}</li>)}</ul>
           </div>
         )}
+        <div className="max-w-3xl">
 
         <FormRow label="Account" required>
           <select className={SEL} value={f.account} onChange={e => set("account", e.target.value)}>
@@ -176,12 +185,14 @@ function AddTransactionModal({ accounts, departments, types, banks, onClose, onS
             className="block w-full text-sm text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-100 file:text-slate-700 file:text-sm hover:file:bg-slate-200" />
           {f.receipt_name && <p className="text-xs text-slate-500 mt-1">Attached: {f.receipt_name}</p>}
         </FormRow>
+        </div>
+
+        <div className="flex items-center gap-3 pt-5 mt-2 border-t border-slate-100 max-w-3xl">
+          <Button onClick={submit}>Submit</Button>
+          <Button variant="outline" onClick={onBack}>Cancel</Button>
+        </div>
       </div>
-      <div className="flex items-center gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50">
-        <Button onClick={submit}>Submit</Button>
-        <Button variant="outline" onClick={onClose}>Cancel</Button>
-      </div>
-    </Modal>
+    </div>
   )
 }
 
@@ -408,6 +419,11 @@ function SummaryScreen({ bk, fs, onBack }: { bk: BKHook; fs: FSHook; onBack: () 
   const totalFund = groups.reduce((s, g) => s + g.balance, 0)
   const pieData = groups.map(g => ({ name: g.name, value: Math.abs(g.balance) })).filter(d => d.value > 0)
 
+  // Add Transaction opens as a full-page screen (LHIKE reference).
+  if (showAdd) return <AddTransactionScreen accounts={fs.activeAccounts} departments={fs.activeDepartments} types={fs.activeTypes} banks={fs.activeBanks}
+    onBack={() => setShowAdd(false)}
+    onSave={async (input) => { await bk.addTxn(input); setShowAdd(false); flash("Transaction added successfully.") }} />
+
   return (
     <div className="space-y-3">
       {toast && <div className="fixed top-5 right-5 z-50 bg-emerald-500 text-white rounded-xl shadow-2xl px-4 py-3 text-sm flex items-center gap-2"><Check className="w-4 h-4" /> {toast}</div>}
@@ -476,11 +492,6 @@ function SummaryScreen({ bk, fs, onBack }: { bk: BKHook; fs: FSHook; onBack: () 
         </div>
       </div>
 
-      {showAdd && (
-        <AddTransactionModal accounts={fs.activeAccounts} departments={fs.activeDepartments} types={fs.activeTypes} banks={fs.activeBanks}
-          onClose={() => setShowAdd(false)}
-          onSave={async (input) => { await bk.addTxn(input); setShowAdd(false); flash("Transaction added successfully.") }} />
-      )}
     </div>
   )
 }
@@ -684,6 +695,10 @@ export default function BookkeepingPage() {
   if (showUpload) return <UploadScreen onBack={() => setShowUpload(false)}
     onImport={async rows => { const n = await bk.importTxns(rows); if (n) flash(`${n} transaction(s) uploaded.`); return n }} />
 
+  // Add Transaction opens as a full-page screen (LHIKE reference).
+  if (showAdd) return <AddTransactionScreen accounts={fs.activeAccounts} departments={fs.activeDepartments} types={fs.activeTypes} banks={fs.activeBanks}
+    onBack={() => setShowAdd(false)} onSave={handleAdd} />
+
   // Viewing a transaction opens a full-page View Transaction screen (form + history), per reference.
   if (viewTxn) {
     const current = bk.txns.find(t => t.id === viewTxn.id) || viewTxn
@@ -818,7 +833,6 @@ export default function BookkeepingPage() {
         </div>
       </div>
 
-      {showAdd && <AddTransactionModal accounts={fs.activeAccounts} departments={fs.activeDepartments} types={fs.activeTypes} banks={fs.activeBanks} onClose={() => setShowAdd(false)} onSave={handleAdd} />}
     </div>
   )
 }
