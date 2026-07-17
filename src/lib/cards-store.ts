@@ -16,6 +16,7 @@ export const CARD_PROVIDERS = [
 export interface FinanceCard {
   id: string
   name: string              // Account Name
+  username: string          // login username ng wallet/bank app
   account_number: string    // wallet/bank account number
   card_number: string       // 16-digit number sa mismong card
   qr_data: string           // uploaded QR image (data URL) or ""
@@ -33,6 +34,7 @@ function normalize(r: Partial<FinanceCard>): FinanceCard {
   return {
     id: r.id || uid(),
     name: r.name || "",
+    username: r.username || "",
     account_number: r.account_number || "",
     card_number: r.card_number || "",
     qr_data: r.qr_data || "",

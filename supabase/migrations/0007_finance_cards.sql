@@ -20,6 +20,7 @@ create index if not exists finance_cards_business_idx on public.finance_cards (b
 
 alter table public.fb_accounts add column if not exists card_id text default '';
 alter table public.finance_cards add column if not exists card_number text default '';
+alter table public.finance_cards add column if not exists username text default '';
 
 alter table public.finance_cards enable row level security;
 drop policy if exists "Business members access finance_cards" on public.finance_cards;

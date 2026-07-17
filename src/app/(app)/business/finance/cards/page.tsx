@@ -60,7 +60,7 @@ function Modal({ title, icon: Icon, onClose, children, width = "max-w-lg" }: {
   )
 }
 
-const EMPTY: NewCardInput = { name: "", account_number: "", card_number: "", qr_data: "", expiry: "", cvv: "", provider: "", remarks: "" }
+const EMPTY: NewCardInput = { name: "", username: "", account_number: "", card_number: "", qr_data: "", expiry: "", cvv: "", provider: "", remarks: "" }
 
 function CardFormModal({ initial, onClose, onSave }: {
   initial?: FinanceCard; onClose: () => void; onSave: (input: NewCardInput) => void
@@ -92,6 +92,10 @@ function CardFormModal({ initial, onClose, onSave }: {
         <div>
           <label className="text-sm text-slate-600">Account Name <span className="text-red-500">*</span></label>
           <Input className="mt-1" value={f.name} placeholder="Pangalan sa card/wallet" onChange={e => set("name", e.target.value)} />
+        </div>
+        <div>
+          <label className="text-sm text-slate-600">Username</label>
+          <Input className="mt-1" value={f.username} placeholder="Login username ng app/wallet" onChange={e => set("username", e.target.value)} />
         </div>
         <div>
           <label className="text-sm text-slate-600">Card Number</label>
@@ -146,6 +150,10 @@ export default function FinanceCardsPage() {
   const [qrView, setQrView] = useState<FinanceCard | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<FinanceCard | null>(null)
   const [revealed, setRevealed] = useState<Set<string>>(new Set())   // ids na naka-show ang number/CVV
+  const [filter, setFilter] = useState("All")                        // card type filter (GoTyme / Maya / …)
+
+  const providers = Array.from(new Set(store.cards.map(c => c.provider).filter(Boolean)))
+  const visibleCards = filter === "All" ? store.cards : store.cards.filter(c => c.provider === filter)
 
   const toggleReveal = (id: string) => setRevealed(prev => {
     const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next
@@ -162,11 +170,25 @@ export default function FinanceCardsPage() {
           <Button onClick={() => setShowAdd(true)}><Plus className="w-4 h-4" /> Add Card</Button>
         </div>
 
+        {/* Card type filter — GoTyme / Maya / iba pa (kung ano ang nasa registry) */}
+        {providers.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap mb-4">
+            {["All", ...providers].map(p => (
+              <button key={p} onClick={() => setFilter(p)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${filter === p ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                {p}{p !== "All" && <span className="ml-1.5 opacity-70">({store.cards.filter(c => c.provider === p).length})</span>}
+              </button>
+            ))}
+          </div>
+        )}
+
         {store.cards.length === 0 ? (
           <p className="text-sm text-slate-400 italic py-10 text-center">Wala pang cards — i-click ang “Add Card” para magdagdag.</p>
+        ) : visibleCards.length === 0 ? (
+          <p className="text-sm text-slate-400 italic py-10 text-center">Walang {filter} cards.</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {store.cards.map(c => {
+            {visibleCards.map(c => {
               const shown = revealed.has(c.id)
               const links = connectedCount(c.id)
               return (
@@ -198,6 +220,7 @@ export default function FinanceCardsPage() {
                     <div>
                       <p className="text-[10px] uppercase tracking-wider opacity-70">Account Name</p>
                       <p className="text-sm font-semibold leading-tight">{c.name}</p>
+                      {c.username && <p className="text-[11px] opacity-75 leading-tight mt-0.5">User: {c.username}</p>}
                     </div>
                     <div className="text-right">
                       <p className="text-[10px] uppercase tracking-wider opacity-70">Expiry · CVV</p>
