@@ -145,6 +145,10 @@ export function useFinanceSettings() {
   // Admin-only sa UI (Mother Account). Existing Book Keeping entries keep the department
   // as plain text, so deleting here never rewrites history.
   const removeDepartment = (id: string) => update(s => ({ ...s, departments: s.departments.filter(d => d.id !== id) }))
+  // Admin-only sa UI. The Finance Overview bank cards + Actual Company Fund read activeBanks,
+  // so deleting/adding a bank reflows those automatically. Accounts assigned to the deleted
+  // bank keep their bank_id but resolve to no name — reassign them in the Accounts tab.
+  const removeBank = (id: string) => update(s => ({ ...s, banks: s.banks.filter(b => b.id !== id) }))
 
   // ── Types of Expense ──
   const addType = (t: Omit<FinanceTypeOfExpense, "id" | "status">) => update(s => ({ ...s, types: [...s.types, { ...t, id: uid("toe"), status: "active" }] }))
@@ -181,7 +185,7 @@ export function useFinanceSettings() {
     activeAccounts: (s?.accounts ?? []).filter(a => a.status === "active"),
     bankName: (id: string) => (s?.banks ?? []).find(b => b.id === id)?.name ?? "",
     save, setGeneral,
-    addBank, updateBank, toggleBank,
+    addBank, updateBank, toggleBank, removeBank,
     addDepartment, updateDepartment, toggleDepartment, removeDepartment,
     addType, updateType, toggleType,
     addAccount, updateAccount, toggleAccount, toggleAccountVoucher,

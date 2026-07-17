@@ -126,7 +126,11 @@ function GeneralTab({ fs }: { fs: FS }) {
 function BanksTab({ fs }: { fs: FS }) {
   const [add, setAdd] = useState(false)
   const [view, setView] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null)
   const bank = fs.banks.find(b => b.id === view)
+  const admin = isMotherAccount()   // delete is admin-only (Mother Account)
+  // Accounts still assigned to the bank being deleted — warn muna bago burahin.
+  const linkedAccounts = confirmDelete ? fs.accounts.filter(a => a.bank_id === confirmDelete.id).map(a => a.name) : []
   return (
     <div>
       <div className="flex justify-between items-center mb-3">
@@ -140,11 +144,30 @@ function BanksTab({ fs }: { fs: FS }) {
             <td className="px-3 py-2.5 text-slate-400">{i + 1}</td>
             <td className="px-3 py-2.5 font-medium text-slate-800">{b.name}</td>
             <td className="px-3 py-2.5"><StatusPill active={b.status === "active"} /></td>
-            <td className="px-3 py-2.5"><RowActions onView={() => setView(b.id)} active={b.status === "active"} onToggle={() => fs.toggleBank(b.id)} /></td>
+            <td className="px-3 py-2.5"><RowActions onView={() => setView(b.id)} active={b.status === "active"} onToggle={() => fs.toggleBank(b.id)}
+              onDelete={admin ? () => setConfirmDelete({ id: b.id, name: b.name }) : undefined} /></td>
           </tr>
         ))}
       />
       {add && <NameModal title="Add Bank" label="Bank Name" onClose={() => setAdd(false)} onSave={n => { fs.addBank(n); setAdd(false) }} />}
+      {confirmDelete && (
+        <Modal title="Delete Bank" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
+          <div className="px-6 py-5 text-sm text-slate-700">
+            Sigurado ka bang buburahin ang <span className="font-semibold">{confirmDelete.name}</span>?
+            <p className="text-xs text-slate-500 mt-2">Mawawala ang bank card nito sa Finance Overview at sa mga dropdown ng lahat ng users; mag-a-adjust din ang Actual Company Fund. Hindi nito babaguhin ang mga dating Book Keeping entries.</p>
+            {linkedAccounts.length > 0 && (
+              <p className="text-xs text-amber-600 mt-2 flex items-start gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                Nakatali pa ito sa {linkedAccounts.length} account{linkedAccounts.length > 1 ? "s" : ""} ({linkedAccounts.join(", ")}) — i-reassign mo sila sa Accounts tab pagkatapos.
+              </p>
+            )}
+          </div>
+          <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={() => { fs.removeBank(confirmDelete.id); setConfirmDelete(null) }}>Delete</Button>
+          </div>
+        </Modal>
+      )}
       {bank && (
         <Modal title="View Bank" icon={Eye} onClose={() => setView(null)}>
           <div className="px-6 py-5 space-y-2 text-sm">
