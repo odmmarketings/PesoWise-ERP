@@ -7,6 +7,7 @@ import { useFinanceSettings } from "@/lib/finance-settings-store"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { fetchJntFees } from "@/lib/sales-shared-store"
+import { fetchPageRows, mapLimit, aggregateCourier, type CourierAgg } from "@/lib/courier-live"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 
 const VAT_RATE = 0.12   // 12% VAT on Ad Spend
@@ -36,64 +37,9 @@ function peso(n: number) {
   return (v < 0 ? "-₱" : "₱") + Math.abs(v).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 const pct = (n: number) => (isFinite(n) ? n * 100 : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%"
-const norm = (s: any) => String(s ?? "").trim().toUpperCase()
 
-// ── Pancake fetch + classification ──────────────────────────────────────────────
-async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string): Promise<any[]> {
-  const res = await fetch(
-    `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
-    + `&from=${from}&to=${to}&phase=rows&basis=sales_order`, { cache: "no-store" })
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
-  return Array.isArray(json.rows) ? json.rows : []
-}
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
-  let i = 0
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
-}
-
-function courierOf(c: string): "jnt" | "spx" | "other" {
-  const s = (c || "").toLowerCase()
-  if (/j\s*&?\s*t|jt\s*express|jtexpress/.test(s)) return "jnt"
-  if (/spx|shopee/.test(s)) return "spx"
-  return "other"
-}
-// Parcel journey bucket from the courier status (+ order status as fallback).
-function bucketOf(parcel: string, order: string): "intransit" | "ondelivery" | "delivered" | "returned" | "other" {
-  const p = (parcel || "").toLowerCase(), o = (order || "").toLowerCase()
-  if (/return/.test(p) || /return/.test(o)) return "returned"
-  if (/delivered/.test(p) || /delivered/.test(o)) return "delivered"
-  if (/transit/.test(p)) return "intransit"
-  if (/(out for delivery|on-delivery|on delivery|delivering)/.test(p)) return "ondelivery"
-  return "other"
-}
-
-interface CourierAgg {
-  shippingFee: number
-  inTransitAmt: number; onDeliveryAmt: number
-  rtsPct: number
-  inTransitPar: number; onDeliveryPar: number; totalPar: number
-}
-const EMPTY_AGG: CourierAgg = { shippingFee: 0, inTransitAmt: 0, onDeliveryAmt: 0, rtsPct: 0, inTransitPar: 0, onDeliveryPar: 0, totalPar: 0 }
-
-function aggregateCourier(rows: any[], which: "jnt" | "spx", jntFees: Record<string, number>): CourierAgg {
-  let shippingFee = 0, inTransitAmt = 0, onDeliveryAmt = 0, delivered = 0, returned = 0
-  for (const r of rows) {
-    if (courierOf(r.courier) !== which) continue
-    const amount = Number(r.final_price || 0)
-    const fee = which === "jnt" ? (jntFees[norm(r.tracking_no)] ?? Number(r.shipping_fee || 0)) : Number(r.shipping_fee || 0)
-    shippingFee += fee
-    const b = bucketOf(r.parcel_status, r.order_status)
-    if (b === "intransit") inTransitAmt += amount
-    else if (b === "ondelivery") onDeliveryAmt += amount
-    else if (b === "delivered") delivered++
-    else if (b === "returned") returned++
-  }
-  const rtsPct = delivered + returned > 0 ? returned / (delivered + returned) : 0
-  const inTransitPar = inTransitAmt * (1 - rtsPct)
-  const onDeliveryPar = onDeliveryAmt * (1 - rtsPct)
-  return { shippingFee, inTransitAmt, onDeliveryAmt, rtsPct, inTransitPar, onDeliveryPar, totalPar: inTransitPar + onDeliveryPar }
-}
+// Pancake fetch + per-courier aggregation now live in the shared courier-live lib
+// (also used by the Finance Overview cards).
 
 // ── UI bits ──────────────────────────────────────────────────────────────────
 function SRow({ label, value, tone = "plain", deduct }: {

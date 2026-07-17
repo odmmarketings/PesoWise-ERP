@@ -1,10 +1,16 @@
 "use client"
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect, useCallback } from "react"
 import { PieChart, ChevronDown, TrendingUp, TrendingDown, Wallet, ShoppingCart, Megaphone, RefreshCw, Truck } from "lucide-react"
-import { format, startOfMonth } from "date-fns"
+import { format, startOfMonth, eachDayOfInterval } from "date-fns"
 import { useBookkeeping } from "@/lib/bookkeeping-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
+import { useActivePages } from "@/lib/pages-store"
+import { useAdspent } from "@/lib/adspent-store"
+import { fetchJntFees } from "@/lib/sales-shared-store"
+import { fetchPageRows, mapLimit, aggregateCourier } from "@/lib/courier-live"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
+
+const VAT_RATE = 0.12   // reverse-charge 12% VAT on FB-billed ad spend (same as Income Statement)
 
 function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
@@ -100,12 +106,53 @@ export default function BusinessFinancePage() {
 
   const bk = useBookkeeping()
   const fs = useFinanceSettings()
+  const activePages = useActivePages()
+  const adspentStore = useAdspent()
 
   const from = useMemo(() => new Date(dateA), [dateA])
   const to = useMemo(() => new Date(dateB), [dateB])
 
   const fromStr = format(from, "yyyy-MM-dd")
   const toStr = format(to, "yyyy-MM-dd")
+
+  // ── Live connections (same model as the Income Statement) ──
+  // J&T Excel-imported fees (written by the Sales Tracker) override Pancake's shipping_fee.
+  const [jntFees, setJntFees] = useState<Record<string, number>>({})
+  useEffect(() => { fetchJntFees().then(setJntFees).catch(() => {}) }, [])
+
+  // Connected pages (api_key + pancake id) → live Pancake order rows for courier fees.
+  const pages = useMemo(
+    () => activePages.filter(p => p.api_key && (p.pancake_page_id || p.shop_id)),
+    [activePages])
+  const pagesKey = pages.map(p => `${p.id}:${p.api_key}:${p.pancake_page_id || p.shop_id}`).join(",")
+
+  const [rows, setRows] = useState<any[]>([])
+  const [loadingRows, setLoadingRows] = useState(false)
+  const loadRows = useCallback(async () => {
+    if (pages.length === 0) { setRows([]); return }
+    setLoadingRows(true)
+    const all: any[] = []
+    await mapLimit(pages, 3, async p => {
+      try { all.push(...await fetchPageRows(p.api_key, p.pancake_page_id || p.shop_id, fromStr, toStr)) } catch {}
+    })
+    setRows(all)
+    setLoadingRows(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagesKey, fromStr, toStr])
+  useEffect(() => { loadRows() }, [loadRows])
+
+  const jnt = useMemo(() => aggregateCourier(rows, "jnt", jntFees), [rows, jntFees])
+  const spx = useMemo(() => aggregateCourier(rows, "spx", jntFees), [rows, jntFees])
+
+  // FB-synced ad spend from the ROAS Tracker / Adspent Summary store (adspent_entries),
+  // summed across connected pages over the selected range.
+  const fbAdSpend = useMemo(() => {
+    const ids = pages.map(p => p.id)
+    if (ids.length === 0) return 0
+    return eachDayOfInterval({ start: from, end: to })
+      .reduce((s, d) => s + adspentStore.totalForDate(ids, format(d, "yyyy-MM-dd")), 0)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pages, adspentStore.map, from, to])
   const asOfLabel = `As of ${format(from, "MMM.dd")} - ${format(to, "MMM.dd, yyyy")}`
   const dateRangeLabel = `${format(from, "MMM. dd, yyyy")} to ${format(to, "MMM. dd, yyyy")}`
 
@@ -137,9 +184,18 @@ export default function BusinessFinancePage() {
         if (!isRevolving && ty?.opex) opex += t.debit  // OPEX excludes revolving-fund accounts (counted separately)
       }
     }
-    const revolvingFund = adspent + cog + shipping
-    return { grossRevenue, operatingRevenue, totalOpexRevolving: opex + revolvingFund, cog, adspent, revolvingFund, shipping }
+    return { grossRevenue, operatingRevenue, opex, cog, adspent, shipping }
   }, [txns, accountByName, typeByName])
+
+  // Combined figures — Book Keeping + live sources (same totals the Income Statement shows):
+  //   Adspent      = BK adspent-flagged debits + FB-synced ad spend (ROAS Tracker)
+  //   Shipping Fee = BK shipping-flagged debits + live J&T/SPX courier fees (Sales Tracker)
+  //   Revolving    = Adspent + COG + Shipping · VAT 12% applies to the FB-synced portion only
+  const adspentTotal = m.adspent + fbAdSpend
+  const vatAds = fbAdSpend * VAT_RATE
+  const shippingTotal = m.shipping + jnt.shippingFee + spx.shippingFee
+  const revolvingFund = adspentTotal + m.cog + shippingTotal
+  const totalOpexRevolving = m.opex + revolvingFund + vatAds
 
   // Per-bank running balance + a Type-of-Expense breakdown for the expandable cards.
   const banks = useMemo<BankData[]>(() => fs.activeBanks.map((b, i) => {
@@ -158,13 +214,13 @@ export default function BusinessFinancePage() {
   const totalFund = banks.reduce((s, b) => s + b.runningBalance, 0)
 
   const financeCards = [
-    { label: "GROSS REVENUE", amount: m.grossRevenue, color: "bg-emerald-500", icon: TrendingUp, tip: "Total credit (revenue) from accounts NOT excluded from gross revenue, in range." },
+    { label: "GROSS REVENUE", amount: m.grossRevenue, color: "bg-emerald-500", icon: TrendingUp, tip: "Total credit (revenue) from Book Keeping accounts NOT excluded from gross revenue, in range — same figure as the Income Statement." },
     { label: "OPERATING REVENUE", amount: m.operatingRevenue, color: "bg-blue-500", icon: TrendingUp, tip: "Gross revenue excluding revolving-fund accounts (Adspent / COG / Shipping)." },
-    { label: "TOTAL OPEX + REVOLVING FUND", amount: m.totalOpexRevolving, color: "bg-red-500", icon: TrendingDown, tip: "OPEX-type expense debits plus the revolving fund total." },
+    { label: "TOTAL OPEX + REVOLVING FUND", amount: totalOpexRevolving, color: "bg-red-500", icon: TrendingDown, tip: "OPEX-type expense debits plus the revolving fund total (incl. VAT on FB ad spend)." },
     { label: "COG PURCHASE", amount: m.cog, color: "bg-orange-500", icon: ShoppingCart, tip: "Debits on accounts flagged 'COG Purchase Account' in Finance Settings." },
-    { label: "ADSPENT", amount: m.adspent, color: "bg-purple-500", icon: Megaphone, tip: "Debits on accounts flagged 'Adspent Account' in Finance Settings." },
-    { label: "REVOLVING FUND", amount: m.revolvingFund, color: "bg-slate-600", icon: RefreshCw, tip: "Adspent + COG Purchase + Shipping Fee debits." },
-    { label: "SHIPPING FEE", amount: m.shipping, color: "bg-indigo-500", icon: Truck, tip: "Debits on accounts flagged 'Shipping Fee Account' in Finance Settings." },
+    { label: "ADSPENT", amount: adspentTotal, color: "bg-purple-500", icon: Megaphone, tip: "FB-synced ad spend (ROAS Tracker) + Book Keeping adspent-flagged debits." },
+    { label: "REVOLVING FUND", amount: revolvingFund, color: "bg-slate-600", icon: RefreshCw, tip: "Adspent + COG Purchase + Shipping Fee (live + Book Keeping)." },
+    { label: "SHIPPING FEE", amount: shippingTotal, color: "bg-indigo-500", icon: Truck, tip: "Live J&T + SPX courier fees (Sales Tracker source) + Book Keeping shipping-flagged debits." },
   ]
 
   return (
@@ -172,12 +228,22 @@ export default function BusinessFinancePage() {
 
       <div className="flex items-center justify-between flex-wrap gap-2 pb-4 mb-1 border-b border-slate-100">
         <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><PieChart className="w-5 h-5" /> FINANCE OVERVIEW</h1>
-        <DateRangePicker a={dateA} b={dateB} variant="header"
-          onApply={(a, b) => { setDateA(a || defaultDateA()); setDateB(b || defaultDateB()) }} placeholder="This month" />
+        <div className="flex items-center gap-2">
+          <DateRangePicker a={dateA} b={dateB} variant="header"
+            onApply={(a, b) => { setDateA(a || defaultDateA()); setDateB(b || defaultDateB()) }} placeholder="This month" />
+          <button onClick={loadRows} title="Refresh live courier / adspent data"
+            className="h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">
+            <RefreshCw className={`w-4 h-4 ${loadingRows ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
 
       <div>
-        <p className="text-xs text-slate-500 font-medium mb-2">{asOfLabel} · {txns.length} bookkeeping entr{txns.length === 1 ? "y" : "ies"}</p>
+        <p className="text-xs text-slate-500 font-medium mb-2">
+          {asOfLabel} · {txns.length} bookkeeping entr{txns.length === 1 ? "y" : "ies"} · {loadingRows
+            ? "loading live courier data…"
+            : `${rows.length} parcels from ${pages.length} connected page${pages.length === 1 ? "" : "s"}`}
+        </p>
         <hr className="border-slate-200" />
       </div>
 
