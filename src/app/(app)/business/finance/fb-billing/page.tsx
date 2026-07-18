@@ -1,6 +1,7 @@
 "use client"
 import { useMemo, useRef, useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
+import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { Receipt, RefreshCw, Check, CreditCard, AlertTriangle } from "lucide-react"
 import { useFBAccounts, actId } from "@/lib/fb-store"
 import { useFinanceCards, type FinanceCard } from "@/lib/cards-store"
@@ -34,6 +35,10 @@ export default function FbBillingPage() {
   const [syncing, setSyncing] = useState(false)
   const [notes, setNotes] = useState<string[]>([])
   const [fAccount, setFAccount] = useState("All")
+  const [fOwner, setFOwner] = useState("All")
+  const [fBank, setFBank] = useState("All")
+  const [dateA, setDateA] = useState("")   // date range filter (Pancake-style picker); "" = all dates
+  const [dateB, setDateB] = useState("")
   const autoRan = useRef(false)
 
   const eligible = useMemo(
@@ -144,9 +149,25 @@ export default function FbBillingPage() {
   }, [fs.loaded, billing.loaded, eligible.length, cards.length])
 
   const accountNames = useMemo(() => Array.from(new Set(billing.records.map(r => r.ad_account_name).filter(Boolean))).sort(), [billing.records])
+  // Owner ng bawat ad account (galing sa Ad Accounts registry) — keyed by act_… id.
+  const ownerByAcct = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const a of fb.accounts) m[actId(a.ad_account_id)] = a.owner || ""
+    return m
+  }, [fb.accounts])
+  const ownerNames = useMemo(() => Array.from(new Set(billing.records.map(r => ownerByAcct[r.ad_account_id]).filter(Boolean))).sort(), [billing.records, ownerByAcct])
+  const bankNames = useMemo(() => Array.from(new Set(billing.records.map(r => r.bank).filter(Boolean))).sort(), [billing.records])
+
   const visible = useMemo(
-    () => billing.records.filter(r => fAccount === "All" || r.ad_account_name === fAccount),
-    [billing.records, fAccount])
+    () => billing.records.filter(r => {
+      if (fAccount !== "All" && r.ad_account_name !== fAccount) return false
+      if (fOwner !== "All" && (ownerByAcct[r.ad_account_id] || "") !== fOwner) return false
+      if (fBank !== "All" && r.bank !== fBank) return false
+      if (dateA && r.date < dateA) return false
+      if (dateB && r.date > dateB) return false
+      return true
+    }),
+    [billing.records, fAccount, fOwner, fBank, dateA, dateB, ownerByAcct])
   const total = visible.reduce((s, r) => s + r.amount, 0)
   const cardById = useMemo(() => Object.fromEntries(cards.map(c => [c.id, c])), [cards])
 
@@ -157,10 +178,20 @@ export default function FbBillingPage() {
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex items-center justify-between flex-wrap gap-3 mb-4 pb-4 border-b border-slate-100">
           <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Receipt className="w-5 h-5" /> FACEBOOK BILLING HISTORY</h1>
-          <div className="flex items-center gap-2">
-            <select className={SEL} value={fAccount} onChange={e => setFAccount(e.target.value)}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <DateRangePicker a={dateA} b={dateB} variant="header" placeholder="All dates"
+              onApply={(a, b) => { setDateA(a || ""); setDateB(b || "") }} />
+            <select className={SEL} value={fAccount} onChange={e => setFAccount(e.target.value)} title="Ad Account">
               <option>All</option>
               {accountNames.map(n => <option key={n}>{n}</option>)}
+            </select>
+            <select className={SEL} value={fOwner} onChange={e => setFOwner(e.target.value)} title="Owner">
+              <option>All</option>
+              {ownerNames.map(n => <option key={n}>{n}</option>)}
+            </select>
+            <select className={SEL} value={fBank} onChange={e => setFBank(e.target.value)} title="Bank">
+              <option>All</option>
+              {bankNames.map(n => <option key={n}>{n}</option>)}
             </select>
             <Button onClick={sync} disabled={syncing}>
               <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Syncing…" : "Sync Billing"}
@@ -184,21 +215,22 @@ export default function FbBillingPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                {["Date", "Ad Account", "Payment Method", "Card (matched)", "Bank", "Amount", "Book Keeping"].map(h =>
+                {["Date", "Ad Account", "Owner", "Payment Method", "Card (matched)", "Bank", "Amount", "Book Keeping"].map(h =>
                   <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {!billing.loaded ? (
-                <tr><td colSpan={7} className="text-center py-10 text-slate-400">Loading…</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-slate-400">Loading…</td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-10 text-slate-400">Wala pang billing records — i-click ang “Sync Billing”.</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-slate-400">Walang billing records sa filter na ito.</td></tr>
               ) : visible.map(r => {
                 const card = cardById[r.matched_card_id]
                 return (
                   <tr key={`${r.ad_account_id}|${r.date}`} className="hover:bg-slate-50">
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-700">{r.date}</td>
                     <td className="px-3 py-2.5 text-slate-800 font-medium">{r.ad_account_name}</td>
+                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{ownerByAcct[r.ad_account_id] || "—"}</td>
                     <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{r.funding_display || "—"}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       {card ? (
@@ -221,7 +253,7 @@ export default function FbBillingPage() {
               })}
               {visible.length > 0 && (
                 <tr className="bg-slate-50 border-t-2 border-slate-300">
-                  <td colSpan={5} className="px-3 py-2.5 text-xs font-bold text-slate-700 uppercase">Total ({visible.length} day{visible.length === 1 ? "" : "s"})</td>
+                  <td colSpan={6} className="px-3 py-2.5 text-xs font-bold text-slate-700 uppercase">Total ({visible.length} day{visible.length === 1 ? "" : "s"})</td>
                   <td className="px-3 py-2.5 font-bold text-slate-900 tabular-nums whitespace-nowrap">{peso(total)}</td>
                   <td />
                 </tr>
