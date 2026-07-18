@@ -61,6 +61,18 @@ export function maskCardNumber(n: string) {
   return s.length > 4 ? "•••• ".repeat(3) + s.slice(-4) : s
 }
 
+// Last 4 digits (card number muna, tapos account number) — ito ang tumutugma sa FB funding.
+export function cardLast4(c: Pick<FinanceCard, "card_number" | "account_number">) {
+  const d = String(c.card_number || c.account_number || "").replace(/\D/g, "")
+  return d.length >= 4 ? d.slice(-4) : ""
+}
+
+// Label para sa dropdown/view: "GoTyme — ERIC M TIAD (•••• 7349)".
+export function cardLabel(c: FinanceCard) {
+  const l4 = cardLast4(c)
+  return `${c.provider} — ${c.name}${l4 ? ` (•••• ${l4})` : ""}`
+}
+
 export function useFinanceCards() {
   const [cards, setCards] = useState<FinanceCard[]>([])
   useEffect(() => {

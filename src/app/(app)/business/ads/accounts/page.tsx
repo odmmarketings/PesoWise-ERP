@@ -9,7 +9,7 @@ import {
 } from "@/lib/fb-store"
 import { useActivePages } from "@/lib/pages-store"
 import { OwnerCombo } from "@/components/business/OwnerCombo"
-import { useFinanceCards } from "@/lib/cards-store"
+import { useFinanceCards, cardLabel } from "@/lib/cards-store"
 
 // Map Facebook's account_status code → our registration status.
 function fbStatusToLocal(code: number): FBStatus | null {
@@ -358,7 +358,7 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
           <FormRow label="Card Used">
             <select className={INP} value={f.card_id || ""} onChange={e => set("card_id", e.target.value)}>
               <option value="">— none —</option>
-              {cards.map(c => <option key={c.id} value={c.id}>{c.provider} — {c.name}</option>)}
+              {cards.map(c => <option key={c.id} value={c.id}>{cardLabel(c)}</option>)}
             </select>
             <p className="text-[11px] text-slate-400 mt-1">Saang card naka-register ang ad account na ito (Finance → Cards).</p>
           </FormRow>
@@ -395,7 +395,7 @@ function ViewScreen({ account, onBack, onEdit }: { account: FBAccount; onBack: (
         <F l="Name" v={account.name} /><F l="Owner" v={account.owner} /><F l="Platform" v={account.platform} /><F l="Focus" v={account.focus} />
         <F l="Ad Account ID" v={actId(account.ad_account_id)} /><F l="API Token" v={account.token ? "•••••• (set)" : "missing"} />
         <F l="Mapped Page" v={account.page_name} />
-        <F l="Card Used" v={card ? `${card.provider} — ${card.name}` : ""} />
+        <F l="Card Used" v={card ? cardLabel(card) : ""} />
         <F l="Status" v={account.status} /><F l="Remarks" v={account.remarks} />
         <div className="flex gap-2 mt-4">
           <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={onEdit}><Pencil className="w-3.5 h-3.5" /> Edit</Button>
