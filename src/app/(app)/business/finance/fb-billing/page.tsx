@@ -46,11 +46,18 @@ export default function FbBillingPage() {
     () => fb.accounts.filter(a => !a.archived && a.ad_account_id && a.token),
     [fb.accounts])
 
-  // Bank ng card provider — hal. provider "GoTyme" → bank na "GOTYME" sa Finance Settings.
+  // Bank ng card provider — token-based match kaya kahit i-rename ang bank (hal. "PayMaya"
+  // card → bank na "Maya (Domini)") ay tumutugma pa rin (shared token "MAYA"), o "GoTyme"
+  // → "GOTYME (Eric)". Kinukuha ang mga makabuluhang salita (≥4 letra) at hinahanap ang
+  // magkatugmang token sa magkabila.
   function bankFor(card?: FinanceCard): string {
     if (!card?.provider) return ""
-    const p = card.provider.toUpperCase()
-    const hit = fs.activeBanks.find(b => p.includes(b.name.toUpperCase()) || b.name.toUpperCase().includes(p.split(" ")[0]))
+    const words = (s: string) => s.toUpperCase().replace(/[^A-Z ]/g, " ").split(/\s+/).filter(w => w.length >= 4)
+    const pw = words(card.provider)   // e.g. PAYMAYA, CREDIT, CARD
+    const hit = fs.activeBanks.find(b => {
+      const bw = words(b.name)        // e.g. MAYA, DOMINI  ·  GOTYME
+      return pw.some(p => bw.some(x => p.includes(x) || x.includes(p)))
+    })
     return hit?.name || ""
   }
 

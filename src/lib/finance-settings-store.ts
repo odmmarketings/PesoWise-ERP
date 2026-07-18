@@ -135,7 +135,21 @@ export function useFinanceSettings() {
 
   // ── Banks ──
   const addBank = (name: string) => update(s => ({ ...s, banks: [...s.banks, { id: uid("bank"), name, status: "active" }] }))
-  const updateBank = (id: string, name: string) => update(s => ({ ...s, banks: s.banks.map(b => b.id === id ? { ...b, name } : b) }))
+  // Rename cascades to every record na naka-store ng bank as text (Book Keeping + FB Billing),
+  // kaya sabay-sabay nagbabago ang buong app — hindi naiiwan sa lumang pangalan ang history.
+  const updateBank = (id: string, name: string) => {
+    const oldName = settings?.banks.find(b => b.id === id)?.name || ""
+    update(s => ({ ...s, banks: s.banks.map(b => b.id === id ? { ...b, name } : b) }))
+    if (oldName && oldName !== name) {
+      void (async () => {
+        const businessId = await getBusinessId()
+        if (!businessId) return
+        const supabase = createSupabaseBrowserClient()
+        await supabase.from("bookkeeping_txns").update({ bank: name }).eq("business_id", businessId).eq("bank", oldName)
+        await supabase.from("fb_billing_records").update({ bank: name }).eq("business_id", businessId).eq("bank", oldName)
+      })()
+    }
+  }
   const toggleBank = (id: string) => update(s => ({ ...s, banks: s.banks.map(b => b.id === id ? { ...b, status: b.status === "active" ? "inactive" : "active" } : b) }))
 
   // ── Departments ──
