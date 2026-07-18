@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect } from "react"
+import { RefreshCw } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
 import { Sidebar } from "@/components/layout/Sidebar"
 import { Topbar } from "@/components/layout/Topbar"
@@ -18,6 +19,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<{
     name: string; email: string; plan: Plan; trial_ends_at: string | null
   }>({ name: "", email: "", plan: "trial", trial_ends_at: null })
+  // Huwag i-render ang mga page hangga't hindi pa nakaka-authenticate ang Supabase session —
+  // kung hindi, mag-fe-fetch ang mga store bago ma-set ang session (child effects run before
+  // parent effects) → unauthenticated queries → RLS blank → 0 data sa bagong login.
+  const [authReady, setAuthReady] = useState(false)
 
   useEffect(() => {
     async function loadUser() {
@@ -62,6 +67,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         return
       }
 
+      // Session confirmed + enabled → safe nang mag-render ang mga page (authenticated na
+      // ang shared Supabase client, kaya makikita ng lahat ng store ang data).
+      setAuthReady(true)
+
       // Refresh the ERP roster/permissions cache from Supabase so accessFor() (Sidebar) and
       // User Management see the latest shared state on every app load, not stale per-browser data.
       syncRosterFromSupabase()
@@ -104,7 +113,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           onUpgrade={() => setShowUpgrade(true)}
         />
         <main className="flex-1 overflow-y-auto px-6 pt-4 pb-6">
-          <PagesProvider>{children}</PagesProvider>
+          {authReady ? (
+            <PagesProvider>{children}</PagesProvider>
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <div className="flex items-center gap-3 text-slate-400 text-sm">
+                <RefreshCw className="w-4 h-4 animate-spin" /> Loading your data…
+              </div>
+            </div>
+          )}
         </main>
       </div>
       {showUpgrade && <UpgradeModal currentPlan={user.plan} onClose={() => setShowUpgrade(false)} />}
