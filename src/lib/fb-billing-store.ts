@@ -64,16 +64,23 @@ export function useFbBilling() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  const upsertRecords = useCallback(async (rows: FbBillingRecord[]) => {
-    if (rows.length === 0) return
+  // Isang record, sine-save BAGO mag-post sa Book Keeping — kapag nag-fail ito (hal.
+  // wala pa ang table), HINDI magpo-post ang sync, para imposible ang double-posting.
+  const saveRecord = useCallback(async (row: FbBillingRecord): Promise<string | null> => {
+    const businessId = await getBusinessId()
+    if (!businessId) return "No business configured"
+    const supabase = createSupabaseBrowserClient()
+    const { error } = await supabase.from("fb_billing_records").upsert({ business_id: businessId, ...row })
+    return error ? error.message : null
+  }, [])
+
+  const setRecordTxn = useCallback(async (ad_account_id: string, date: string, txnId: string) => {
     const businessId = await getBusinessId()
     if (!businessId) return
     const supabase = createSupabaseBrowserClient()
-    for (let i = 0; i < rows.length; i += 200) {
-      await supabase.from("fb_billing_records").upsert(rows.slice(i, i + 200).map(r => ({ business_id: businessId, ...r })))
-    }
-    await refresh()
-  }, [refresh])
+    await supabase.from("fb_billing_records").update({ recorded_txn_id: txnId })
+      .eq("business_id", businessId).eq("ad_account_id", ad_account_id).eq("date", date)
+  }, [])
 
-  return { records, loaded, refresh, upsertRecords }
+  return { records, loaded, refresh, saveRecord, setRecordTxn }
 }

@@ -64,7 +64,21 @@ export default function FbBillingPage() {
 
       const have = new Set(billing.records.map(r => `${r.ad_account_id}|${r.date}`))
       const yesterday = daysAgo(1)
-      const newRecords: FbBillingRecord[] = []
+      let added = 0, recovered = 0
+
+      // Retry muna: records na na-save pero hindi natuloy ang Book Keeping post (naputol na sync).
+      for (const r of billing.records.filter(x => !x.recorded_txn_id)) {
+        try {
+          const txn = await pushBookkeepingTxn({
+            posted_date: r.date, transaction: `FB Ads — ${r.ad_account_name} (${r.date})`,
+            account: FB_ADS_ACCOUNT, department: dept, category: "Expense - Debit",
+            type_of_expense: FB_ADS_TYPE, expense_type: "Debit", amount: r.amount,
+            bank: r.bank, voucher: "", receipt_name: "",
+          }, "Recorded from FB Billing")
+          await billing.setRecordTxn(r.ad_account_id, r.date, txn.id)
+          recovered++
+        } catch {}
+      }
 
       for (const a of eligible) {
         const acct = actId(a.ad_account_id)
@@ -85,7 +99,16 @@ export default function FbBillingPage() {
           for (const [date, amtRaw] of Object.entries(sJson.byDate || {})) {
             const amount = Math.round(Number(amtRaw) * 100) / 100
             if (!(amount > 0) || have.has(`${acct}|${date}`)) continue
-            // 3) Auto-post sa Book Keeping (Debit sa bank ng card) — dedup guaranteed ng records table.
+            // 3) I-save MUNA ang dedup record bago mag-post sa Book Keeping — kapag hindi
+            //    ma-save (hal. wala pa ang fb_billing_records table), HINDI magpo-post,
+            //    para imposibleng magdoble ang entries.
+            const rec: FbBillingRecord = {
+              ad_account_id: acct, date, ad_account_name: a.name, amount, currency: a.currency || "PHP",
+              funding_display: display, card_last4: last4, matched_card_id: card?.id || "", bank,
+              recorded_txn_id: null,
+            }
+            const saveErr = await billing.saveRecord(rec)
+            if (saveErr) { msgs.push(`${a.name}: hindi ma-save ang billing record (${saveErr}) — itinigil ang posting para walang doble.`); break }
             const txn = await pushBookkeepingTxn({
               posted_date: date,
               transaction: `FB Ads — ${a.name} (${date})`,
@@ -93,21 +116,18 @@ export default function FbBillingPage() {
               type_of_expense: FB_ADS_TYPE, expense_type: "Debit", amount,
               bank, voucher: "", receipt_name: "",
             }, "Recorded from FB Billing")
-            newRecords.push({
-              ad_account_id: acct, date, ad_account_name: a.name, amount, currency: a.currency || "PHP",
-              funding_display: display, card_last4: last4, matched_card_id: card?.id || "", bank,
-              recorded_txn_id: txn.id,
-            })
+            await billing.setRecordTxn(acct, date, txn.id)
             have.add(`${acct}|${date}`)
+            added++
           }
         } catch (e: any) {
           msgs.push(`${a.name}: ${e?.message || "sync failed"}`)
         }
       }
 
-      if (newRecords.length > 0) await billing.upsertRecords(newRecords)
-      msgs.unshift(newRecords.length > 0
-        ? `${newRecords.length} bagong billing day(s) na-record sa Book Keeping.`
+      await billing.refresh()
+      msgs.unshift(added > 0 || recovered > 0
+        ? `${added} bagong billing day(s) na-record${recovered > 0 ? ` (+${recovered} na-recover)` : ""}.`
         : "Up to date — walang bagong billing.")
     } finally {
       setNotes(msgs)
