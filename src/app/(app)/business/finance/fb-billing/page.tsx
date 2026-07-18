@@ -7,7 +7,7 @@ import { useFBAccounts, actId } from "@/lib/fb-store"
 import { useFinanceCards, type FinanceCard } from "@/lib/cards-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
 import { pushBookkeepingTxn } from "@/lib/bookkeeping-store"
-import { useFbBilling, FB_ADS_ACCOUNT, FB_ADS_TYPE, type FbBillingRecord } from "@/lib/fb-billing-store"
+import { useFbBilling, FB_ADS_ACCOUNT, FB_ADS_TYPE, FB_VAT_RATE, billedTotal, type FbBillingRecord } from "@/lib/fb-billing-store"
 
 const SEL = "h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white focus:outline-none focus:border-blue-400"
 const peso = (n: number) => "₱ " + n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -75,17 +75,19 @@ export default function FbBillingPage() {
       }
       const dept = fs.activeDepartments.find(d => /marketing/i.test(d.name))?.name || fs.activeDepartments[0]?.name || ""
 
-      const have = new Set(billing.records.map(r => `${r.ad_account_id}|${r.date}`))
+      const vatOf = (media: number) => Math.round(media * FB_VAT_RATE * 100) / 100
+      const byKey = new Map(billing.records.map(r => [`${r.ad_account_id}|${r.date}`, r]))
       const yesterday = daysAgo(1)
-      let added = 0, recovered = 0
+      let added = 0, recovered = 0, corrected = 0
 
       // Retry muna: records na na-save pero hindi natuloy ang Book Keeping post (naputol na sync).
       for (const r of billing.records.filter(x => !x.recorded_txn_id)) {
         try {
+          const billed = r.amount + r.vat
           const txn = await pushBookkeepingTxn({
             posted_date: r.date, transaction: `FB Ads — ${r.ad_account_name} (${r.date})`,
             account: FB_ADS_ACCOUNT, department: dept, category: "Expense - Debit",
-            type_of_expense: FB_ADS_TYPE, expense_type: "Debit", amount: r.amount,
+            type_of_expense: FB_ADS_TYPE, expense_type: "Debit", amount: billed,
             bank: r.bank, voucher: "", receipt_name: "",
           }, "Recorded from FB Billing")
           await billing.setRecordTxn(r.ad_account_id, r.date, txn.id)
@@ -104,19 +106,32 @@ export default function FbBillingPage() {
           const card = matchCard(cards, last4, a.card_id)
           const bank = bankFor(card)
 
-          // 2) Daily spend (ito ang bini-bill ni Meta) — huling 30 araw hanggang kahapon.
+          // 2) Daily spend (media cost mula sa Meta) — huling 30 araw hanggang kahapon.
           const sRes = await fetch(`/api/fb/insights?token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(acct)}&from=${daysAgo(30)}&to=${yesterday}`)
           const sJson = await sRes.json().catch(() => ({}))
           if (!sJson.success) { msgs.push(`${a.name}: ${sJson.error || "spend fetch failed"}`); continue }
 
           for (const [date, amtRaw] of Object.entries(sJson.byDate || {})) {
-            const amount = Math.round(Number(amtRaw) * 100) / 100
-            if (!(amount > 0) || have.has(`${acct}|${date}`)) continue
-            // 3) I-save MUNA ang dedup record bago mag-post sa Book Keeping — kapag hindi
-            //    ma-save (hal. wala pa ang fb_billing_records table), HINDI magpo-post,
-            //    para imposibleng magdoble ang entries.
+            const media = Math.round(Number(amtRaw) * 100) / 100
+            if (!(media > 0)) continue
+            const vat = vatOf(media)                 // 12% VAT — idinadagdag ng Facebook sa card
+            const billed = Math.round((media + vat) * 100) / 100
+            const existing = byKey.get(`${acct}|${date}`)
+
+            if (existing) {
+              // Na-settle na ba ang spend? I-correct ang record + Book Keeping entry.
+              if (existing.amount !== media || existing.vat !== vat) {
+                const fixed = { ...existing, amount: media, vat }
+                await billing.updateRecordAmount(fixed, billed)
+                corrected++
+              }
+              continue
+            }
+
+            // Bago: i-save MUNA ang dedup record bago mag-post sa Book Keeping — kapag hindi
+            // ma-save (hal. wala pa ang column/table), HINDI magpo-post, para walang doble.
             const rec: FbBillingRecord = {
-              ad_account_id: acct, date, ad_account_name: a.name, amount, currency: a.currency || "PHP",
+              ad_account_id: acct, date, ad_account_name: a.name, amount: media, vat, currency: a.currency || "PHP",
               funding_display: display, card_last4: last4, matched_card_id: card?.id || "", bank,
               recorded_txn_id: null,
             }
@@ -126,11 +141,11 @@ export default function FbBillingPage() {
               posted_date: date,
               transaction: `FB Ads — ${a.name} (${date})`,
               account: FB_ADS_ACCOUNT, department: dept, category: "Expense - Debit",
-              type_of_expense: FB_ADS_TYPE, expense_type: "Debit", amount,
+              type_of_expense: FB_ADS_TYPE, expense_type: "Debit", amount: billed,   // media + VAT = card charge
               bank, voucher: "", receipt_name: "",
             }, "Recorded from FB Billing")
             await billing.setRecordTxn(acct, date, txn.id)
-            have.add(`${acct}|${date}`)
+            byKey.set(`${acct}|${date}`, { ...rec, recorded_txn_id: txn.id })
             added++
           }
         } catch (e: any) {
@@ -139,9 +154,9 @@ export default function FbBillingPage() {
       }
 
       await billing.refresh()
-      msgs.unshift(added > 0 || recovered > 0
-        ? `${added} bagong billing day(s) na-record${recovered > 0 ? ` (+${recovered} na-recover)` : ""}.`
-        : "Up to date — walang bagong billing.")
+      msgs.unshift(added > 0 || recovered > 0 || corrected > 0
+        ? `${added} bagong billing day(s)${recovered > 0 ? `, +${recovered} na-recover` : ""}${corrected > 0 ? `, ${corrected} na-update (VAT/settling)` : ""}.`
+        : "Up to date — tama na ang lahat (kasama ang VAT).")
     } finally {
       setNotes(msgs)
       setSyncing(false)
@@ -176,7 +191,9 @@ export default function FbBillingPage() {
       return true
     }),
     [billing.records, fAccount, fOwner, fBank, dateA, dateB, ownerByAcct])
-  const total = visible.reduce((s, r) => s + r.amount, 0)
+  const totMedia = visible.reduce((s, r) => s + r.amount, 0)
+  const totVat = visible.reduce((s, r) => s + r.vat, 0)
+  const totBilled = visible.reduce((s, r) => s + billedTotal(r), 0)
   const cardById = useMemo(() => Object.fromEntries(cards.map(c => [c.id, c])), [cards])
 
   return (
@@ -208,9 +225,9 @@ export default function FbBillingPage() {
         </div>
 
         <p className="text-xs text-slate-500 mb-3">
-          Daily FB ad spend per ad account (ito ang tina-total ng Meta sa mga singil) — automatic na naka-post sa
-          Book Keeping (account: “{FB_ADS_ACCOUNT}”) at nakabawas sa bank ng card na tumugma sa payment method.
-          {" "}{eligible.length} ad account{eligible.length === 1 ? "" : "s"} monitored.
+          Ad Spend (media cost mula sa Meta) + <span className="font-semibold">12% VAT</span> = <span className="font-semibold">Total Billed</span> —
+          ito ang aktwal na sinisingil ng Facebook sa card. Ang <span className="font-semibold">Total Billed</span> ang naka-post sa Book
+          Keeping (account: “{FB_ADS_ACCOUNT}”) at nakabawas sa bank ng card. {eligible.length} ad account{eligible.length === 1 ? "" : "s"} monitored.
         </p>
 
         {notes.length > 0 && (
@@ -223,15 +240,15 @@ export default function FbBillingPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                {["Date", "Ad Account", "Owner", "Payment Method", "Card (matched)", "Bank", "Amount", "Book Keeping"].map(h =>
+                {["Date", "Ad Account", "Owner", "Payment Method", "Card (matched)", "Bank", "Ad Spend", "VAT 12%", "Total Billed", "Book Keeping"].map(h =>
                   <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {!billing.loaded ? (
-                <tr><td colSpan={8} className="text-center py-10 text-slate-400">Loading…</td></tr>
+                <tr><td colSpan={10} className="text-center py-10 text-slate-400">Loading…</td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-slate-400">Walang billing records sa filter na ito.</td></tr>
+                <tr><td colSpan={10} className="text-center py-10 text-slate-400">Walang billing records sa filter na ito.</td></tr>
               ) : visible.map(r => {
                 const card = cardById[r.matched_card_id]
                 return (
@@ -250,7 +267,9 @@ export default function FbBillingPage() {
                       ) : "—"}
                     </td>
                     <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{r.bank || "—"}</td>
-                    <td className="px-3 py-2.5 text-slate-800 font-semibold tabular-nums whitespace-nowrap">{peso(r.amount)}</td>
+                    <td className="px-3 py-2.5 text-slate-600 tabular-nums whitespace-nowrap">{peso(r.amount)}</td>
+                    <td className="px-3 py-2.5 text-slate-500 tabular-nums whitespace-nowrap">{peso(r.vat)}</td>
+                    <td className="px-3 py-2.5 text-slate-800 font-semibold tabular-nums whitespace-nowrap">{peso(billedTotal(r))}</td>
                     <td className="px-3 py-2.5">
                       {r.recorded_txn_id
                         ? <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-semibold"><Check className="w-3.5 h-3.5" /> Recorded</span>
@@ -262,7 +281,9 @@ export default function FbBillingPage() {
               {visible.length > 0 && (
                 <tr>
                   <td colSpan={6} className="px-3 py-2.5 text-xs font-bold text-slate-700 uppercase sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">Total ({visible.length} day{visible.length === 1 ? "" : "s"})</td>
-                  <td className="px-3 py-2.5 font-bold text-slate-900 tabular-nums whitespace-nowrap sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">{peso(total)}</td>
+                  <td className="px-3 py-2.5 font-bold text-slate-700 tabular-nums whitespace-nowrap sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">{peso(totMedia)}</td>
+                  <td className="px-3 py-2.5 font-bold text-slate-600 tabular-nums whitespace-nowrap sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">{peso(totVat)}</td>
+                  <td className="px-3 py-2.5 font-bold text-slate-900 tabular-nums whitespace-nowrap sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">{peso(totBilled)}</td>
                   <td className="sticky bottom-0 bg-slate-50 border-t-2 border-slate-300" />
                 </tr>
               )}

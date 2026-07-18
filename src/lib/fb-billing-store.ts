@@ -17,12 +17,14 @@ import { getBusinessId } from "@/lib/business"
 // hindi madoble ang ADSPENT computations.
 export const FB_ADS_ACCOUNT = "Facebook Ads"
 export const FB_ADS_TYPE = "Facebook Ads Billing"
+export const FB_VAT_RATE = 0.12   // PH VAT sa Meta ads (12%) — Meta `spend` = media cost lang
 
 export interface FbBillingRecord {
   ad_account_id: string
   date: string              // YYYY-MM-DD
   ad_account_name: string
-  amount: number
+  amount: number            // media cost (Meta insights `spend`, walang VAT)
+  vat: number               // 12% VAT sa media cost
   currency: string
   funding_display: string
   card_last4: string
@@ -31,10 +33,13 @@ export interface FbBillingRecord {
   recorded_txn_id: string | null
 }
 
+// Totoong sinisingil ng Facebook sa card = media cost + VAT.
+export const billedTotal = (r: Pick<FbBillingRecord, "amount" | "vat">) => r.amount + r.vat
+
 function rowTo(r: any): FbBillingRecord {
   return {
     ad_account_id: r.ad_account_id, date: r.date, ad_account_name: r.ad_account_name || "",
-    amount: Number(r.amount) || 0, currency: r.currency || "PHP",
+    amount: Number(r.amount) || 0, vat: Number(r.vat) || 0, currency: r.currency || "PHP",
     funding_display: r.funding_display || "", card_last4: r.card_last4 || "",
     matched_card_id: r.matched_card_id || "", bank: r.bank || "",
     recorded_txn_id: r.recorded_txn_id || null,
@@ -82,5 +87,19 @@ export function useFbBilling() {
       .eq("business_id", businessId).eq("ad_account_id", ad_account_id).eq("date", date)
   }, [])
 
-  return { records, loaded, refresh, saveRecord, setRecordTxn }
+  // Correct an existing record's media/vat + its Book Keeping entry (pag na-settle ang
+  // spend ng Facebook after ng unang sync — para laging tumugma sa totoong billing).
+  const updateRecordAmount = useCallback(async (r: FbBillingRecord, billed: number) => {
+    const businessId = await getBusinessId()
+    if (!businessId) return
+    const supabase = createSupabaseBrowserClient()
+    await supabase.from("fb_billing_records").update({ amount: r.amount, vat: r.vat })
+      .eq("business_id", businessId).eq("ad_account_id", r.ad_account_id).eq("date", r.date)
+    if (r.recorded_txn_id) {
+      await supabase.from("bookkeeping_txns").update({ amount: billed, debit: billed })
+        .eq("business_id", businessId).eq("id", r.recorded_txn_id)
+    }
+  }, [])
+
+  return { records, loaded, refresh, saveRecord, setRecordTxn, updateRecordAmount }
 }
