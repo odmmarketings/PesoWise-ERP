@@ -646,8 +646,10 @@ export default function BookkeepingPage() {
   const [sortAsc, setSortAsc] = useState(true)
 
   const emptyFilters = { dateFrom: "", dateTo: "", voucher: "", transaction: "", department: "", typeOfExpense: "", debit: "", credit: "", bank: "" }
-  const [draft, setDraft] = useState({ ...emptyFilters })
-  const [applied, setApplied] = useState({ ...emptyFilters })
+  // Standard view = THIS MONTH (Clear button pa rin ang pang-view ng lahat).
+  const thisMonth = { dateFrom: new Date().toISOString().slice(0, 8) + "01", dateTo: new Date().toISOString().slice(0, 10) }
+  const [draft, setDraft] = useState({ ...emptyFilters, ...thisMonth })
+  const [applied, setApplied] = useState({ ...emptyFilters, ...thisMonth })
   const setD = (k: keyof typeof emptyFilters, v: string) => setDraft(p => ({ ...p, [k]: v }))
 
   const [showAdd, setShowAdd] = useState(false)
@@ -754,8 +756,8 @@ export default function BookkeepingPage() {
 
         <button onClick={() => setSortAsc(s => !s)} className="text-sm text-blue-600 hover:text-blue-700 mb-2">Arrange Posted Date <span className="font-semibold">{sortAsc ? "Ascending" : "Descending"}</span></button>
 
-        {/* Table */}
-        <div className="overflow-auto border-t border-slate-100">
+        {/* Table — naka-cap ang height para laging kita ang frozen TOTAL row sa baba */}
+        <div className="overflow-auto border-t border-slate-100 max-h-[65vh]">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-slate-600">
@@ -821,11 +823,11 @@ export default function BookkeepingPage() {
             </tbody>
             {filtered.length > 0 && (
               <tfoot>
-                <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold text-slate-800">
-                  <td className="px-3 py-2.5" colSpan={6}>TOTAL ({filtered.length})</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">{fmtAmount(filtered.reduce((s, t) => s + t.debit, 0))}</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">{fmtAmount(filtered.reduce((s, t) => s + t.credit, 0))}</td>
-                  <td colSpan={2}></td>
+                <tr className="font-bold text-slate-800">
+                  <td className="px-3 py-2.5 sticky bottom-0 bg-slate-50 border-t-2 border-slate-300" colSpan={6}>TOTAL ({filtered.length})</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">{fmtAmount(filtered.reduce((s, t) => s + t.debit, 0))}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">{fmtAmount(filtered.reduce((s, t) => s + t.credit, 0))}</td>
+                  <td colSpan={2} className="sticky bottom-0 bg-slate-50 border-t-2 border-slate-300"></td>
                 </tr>
               </tfoot>
             )}

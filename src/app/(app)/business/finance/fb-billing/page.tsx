@@ -37,8 +37,9 @@ export default function FbBillingPage() {
   const [fAccount, setFAccount] = useState("All")
   const [fOwner, setFOwner] = useState("All")
   const [fBank, setFBank] = useState("All")
-  const [dateA, setDateA] = useState("")   // date range filter (Pancake-style picker); "" = all dates
-  const [dateB, setDateB] = useState("")
+  // Standard view = THIS MONTH; i-clear ang picker para makita lahat.
+  const [dateA, setDateA] = useState(dstr(new Date()).slice(0, 8) + "01")
+  const [dateB, setDateB] = useState(dstr(new Date()))
   const autoRan = useRef(false)
 
   const eligible = useMemo(
@@ -179,7 +180,7 @@ export default function FbBillingPage() {
         <div className="flex items-center justify-between flex-wrap gap-3 mb-4 pb-4 border-b border-slate-100">
           <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Receipt className="w-5 h-5" /> FACEBOOK BILLING HISTORY</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            <DateRangePicker a={dateA} b={dateB} variant="header" placeholder="All dates"
+            <DateRangePicker a={dateA} b={dateB} variant="header" placeholder="This month"
               onApply={(a, b) => { setDateA(a || ""); setDateB(b || "") }} />
             <select className={SEL} value={fAccount} onChange={e => setFAccount(e.target.value)} title="Ad Account">
               <option>All</option>
@@ -211,7 +212,7 @@ export default function FbBillingPage() {
           </div>
         )}
 
-        <div className="overflow-auto border border-slate-200 rounded-xl">
+        <div className="overflow-auto border border-slate-200 rounded-xl max-h-[65vh]">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
@@ -252,10 +253,10 @@ export default function FbBillingPage() {
                 )
               })}
               {visible.length > 0 && (
-                <tr className="bg-slate-50 border-t-2 border-slate-300">
-                  <td colSpan={6} className="px-3 py-2.5 text-xs font-bold text-slate-700 uppercase">Total ({visible.length} day{visible.length === 1 ? "" : "s"})</td>
-                  <td className="px-3 py-2.5 font-bold text-slate-900 tabular-nums whitespace-nowrap">{peso(total)}</td>
-                  <td />
+                <tr>
+                  <td colSpan={6} className="px-3 py-2.5 text-xs font-bold text-slate-700 uppercase sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">Total ({visible.length} day{visible.length === 1 ? "" : "s"})</td>
+                  <td className="px-3 py-2.5 font-bold text-slate-900 tabular-nums whitespace-nowrap sticky bottom-0 bg-slate-50 border-t-2 border-slate-300">{peso(total)}</td>
+                  <td className="sticky bottom-0 bg-slate-50 border-t-2 border-slate-300" />
                 </tr>
               )}
             </tbody>
