@@ -4,11 +4,18 @@ import { getEcomSetting, setEcomSetting } from "@/lib/ecom-settings"
 
 // Custom (o auto) na kulay per page — shared via ecommerce_settings.page_colors.
 // Kung walang custom, deterministic ang kulay mula sa page id (stable kahit walang set).
+// Muted, professional tones (Tailwind 500/600) — distinguishable pero hindi neon.
 const PALETTE = [
-  "#fb923c", "#60a5fa", "#34d399", "#f472b6", "#a78bfa", "#fbbf24",
-  "#22d3ee", "#f87171", "#4ade80", "#c084fc", "#38bdf8", "#facc15",
-  "#fca5a5", "#818cf8", "#2dd4bf", "#e879f9",
+  "#2563eb", "#0891b2", "#0d9488", "#059669", "#65a30d",
+  "#ca8a04", "#d97706", "#ea580c", "#dc2626", "#db2777",
+  "#9333ea", "#7c3aed", "#4f46e5", "#475569", "#0284c7", "#16a34a",
 ]
+
+// Ilaw na tint ng isang hex (para sa subtle row background) — "RRGGBB" + alpha hex.
+export function tint(hex: string, alphaHex = "14"): string {
+  const c = hex.replace("#", "")
+  return c.length >= 6 ? `#${c.slice(0, 6)}${alphaHex}` : hex
+}
 
 export function colorForPage(id: string, custom: Record<string, string>): string {
   if (custom[id]) return custom[id]

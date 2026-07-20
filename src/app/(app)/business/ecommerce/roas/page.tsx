@@ -5,7 +5,7 @@ import { format, startOfMonth, eachDayOfInterval } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { useFBAccounts, actId } from "@/lib/fb-store"
-import { usePageColors, colorForPage, textOn } from "@/lib/page-colors"
+import { usePageColors, colorForPage, tint } from "@/lib/page-colors"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 
 const PLATFORMS = ["Facebook Ecom", "Instagram", "TikTok", "Shopee", "Lazada"]
@@ -29,9 +29,13 @@ function fmtPeso(n: number) {
   return n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+// ROAS color tiers (Ads-Manager style): green pag mataas, pababa hanggang pula.
+//   ≥ 4.9 green · 3.0–4.89 amber · 2.0–2.99 orange · >0 <2 red · 0/none gray
 function roasColor(roas: number) {
-  if (roas > 4.9) return "#16a34a"
+  if (roas <= 0) return "#94a3b8"
+  if (roas >= 4.9) return "#16a34a"
   if (roas >= 3) return "#d97706"
+  if (roas >= 2) return "#ea580c"
   return "#dc2626"
 }
 
@@ -252,20 +256,20 @@ export default function ROASTrackerPage() {
     } catch {}
   }
 
-  async function handleSubmit(force = false) {
-    if (selectedPages.length === 0) return
+  async function handleSubmit(force = false, pages: typeof selectedPages = selectedPages) {
+    if (pages.length === 0) return
     setSubmitted(true)
     setApplied({ from, to })   // lock the table to the range at submit time
-    setAppliedPageIds(selectedPages.map(p => p.id))   // snapshot pages — table shows these lang
+    setAppliedPageIds(pages.map(p => p.id))   // snapshot pages — table shows these lang
     setErrors({})
 
     const fromStr = format(from, "yyyy-MM-dd")
     const toStr = format(to, "yyyy-MM-dd")
-    syncAdspentFromFB(selectedPages, fromStr, toStr)   // background — fills Ad Spent for the range
+    syncAdspentFromFB(pages, fromStr, toStr)   // background — fills Ad Spent for the range
 
     // Serve fresh-cached pages instantly; only network-fetch the stale/missing ones.
     const cachedData: Record<string, PageData> = {}
-    const toFetch = selectedPages.filter(page => {
+    const toFetch = pages.filter(page => {
       const pageId = page.pancake_page_id || page.shop_id
       const c = ROAS_CACHE.get(`${pageId}|${fromStr}|${toStr}`)
       if (!force && c && Date.now() - c.ts < ROAS_TTL) { cachedData[page.id] = c.data; return false }
@@ -302,12 +306,19 @@ export default function ROASTrackerPage() {
   // Persist the view so returning to the tab restores the selection + range + submitted state.
   useEffect(() => { roasView = { selectedPageIds, appliedPageIds, dateA, dateB, submitted, applied, tab } }, [selectedPageIds, appliedPageIds, dateA, dateB, submitted, applied, tab])
 
-  // On return: if there was a submitted selection, re-run once pages are loaded — cache makes it instant.
+  // Page Report ay AGAD nakalabas: sa unang bisita, auto-load ang LAHAT ng active pages
+  // (parang alt-tab — nandun na agad). Kung may naka-submit nang view, i-restore yun.
   const didRestore = useRef(false)
   useEffect(() => {
     if (didRestore.current || allPages.length === 0) return
     didRestore.current = true
-    if (roasView?.submitted && (roasView.selectedPageIds?.length ?? 0) > 0) handleSubmit()
+    if (roasView?.submitted && (roasView.appliedPageIds?.length ?? 0) > 0) {
+      const restored = allPages.filter(p => roasView!.appliedPageIds.includes(p.id))
+      handleSubmit(false, restored)
+      return
+    }
+    setSelectedPageIds(allPages.map(p => p.id))
+    handleSubmit(false, allPages)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allPages.length])
 
@@ -345,6 +356,8 @@ export default function ROASTrackerPage() {
       const roas = adspent > 0 ? sales / adspent : 0
       return { page, parcels, adspent, vat, sales, roas }
     })
+    // Mga may spent O sales lang ang lumalabas ng kusa (itago ang 0/0 na pages).
+    .filter(r => r.adspent > 0 || r.sales > 0)
     rows.sort((a, b) => roasSort === "desc" ? b.roas - a.roas : a.roas - b.roas)
     return rows
   }, [pageTableData, roasSort])
@@ -563,48 +576,47 @@ export default function ROASTrackerPage() {
 
           {/* ── PAGE REPORT: one row per page, sortable by ROAS, with totals ── */}
           {tab === "report" && (
-            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden inline-block max-w-full align-top">
               <div className="overflow-auto max-h-[74vh]">
-                <table className="w-full text-sm">
+                <table className="w-auto text-sm border-collapse">
                   <thead className="sticky top-0 z-10">
-                    <tr className="bg-slate-800 text-white">
-                      <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide">Page</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Parcels</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Ad Spend</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">VAT 12%</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Total Ad Cost</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Sales</th>
-                      <th className="px-4 py-3 text-right cursor-pointer select-none hover:bg-slate-700"
+                    <tr className="bg-slate-800 text-white text-xs font-semibold uppercase tracking-wide">
+                      <th className="px-4 py-2.5 text-left">Page</th>
+                      <th className="px-4 py-2.5 text-right">Parcels</th>
+                      <th className="px-4 py-2.5 text-right">Ad Spend</th>
+                      <th className="px-4 py-2.5 text-right">VAT 12%</th>
+                      <th className="px-4 py-2.5 text-right">Total Cost</th>
+                      <th className="px-4 py-2.5 text-right">Sales</th>
+                      <th className="px-4 py-2.5 text-right cursor-pointer select-none hover:bg-slate-700"
                         onClick={() => setRoasSort(s => s === "desc" ? "asc" : "desc")}
                         title="I-click para i-sort (highest ↔ lowest)">
-                        <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide">
-                          ROAS <ArrowDownUp className="w-3.5 h-3.5" />
-                          <span className="text-[10px] font-normal opacity-70">{roasSort === "desc" ? "high→low" : "low→high"}</span>
+                        <span className="inline-flex items-center gap-1">
+                          ROAS <ArrowDownUp className="w-3.5 h-3.5 opacity-80" />
                         </span>
                       </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {pageReport.map(({ page, parcels, adspent, vat, sales, roas }) => {
-                      const bg = colorForPage(page.id, colors)
+                      const clr = colorForPage(page.id, colors)
                       return (
-                        <tr key={page.id} className="hover:bg-slate-50/70">
-                          <td className="px-4 py-2.5">
-                            <div className="flex items-center gap-2">
-                              <label className="relative w-4 h-4 rounded-full flex-shrink-0 cursor-pointer ring-1 ring-black/10" style={{ background: bg }} title="Palitan ang kulay">
-                                <input type="color" value={bg} onChange={e => setColor(page.id, e.target.value)}
+                        <tr key={page.id} className="hover:bg-slate-50" style={{ background: tint(clr, "0f") }}>
+                          <td className="px-4 py-2.5 border-l-[3px] whitespace-nowrap" style={{ borderColor: clr }}>
+                            <div className="flex items-center gap-2.5">
+                              <label className="relative w-3 h-3 rounded-full flex-shrink-0 cursor-pointer ring-1 ring-black/10" style={{ background: clr }} title="Palitan ang kulay">
+                                <input type="color" value={clr} onChange={e => setColor(page.id, e.target.value)}
                                   className="absolute inset-0 opacity-0 cursor-pointer" />
                               </label>
-                              <span className="inline-block rounded-md px-2 py-0.5 text-xs font-semibold" style={{ background: bg, color: textOn(bg) }}>{page.name}</span>
+                              <span className="font-semibold text-slate-800">{page.name}</span>
                             </div>
                           </td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{parcels.toLocaleString("en-PH")}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-blue-600 font-medium">{fmtPeso(adspent)}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPeso(vat)}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{fmtPeso(adspent + vat)}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-800 font-medium">{fmtPeso(sales)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{parcels.toLocaleString("en-PH")}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtPeso(adspent)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-400">{fmtPeso(vat)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPeso(adspent + vat)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-slate-800">{fmtPeso(sales)}</td>
                           <td className="px-4 py-2.5 text-right">
-                            <span className="inline-block rounded-md px-2.5 py-1 text-sm font-bold text-white tabular-nums" style={{ background: roasColor(roas) }}>
+                            <span className="inline-block rounded-md px-2.5 py-1 text-sm font-bold text-white tabular-nums min-w-[52px]" style={{ background: roasColor(roas) }}>
                               {roas > 0 ? roas.toFixed(2) : "—"}
                             </span>
                           </td>
@@ -613,15 +625,15 @@ export default function ROASTrackerPage() {
                     })}
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
-                    <tr style={{ background: "#f5c842" }} className="font-bold text-slate-900">
-                      <td className="px-4 py-3 text-xs uppercase tracking-wide">Total ({pageReport.length} page{pageReport.length === 1 ? "" : "s"})</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{reportTotal.parcels.toLocaleString("en-PH")}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.adspent)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.vat)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.adspent + reportTotal.vat)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.sales)}</td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="inline-block rounded-md px-2.5 py-1 text-sm font-bold text-white tabular-nums" style={{ background: roasColor(reportTotalRoas) }}>
+                    <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
+                      <td className="px-4 py-2.5 text-xs uppercase tracking-wide whitespace-nowrap">Total · {pageReport.length} page{pageReport.length === 1 ? "" : "s"}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">{reportTotal.parcels.toLocaleString("en-PH")}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">{fmtPeso(reportTotal.adspent)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPeso(reportTotal.vat)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{fmtPeso(reportTotal.adspent + reportTotal.vat)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">{fmtPeso(reportTotal.sales)}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="inline-block rounded-md px-2.5 py-1 text-sm font-bold text-white tabular-nums min-w-[52px]" style={{ background: roasColor(reportTotalRoas) }}>
                           {reportTotalRoas > 0 ? reportTotalRoas.toFixed(2) : "—"}
                         </span>
                       </td>
@@ -629,8 +641,8 @@ export default function ROASTrackerPage() {
                   </tfoot>
                 </table>
               </div>
-              <p className="px-4 py-2.5 text-[11px] text-slate-400 border-t border-slate-100">
-                ROAS = Sales ÷ Ad Spend. I-click ang ⬤ swatch para palitan ang kulay ng page. I-click ang ROAS header para i-sort (highest ↔ lowest).
+              <p className="px-4 py-2 text-[11px] text-slate-400 border-t border-slate-100">
+                ROAS = Sales ÷ Ad Spend · ⬤ swatch para palitan ang kulay · click ROAS header para i-sort · mga may spent/sales lang ang nakalista.
               </p>
             </div>
           )}
