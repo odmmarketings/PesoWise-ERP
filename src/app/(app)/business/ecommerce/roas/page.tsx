@@ -1,7 +1,7 @@
 "use client"
 import { useState, useMemo, useRef, useEffect, Fragment } from "react"
 import { ChevronDown, Check, Search, X, RefreshCw, Activity, ArrowDownUp, BarChart3, CalendarDays } from "lucide-react"
-import { format, startOfMonth, eachDayOfInterval } from "date-fns"
+import { format, startOfMonth, eachDayOfInterval, subDays } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { useFBAccounts, actId } from "@/lib/fb-store"
@@ -37,6 +37,39 @@ function roasColor(roas: number) {
   if (roas >= 3) return "#d97706"
   if (roas >= 2) return "#ea580c"
   return "#dc2626"
+}
+
+// Today-vs-Yesterday glance card (beside the Page Report). ROAS is already VAT-inclusive.
+type Agg = { orders: number; sales: number; adspent: number; roas: number }
+function YesterdayCompare({ today, yest }: { today: Agg; yest: Agg }) {
+  const Cell = ({ children, className = "" }: { children: React.ReactNode; className?: string }) =>
+    <td className={`px-3 py-2 text-center tabular-nums border border-slate-200 ${className}`}>{children}</td>
+  const Label = ({ children }: { children: React.ReactNode }) =>
+    <td className="px-3 py-2 text-left font-semibold text-white bg-teal-700 border border-teal-600 uppercase text-xs tracking-wide whitespace-nowrap">{children}</td>
+  const money = (n: number) => n.toLocaleString("en-PH", { maximumFractionDigits: 0 })
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden w-[340px] max-w-full">
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr>
+            <th className="px-3 py-2.5 text-left text-xs font-bold uppercase tracking-wide bg-slate-800 text-white border border-slate-700">Yesterday Comparison</th>
+            <th className="px-3 py-2.5 text-center text-xs font-bold uppercase bg-teal-600 text-white border border-teal-500 w-[90px]">Today</th>
+            <th className="px-3 py-2.5 text-center text-xs font-bold uppercase bg-slate-400 text-white border border-slate-300 w-[90px]">Yesterday</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><Label>Generate Orders</Label><Cell className="font-semibold text-slate-800">{today.orders.toLocaleString("en-PH")}</Cell><Cell className="text-slate-500">{yest.orders.toLocaleString("en-PH")}</Cell></tr>
+          <tr><Label>Adspent</Label><Cell className="text-slate-700">{money(today.adspent)}</Cell><Cell className="text-slate-500">{money(yest.adspent)}</Cell></tr>
+          <tr><Label>Conversion Value</Label><Cell className="font-semibold text-slate-800">{money(today.sales)}</Cell><Cell className="text-slate-500">{money(yest.sales)}</Cell></tr>
+          <tr>
+            <Label>ROAS (w/ VAT)</Label>
+            <Cell className="text-white font-bold" ><span className="inline-block w-full py-0.5 rounded" style={{ background: roasColor(today.roas) }}>{today.roas > 0 ? today.roas.toFixed(2) : "—"}</span></Cell>
+            <Cell className="text-white font-bold"><span className="inline-block w-full py-0.5 rounded" style={{ background: roasColor(yest.roas) }}>{yest.roas > 0 ? yest.roas.toFixed(2) : "—"}</span></Cell>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 // Searchable Filter Page — tag/chip style like the reference
@@ -367,6 +400,25 @@ export default function ROASTrackerPage() {
   }), { parcels: 0, adspent: 0, vat: 0, sales: 0 }), [pageReport])
   const reportTotalRoas = reportTotal.adspent > 0 ? reportTotal.sales / reportTotal.adspent : 0
 
+  // Today-vs-Yesterday — sum across all active pages. ROAS = Sales ÷ (Adspent + 12% VAT).
+  const compare = useMemo(() => {
+    const todayStr = format(new Date(), "yyyy-MM-dd")
+    const yestStr = format(subDays(new Date(), 1), "yyyy-MM-dd")
+    const sumDay = (dateStr: string): Agg => {
+      let orders = 0, sales = 0, adspent = 0
+      for (const page of allPages) {
+        const d = realData[page.id]?.[dateStr]
+        orders += d?.orders ?? 0
+        sales += d?.sales ?? 0
+        adspent += adspentStore.get(page.id, dateStr)
+      }
+      const roas = adspent > 0 ? sales / (adspent + adspent * VAT_RATE) : 0
+      return { orders, sales, adspent, roas }
+    }
+    return { today: sumDay(todayStr), yest: sumDay(yestStr) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPages, realData, adspentStore.map])
+
   // Aggregate totals across all selected pages per date
   const totalRows = useMemo(() =>
     dateRange.map(date => {
@@ -570,15 +622,16 @@ export default function ROASTrackerPage() {
             </button>
           </div>
 
-          {/* ── PAGE REPORT: one row per page, sortable by ROAS, with totals ── */}
+          {/* ── PAGE REPORT: per-page summary + Today-vs-Yesterday glance card ── */}
           {tab === "report" && (
-            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden inline-block max-w-full align-top">
-              <div className="overflow-auto max-h-[74vh]">
+            <div className="flex flex-wrap gap-4 items-start">
+              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden max-w-full align-top">
+                <div className="overflow-auto max-h-[74vh]">
                 <table className="w-auto text-sm border-collapse">
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-slate-800 text-white text-xs font-semibold uppercase tracking-wide">
                       <th className="px-4 py-2.5 text-left">Page</th>
-                      <th className="px-4 py-2.5 text-right">Parcels</th>
+                      <th className="px-4 py-2.5 text-right">Orders</th>
                       <th className="px-4 py-2.5 text-right">Ad Spend</th>
                       <th className="px-4 py-2.5 text-right">VAT 12%</th>
                       <th className="px-4 py-2.5 text-right">Total Cost</th>
@@ -643,6 +696,8 @@ export default function ROASTrackerPage() {
               <p className="px-4 py-2 text-[11px] text-slate-400 border-t border-slate-100">
                 ROAS = Sales ÷ Ad Spend · ⬤ swatch para palitan ang kulay · click ROAS header para i-sort · mga may spent/sales lang ang nakalista.
               </p>
+              </div>
+              <YesterdayCompare today={compare.today} yest={compare.yest} />
             </div>
           )}
 
