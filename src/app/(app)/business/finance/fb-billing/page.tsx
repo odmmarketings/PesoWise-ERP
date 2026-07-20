@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { Receipt, RefreshCw, Check, CreditCard, AlertTriangle, Plus, X, Trash2, BarChart3 } from "lucide-react"
+import { createSupabaseBrowserClient } from "@/lib/supabase"
+import { getBusinessId } from "@/lib/business"
 import { useFBAccounts, actId } from "@/lib/fb-store"
 import { useFinanceCards, cardLabel, cardLast4, type FinanceCard } from "@/lib/cards-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
@@ -16,6 +18,17 @@ const peso = (n: number) => "₱ " + n.toLocaleString("en-PH", { minimumFraction
 
 function dstr(d: Date) { return d.toISOString().slice(0, 10) }
 function daysAgo(n: number) { const d = new Date(); d.setDate(d.getDate() - n); return dstr(d) }
+
+// Relative time (para sa auto-sync banner): "2 hours ago", "Jul 20, 9:03 AM".
+function relTime(iso: string): string {
+  const then = new Date(iso).getTime()
+  const mins = Math.round((Date.now() - then) / 60000)
+  if (mins < 1) return "kakalang lang"
+  if (mins < 60) return `${mins} min ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`
+  return new Date(iso).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
 
 // Itugma ang last-4 sa CARDS registry (card number → account number → manual link).
 function matchCard(cards: FinanceCard[], last4: string, manualCardId = ""): FinanceCard | undefined {
@@ -51,6 +64,18 @@ export default function FbBillingPage() {
   const [confirmDelete, setConfirmDelete] = useState<FbPaidCharge | null>(null)
   const autoRan = useRef(false)
   const refsEnsured = useRef(false)
+
+  // Auto-sync status (isinusulat ng daily scheduled task) — "Last synced" message.
+  const [syncStatus, setSyncStatus] = useState<{ last_sync_at: string | null; ok: boolean; note: string } | null>(null)
+  useEffect(() => {
+    (async () => {
+      const businessId = await getBusinessId()
+      if (!businessId) return
+      const supabase = createSupabaseBrowserClient()
+      const { data } = await supabase.from("fb_sync_status").select("last_sync_at, ok, note").eq("business_id", businessId).maybeSingle()
+      if (data) setSyncStatus(data)
+    })()
+  }, [])
 
   const eligible = useMemo(
     () => fb.accounts.filter(a => !a.archived && a.ad_account_id && a.token),
@@ -229,6 +254,17 @@ export default function FbBillingPage() {
             )}
           </div>
         </div>
+
+        {/* Auto-sync status — isinusulat ng daily scheduled task */}
+        {syncStatus && (
+          <div className={`mb-4 p-3 rounded-lg text-sm border flex items-start gap-2 ${syncStatus.ok ? "bg-blue-50 border-blue-200 text-blue-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+            <RefreshCw className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>
+              <span className="font-semibold">Auto-sync (daily):</span> {syncStatus.note}
+              {syncStatus.last_sync_at && <span className="opacity-70"> · {relTime(syncStatus.last_sync_at)}</span>}
+            </span>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex items-center gap-1 mb-4">
