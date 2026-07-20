@@ -791,17 +791,46 @@ function CameraScanScreen({ rows, rts, onClose }: {
   }
 
   async function startCamera() {
+    controlsRef.current?.stop()
     setCamState("starting"); setCamErr("")
+    // High-res back camera — dense waybill barcodes need the extra pixels to decode.
+    const constraints: MediaStreamConstraints = {
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    }
     try {
-      const { BrowserMultiFormatReader } = await import("@zxing/browser")
-      const reader = new BrowserMultiFormatReader()
-      const controls = await reader.decodeFromConstraints(
-        { video: { facingMode: "environment" } },
-        videoRef.current!,
-        result => { if (result) handleDecode(result.getText()) }
-      )
-      controlsRef.current = controls
-      setCamState("on")
+      const BD = (window as any).BarcodeDetector
+      if (BD) {
+        // Native BarcodeDetector — fastest + most reliable path (Android Chrome). We own the
+        // stream so the feed always renders (explicit play) and we scan the FULL frame.
+        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        const video = videoRef.current!
+        video.srcObject = stream
+        await video.play().catch(() => {})
+        setCamState("on")
+        let detector: any
+        try {
+          const supported: string[] | undefined = await BD.getSupportedFormats?.()
+          const want = ["code_128", "code_39", "codabar", "ean_13", "ean_8", "itf", "upc_a", "upc_e", "qr_code", "data_matrix"]
+          const formats = supported ? want.filter(f => supported.includes(f)) : want
+          detector = new BD(formats.length ? { formats } : undefined)
+        } catch { detector = new BD() }
+        let stopped = false
+        let timer: ReturnType<typeof setTimeout> | null = null
+        const tick = async () => {
+          if (stopped) return
+          try { const codes = await detector.detect(video); if (codes?.length) handleDecode(codes[0].rawValue) } catch {}
+          if (!stopped) timer = setTimeout(tick, 120)
+        }
+        tick()
+        controlsRef.current = { stop: () => { stopped = true; if (timer) clearTimeout(timer); stream.getTracks().forEach(t => t.stop()) } }
+      } else {
+        // Fallback (iOS Safari / older browsers): ZXing over the same high-res constraints.
+        const { BrowserMultiFormatReader } = await import("@zxing/browser")
+        const reader = new BrowserMultiFormatReader()
+        const controls = await reader.decodeFromConstraints(constraints, videoRef.current!, result => { if (result) handleDecode(result.getText()) })
+        controlsRef.current = controls
+        setCamState("on")
+      }
     } catch (e: any) {
       setCamState("error")
       setCamErr(e?.message || "Camera unavailable")
@@ -887,11 +916,6 @@ function CameraScanScreen({ rows, rts, onClose }: {
       {/* Camera area */}
       <div className="relative flex-1 min-h-0 bg-black">
         <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
-        {camState === "on" && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="w-[82%] max-w-sm h-32 border-2 border-white/80 rounded-xl" style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }} />
-          </div>
-        )}
         {camState !== "on" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
             {camState === "error" ? (
