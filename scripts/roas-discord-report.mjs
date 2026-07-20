@@ -84,6 +84,16 @@ function phNowLabel() {
   const p = (n) => String(n).padStart(2, "0")
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
 }
+// Discord caption stamp — "JULY 20, 2026 | 9:00AM" from the actual PH send time.
+const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
+function phReportStamp() {
+  const d = new Date(NOW + PH_OFFSET)
+  let h = d.getUTCHours()
+  const ampm = h >= 12 ? "PM" : "AM"
+  h = h % 12 || 12
+  const min = String(d.getUTCMinutes()).padStart(2, "0")
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} | ${h}:${min}${ampm}`
+}
 
 // Report window → date range + label. Fetch range always covers yesterday+today too
 // (needed by the comparison card).
@@ -329,7 +339,7 @@ async function htmlToPng(html) {
 // Upload a PNG to the Discord webhook (multipart), with a short caption line.
 async function sendImage(buf, caption) {
   const form = new FormData()
-  form.append("payload_json", JSON.stringify({ username: "PesoWise ROAS", content: caption }))
+  form.append("payload_json", JSON.stringify({ username: "AI Agent Report", content: caption }))
   form.append("files[0]", new Blob([buf], { type: "image/png" }), "roas-report.png")
   const res = await fetch(WEBHOOK, { method: "POST", body: form })
   if (!res.ok) throw new Error(`Discord webhook failed: HTTP ${res.status} ${await res.text().catch(() => "")}`)
@@ -434,7 +444,7 @@ async function main() {
 
   // 8. Build the visual report
   const nowLabel = phNowLabel()
-  const caption = `📊 **Page ROAS Report** — ${windowLabel} · ${nowLabel} PHT`
+  const caption = `📊 **${phReportStamp()} SALES REPORT**`
   const model = { report, totals, totalRoas, today, yest, pageColors, windowLabel, nowLabel }
   const diag = `pages=${pages.length} listed=${report.length} pancakeErr=${pancakeErrors.length} fbPages=${fbPages} fbErr=${fbErrors} window=${WINDOW}`
 
@@ -454,7 +464,7 @@ async function main() {
       ["ROAS (w/ VAT)", roasTxt(today.roas), roasTxt(yest.roas)],
     ], ["l", "r", "r"])
     return {
-      username: "PesoWise ROAS",
+      username: "AI Agent Report",
       embeds: [{
         title: "📊 Page ROAS Report",
         description: `**Page Report — ${windowLabel}**\n\`\`\`\n${reportTbl}\n\`\`\`\n**Today vs Yesterday**\n\`\`\`\n${[ct.header, ...ct.body].join("\n")}\n\`\`\``,
