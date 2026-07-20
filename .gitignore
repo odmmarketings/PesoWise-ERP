@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# daily FB sync temp scrape file
+scripts/_*.json
+
+.vercel
+.env*
