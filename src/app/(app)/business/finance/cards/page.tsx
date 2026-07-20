@@ -9,17 +9,17 @@ import { isMotherAccount } from "@/lib/users-store"
 
 const SEL = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400"
 
-// Card tile gradient per provider — para mukhang totoong cards ang registry.
-function providerStyle(p: string): string {
+// Provider accent color (dot sa table) — mabilis na visual ID per card type.
+function providerColor(p: string): string {
   const s = (p || "").toLowerCase()
-  if (s.includes("paymaya credit")) return "from-emerald-700 to-slate-900"
-  if (s.includes("paymaya") || s.includes("maya")) return "from-emerald-500 to-teal-700"
-  if (s.includes("gotyme")) return "from-cyan-600 to-blue-800"
-  if (s.includes("gcash")) return "from-blue-500 to-blue-800"
-  if (s.includes("bpi")) return "from-red-600 to-red-900"
-  if (s.includes("union")) return "from-orange-500 to-amber-700"
-  if (s.includes("china")) return "from-rose-600 to-rose-900"
-  return "from-slate-600 to-slate-900"
+  if (s.includes("paymaya credit")) return "#047857"  // emerald-700
+  if (s.includes("paymaya") || s.includes("maya")) return "#10b981"  // emerald-500
+  if (s.includes("gotyme")) return "#0891b2"  // cyan-600
+  if (s.includes("gcash")) return "#3b82f6"  // blue-500
+  if (s.includes("bpi")) return "#dc2626"  // red-600
+  if (s.includes("union")) return "#f97316"  // orange-500
+  if (s.includes("china")) return "#e11d48"  // rose-600
+  return "#64748b"  // slate-500
 }
 
 // Downscale an uploaded QR image to a compact data URL (same approach as BM pictures).
@@ -187,53 +187,79 @@ export default function FinanceCardsPage() {
         ) : visibleCards.length === 0 ? (
           <p className="text-sm text-slate-400 italic py-10 text-center">Walang {filter} cards.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {visibleCards.map(c => {
-              const shown = revealed.has(c.id)
-              const links = connectedCount(c.id)
-              return (
-                <div key={c.id} className={`relative rounded-2xl bg-gradient-to-br ${providerStyle(c.provider)} text-white p-5 shadow-md overflow-hidden`}>
-                  <CreditCard strokeWidth={1} className="absolute -right-4 -bottom-4 w-28 h-28 opacity-10 pointer-events-none" />
-                  <div className="flex items-start justify-between">
-                    <span className="text-[11px] font-bold tracking-widest uppercase bg-white/15 rounded px-2 py-0.5">{c.provider || "Card"}</span>
-                    <div className="flex items-center gap-1.5">
-                      {c.qr_data && (
-                        <button title="View QR" onClick={() => setQrView(c)} className="w-7 h-7 flex items-center justify-center rounded bg-white/15 hover:bg-white/25"><QrCode className="w-4 h-4" /></button>
-                      )}
-                      <button title={shown ? "Hide" : "Show number & CVV"} onClick={() => toggleReveal(c.id)} className="w-7 h-7 flex items-center justify-center rounded bg-white/15 hover:bg-white/25">
-                        {shown ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                      <button title="Edit" onClick={() => setEdit(c)} className="w-7 h-7 flex items-center justify-center rounded bg-white/15 hover:bg-white/25"><Pencil className="w-4 h-4" /></button>
-                      {admin && (
-                        <button title="Delete (admin)" onClick={() => setConfirmDelete(c)} className="w-7 h-7 flex items-center justify-center rounded bg-white/15 hover:bg-red-500/70"><Trash2 className="w-4 h-4" /></button>
-                      )}
-                    </div>
-                  </div>
-
-                  <p className="mt-5 text-lg font-semibold tracking-widest tabular-nums">
-                    {(() => { const big = c.card_number || c.account_number; return shown ? big : maskCardNumber(big) })()}
-                  </p>
-                  <p className="text-[11px] opacity-75 tabular-nums mt-0.5">
-                    Acct #: {shown ? c.account_number : maskCardNumber(c.account_number)}
-                  </p>
-                  <div className="mt-3 flex items-end justify-between gap-2">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider opacity-70">Account Name</p>
-                      <p className="text-sm font-semibold leading-tight">{c.name}</p>
-                      {c.username && <p className="text-[11px] opacity-75 leading-tight mt-0.5">User: {c.username}</p>}
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] uppercase tracking-wider opacity-70">Expiry · CVV</p>
-                      <p className="text-sm font-semibold tabular-nums">{c.expiry || "—"} · {shown ? (c.cvv || "—") : "•••"}</p>
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-1.5 opacity-90"><Link2 className="w-3.5 h-3.5" /> {links} connected ad account{links === 1 ? "" : "s"}</span>
-                    {c.remarks && <span className="opacity-70 truncate max-w-[45%]" title={c.remarks}>{c.remarks}</span>}
-                  </div>
-                </div>
-              )
-            })}
+          <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 text-[11px] font-semibold uppercase tracking-wide border-b border-slate-200">
+                    <th className="px-4 py-3 text-left">Card Type</th>
+                    <th className="px-4 py-3 text-left">Card Number</th>
+                    <th className="px-4 py-3 text-left">Account #</th>
+                    <th className="px-4 py-3 text-left">Account Name</th>
+                    <th className="px-4 py-3 text-left">Expiry</th>
+                    <th className="px-4 py-3 text-left">CVV</th>
+                    <th className="px-4 py-3 text-left">Ad Accounts</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {visibleCards.map(c => {
+                    const shown = revealed.has(c.id)
+                    const links = connectedCount(c.id)
+                    return (
+                      <tr key={c.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 ring-1 ring-black/5" style={{ background: providerColor(c.provider) }} />
+                            <span className="font-semibold text-slate-800">{c.provider || "Card"}</span>
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap font-mono tabular-nums text-slate-700">
+                          {c.card_number ? (shown ? c.card_number : maskCardNumber(c.card_number)) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap font-mono tabular-nums text-slate-600">
+                          {c.account_number ? (shown ? c.account_number : maskCardNumber(c.account_number)) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 min-w-[180px]">
+                          <p className="font-semibold text-slate-800 leading-tight">{c.name}</p>
+                          {c.username && <p className="text-xs text-slate-400 leading-tight mt-0.5">User: {c.username}</p>}
+                          {c.remarks && <p className="text-xs text-slate-400 italic leading-tight mt-0.5 max-w-[220px] truncate" title={c.remarks}>{c.remarks}</p>}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap font-mono tabular-nums text-slate-600">{c.expiry || <span className="text-slate-300">—</span>}</td>
+                        <td className="px-4 py-3 whitespace-nowrap font-mono tabular-nums text-slate-600">{shown ? (c.cvv || "—") : "•••"}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {links > 0 ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 text-xs font-semibold" title={`${links} connected ad account${links === 1 ? "" : "s"}`}>
+                              <Link2 className="w-3.5 h-3.5" /> {links}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <button title={shown ? "Hide number & CVV" : "Show number & CVV"} onClick={() => toggleReveal(c.id)}
+                              className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700">
+                              {shown ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                            {c.qr_data && (
+                              <button title="View QR" onClick={() => setQrView(c)}
+                                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"><QrCode className="w-4 h-4" /></button>
+                            )}
+                            <button title="Edit" onClick={() => setEdit(c)}
+                              className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"><Pencil className="w-4 h-4" /></button>
+                            {admin && (
+                              <button title="Delete (admin)" onClick={() => setConfirmDelete(c)}
+                                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
