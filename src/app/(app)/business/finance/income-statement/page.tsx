@@ -23,8 +23,8 @@ const VAT_RATE = 0.12   // 12% VAT on Ad Spend
 //   Projected RTS % (per courier) = courier's actual return rate = Returned ÷ (Delivered
 //     + Returned), applied to In-Transit & On-Delivery amounts.
 //   PAR              = Amount × (1 − RTS%)
-//   Gross Profit     = Gross Revenue − Adspent − COG − Shipping Fee
-//   Profit & Loss    = Gross Profit − OPEX
+//   Gross Profit     = Gross Revenue − Adspent (ex-VAT) − COG − Shipping Fee
+//   Profit & Loss    = Gross Profit − VAT (12% of Ad Spend) − OPEX   (VAT is an operating expense)
 //   Projected A/R    = J&T PAR + SPX PAR + PPW PAR (PPW = 0, to follow)
 //   Projected Funds  = Actual Company Funds + Projected A/R
 // ──────────────────────────────────────────────────────────────────────────────
@@ -172,14 +172,14 @@ export default function IncomeStatementPage() {
     () => paid.charges.filter(c => c.paid_date >= fromStr && c.paid_date <= toStr).reduce((s, c) => s + c.amount, 0),
     [paid.charges, fromStr, toStr])
   const adspent = fbPaid / (1 + VAT_RATE)   // ex-VAT portion
-  const vatAds = fbPaid - adspent           // embedded reverse-charge 12% VAT
+  const vatAds = fbPaid - adspent           // 12% VAT — an operating expense (OPEX), deducted below Gross Profit
 
   // ── Derived ──
   const ppwPar = 0 // PPW integration to follow — read-only 0 for now
   const projectedAR = jnt.totalPar + spx.totalPar + ppwPar
   const shippingFee = jnt.shippingFee + spx.shippingFee
-  const grossProfit = fin.grossRevenue - adspent - vatAds - fin.cog - shippingFee
-  const profitLoss = grossProfit - fin.opex
+  const grossProfit = fin.grossRevenue - adspent - fin.cog - shippingFee   // VAT is OPEX now — not deducted here
+  const profitLoss = grossProfit - vatAds - fin.opex
   const projectedFunds = fin.actualFunds + projectedAR
 
   return (
@@ -212,10 +212,10 @@ export default function IncomeStatementPage() {
             </div>
             <SRow tone="revenue" label="GROSS REVENUE" value={peso(fin.grossRevenue)} />
             <SRow deduct label="Adspent" value={peso(adspent)} />
-            <SRow deduct label="VAT (12% of Ad Spend)" value={peso(vatAds)} />
             <SRow deduct label="Cost of Good Purchase" value={peso(fin.cog)} />
             <SRow deduct label="Shipping Fee (J&T + SPX)" value={peso(shippingFee)} />
             <SRow tone="gross" label="GROSS PROFIT" value={peso(grossProfit)} />
+            <SRow deduct label="VAT (12% of Ad Spend)" value={peso(vatAds)} />
             <SRow tone="opex" label="OPEX" value={peso(fin.opex)} />
             <SRow tone="pl" label="PROFIT & LOSS" value={peso(profitLoss)} />
           </div>
@@ -228,7 +228,7 @@ export default function IncomeStatementPage() {
 
           <p className="text-[11px] text-slate-400 px-1 flex items-start gap-1.5">
             <TrendingUp className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            Gross Profit = Gross Revenue − Adspent − VAT − COG − Shipping Fee. Shipping Fee (J&amp;T + SPX) is pulled live from the Sales Tracker; Adspent = actual FB Paid charges (Billing Hub), shown ex-VAT with the embedded 12% VAT on the next line — the two sum to the exact amount billed. COGS connection is still being wired — Gross Profit completes automatically once that lands.
+            Gross Profit = Gross Revenue − Adspent (ex-VAT) − COG − Shipping Fee. Shipping Fee (J&amp;T + SPX) is pulled live from the Sales Tracker; Adspent = actual FB Paid charges (Billing Hub), shown ex-VAT. The 12% VAT is now an operating expense — deducted with OPEX below Gross Profit (Profit &amp; Loss = Gross Profit − VAT − OPEX). COGS connection is still being wired.
           </p>
         </div>
 
