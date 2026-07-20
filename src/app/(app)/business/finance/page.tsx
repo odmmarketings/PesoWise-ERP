@@ -10,8 +10,6 @@ import { fetchJntFees } from "@/lib/sales-shared-store"
 import { fetchPageRows, mapLimit, aggregateCourier } from "@/lib/courier-live"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 
-const VAT_RATE = 0.12   // reverse-charge 12% VAT on FB-billed ad spend (same as Income Statement)
-
 function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
 
@@ -185,14 +183,13 @@ export default function BusinessFinancePage() {
   }, [txns, accountByName, typeByName])
 
   // Combined figures — Book Keeping + live sources (same totals the Income Statement shows):
-  //   Adspent      = actual FB Paid charges (fb_paid_charges), ex-VAT (VAT folded into revolving)
+  //   Adspent      = actual FB Paid charges (fb_paid_charges), VAT-INCLUSIVE (the exact amount billed)
   //   Shipping Fee = BK shipping-flagged debits + live J&T/SPX courier fees (Sales Tracker)
-  //   Revolving    = Adspent + COG + Shipping · the embedded 12% VAT is added into Total OPEX + Revolving
-  const adspentTotal = fbPaid / (1 + VAT_RATE)   // ex-VAT portion of the actual FB Paid charges
-  const vatAds = fbPaid - adspentTotal           // embedded 12% VAT
+  //   Revolving    = Adspent + COG + Shipping
+  const adspentTotal = fbPaid                    // actual FB Paid charges, VAT-inclusive
   const shippingTotal = m.shipping + jnt.shippingFee + spx.shippingFee
   const revolvingFund = adspentTotal + m.cog + shippingTotal
-  const totalOpexRevolving = m.opex + revolvingFund + vatAds
+  const totalOpexRevolving = m.opex + revolvingFund
 
   // Per-bank running balance + a Type-of-Expense breakdown for the expandable cards.
   const banks = useMemo<BankData[]>(() => fs.activeBanks.map((b, i) => {
@@ -215,7 +212,7 @@ export default function BusinessFinancePage() {
     { label: "OPERATING REVENUE", amount: m.operatingRevenue, color: "bg-blue-500", icon: TrendingUp, tip: "Gross revenue excluding revolving-fund accounts (Adspent / COG / Shipping)." },
     { label: "TOTAL OPEX + REVOLVING FUND", amount: totalOpexRevolving, color: "bg-red-500", icon: TrendingDown, tip: "OPEX-type expense debits plus the revolving fund total (incl. VAT on FB ad spend)." },
     { label: "COG PURCHASE", amount: m.cog, color: "bg-orange-500", icon: ShoppingCart, tip: "Debits on accounts flagged 'COG Purchase Account' in Finance Settings." },
-    { label: "ADSPENT", amount: adspentTotal, color: "bg-purple-500", icon: Megaphone, tip: "Actual FB Paid charges (Billing Hub), ex-VAT. The 12% VAT is included in Total OPEX + Revolving Fund." },
+    { label: "ADSPENT", amount: adspentTotal, color: "bg-purple-500", icon: Megaphone, tip: "Actual FB Paid charges (Billing Hub) — VAT-inclusive, the exact amount billed to the card." },
     { label: "REVOLVING FUND", amount: revolvingFund, color: "bg-slate-600", icon: RefreshCw, tip: "Adspent + COG Purchase + Shipping Fee (live + Book Keeping)." },
     { label: "SHIPPING FEE", amount: shippingTotal, color: "bg-indigo-500", icon: Truck, tip: "Live J&T + SPX courier fees (Sales Tracker source) + Book Keeping shipping-flagged debits." },
   ]
