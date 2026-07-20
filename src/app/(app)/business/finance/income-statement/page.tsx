@@ -1,11 +1,11 @@
 "use client"
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { Package, Truck, Warehouse, Wallet, TrendingUp, RefreshCw, FileText } from "lucide-react"
-import { format, startOfMonth, eachDayOfInterval } from "date-fns"
+import { format, startOfMonth } from "date-fns"
 import { useBookkeeping } from "@/lib/bookkeeping-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
 import { useActivePages } from "@/lib/pages-store"
-import { useAdspent } from "@/lib/adspent-store"
+import { useFbPaidCharges } from "@/lib/fb-paid-store"
 import { fetchJntFees } from "@/lib/sales-shared-store"
 import { fetchPageRows, mapLimit, aggregateCourier, type CourierAgg } from "@/lib/courier-live"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
@@ -106,13 +106,11 @@ export default function IncomeStatementPage() {
   const bk = useBookkeeping()
   const fs = useFinanceSettings()
   const activePages = useActivePages()
-  const adspentStore = useAdspent()
+  const paid = useFbPaidCharges()
 
   const [dateA, setDateA] = useState(defaultDateA())
   const [dateB, setDateB] = useState(defaultDateB())
 
-  const from = useMemo(() => new Date(dateA), [dateA])
-  const to = useMemo(() => new Date(dateB), [dateB])
   const fromStr = dateA, toStr = dateB
 
   // J&T Excel-imported fees (read-only here; written by the Sales Tracker).
@@ -165,19 +163,16 @@ export default function IncomeStatementPage() {
     return { grossRevenue, adspent, cog, opex, actualFunds, count: txns.length }
   }, [bk.txns, fs.accounts, fs.types, fs.activeBanks, fromStr, toStr])
 
-  // ── Ad Spend — synced from the ROAS Tracker / Adspent Summary store (same FB-synced data
-  // those pages show), added on top of any manually-logged Book Keeping ad spend entries so
-  // neither source silently gets dropped. VAT applies ONLY to the FB-synced portion — that's
-  // the reverse-charge 12% VAT on ad spend billed by Meta (a foreign digital service); it
-  // does not apply a second time to whatever's already recorded in Book Keeping. ──
-  const fbAdSpend = useMemo(() => {
-    const ids = pages.map(p => p.id)
-    if (ids.length === 0) return 0
-    return eachDayOfInterval({ start: from, end: to })
-      .reduce((s, d) => s + adspentStore.totalForDate(ids, format(d, "yyyy-MM-dd")), 0)
-  }, [pages, adspentStore.map, from, to])
-  const vatAds = fbAdSpend * VAT_RATE
-  const adspent = fin.adspent + fbAdSpend
+  // ── Ad Spend — ACTUAL FB Paid charges only (fb_paid_charges): the exact amounts billed to
+  // the card, VAT-inclusive, matched 1:1 to the bank/card statement. Split into the ex-VAT
+  // Adspent + the embedded reverse-charge 12% VAT (adspent + vatAds = the paid amount) so VAT
+  // is never doubled. Manually-logged Book Keeping adspent entries are intentionally excluded
+  // — FB Paid only, para tumpak (actual money-out, hindi estimate). ──
+  const fbPaid = useMemo(
+    () => paid.charges.filter(c => c.paid_date >= fromStr && c.paid_date <= toStr).reduce((s, c) => s + c.amount, 0),
+    [paid.charges, fromStr, toStr])
+  const adspent = fbPaid / (1 + VAT_RATE)   // ex-VAT portion
+  const vatAds = fbPaid - adspent           // embedded reverse-charge 12% VAT
 
   // ── Derived ──
   const ppwPar = 0 // PPW integration to follow — read-only 0 for now
@@ -233,7 +228,7 @@ export default function IncomeStatementPage() {
 
           <p className="text-[11px] text-slate-400 px-1 flex items-start gap-1.5">
             <TrendingUp className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            Gross Profit = Gross Revenue − Adspent − VAT − COG − Shipping Fee. Shipping Fee (J&amp;T + SPX) is pulled live from the Sales Tracker; Adspent combines Book Keeping entries with FB ad spend synced from the ROAS Tracker. COGS connection is still being wired — Gross Profit completes automatically once that lands.
+            Gross Profit = Gross Revenue − Adspent − VAT − COG − Shipping Fee. Shipping Fee (J&amp;T + SPX) is pulled live from the Sales Tracker; Adspent = actual FB Paid charges (Billing Hub), shown ex-VAT with the embedded 12% VAT on the next line — the two sum to the exact amount billed. COGS connection is still being wired — Gross Profit completes automatically once that lands.
           </p>
         </div>
 

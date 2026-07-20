@@ -1,11 +1,11 @@
 "use client"
 import { useState, useMemo, useEffect, useCallback } from "react"
 import { PieChart, ChevronDown, TrendingUp, TrendingDown, Wallet, ShoppingCart, Megaphone, RefreshCw, Truck } from "lucide-react"
-import { format, startOfMonth, eachDayOfInterval } from "date-fns"
+import { format, startOfMonth } from "date-fns"
 import { useBookkeeping } from "@/lib/bookkeeping-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
 import { useActivePages } from "@/lib/pages-store"
-import { useAdspent } from "@/lib/adspent-store"
+import { useFbPaidCharges } from "@/lib/fb-paid-store"
 import { fetchJntFees } from "@/lib/sales-shared-store"
 import { fetchPageRows, mapLimit, aggregateCourier } from "@/lib/courier-live"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
@@ -107,7 +107,7 @@ export default function BusinessFinancePage() {
   const bk = useBookkeeping()
   const fs = useFinanceSettings()
   const activePages = useActivePages()
-  const adspentStore = useAdspent()
+  const paid = useFbPaidCharges()
 
   const from = useMemo(() => new Date(dateA), [dateA])
   const to = useMemo(() => new Date(dateB), [dateB])
@@ -144,15 +144,12 @@ export default function BusinessFinancePage() {
   const jnt = useMemo(() => aggregateCourier(rows, "jnt", jntFees), [rows, jntFees])
   const spx = useMemo(() => aggregateCourier(rows, "spx", jntFees), [rows, jntFees])
 
-  // FB-synced ad spend from the ROAS Tracker / Adspent Summary store (adspent_entries),
-  // summed across connected pages over the selected range.
-  const fbAdSpend = useMemo(() => {
-    const ids = pages.map(p => p.id)
-    if (ids.length === 0) return 0
-    return eachDayOfInterval({ start: from, end: to })
-      .reduce((s, d) => s + adspentStore.totalForDate(ids, format(d, "yyyy-MM-dd")), 0)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pages, adspentStore.map, from, to])
+  // ACTUAL FB Paid charges (fb_paid_charges) in range — the exact VAT-inclusive amounts
+  // billed to the card. Manually-logged Book Keeping adspent entries are intentionally
+  // excluded (FB Paid only) so the figure is real money-out, not an insights estimate.
+  const fbPaid = useMemo(
+    () => paid.charges.filter(c => c.paid_date >= fromStr && c.paid_date <= toStr).reduce((s, c) => s + c.amount, 0),
+    [paid.charges, fromStr, toStr])
   const asOfLabel = `As of ${format(from, "MMM.dd")} - ${format(to, "MMM.dd, yyyy")}`
   const dateRangeLabel = `${format(from, "MMM. dd, yyyy")} to ${format(to, "MMM. dd, yyyy")}`
 
@@ -188,11 +185,11 @@ export default function BusinessFinancePage() {
   }, [txns, accountByName, typeByName])
 
   // Combined figures — Book Keeping + live sources (same totals the Income Statement shows):
-  //   Adspent      = BK adspent-flagged debits + FB-synced ad spend (ROAS Tracker)
+  //   Adspent      = actual FB Paid charges (fb_paid_charges), ex-VAT (VAT folded into revolving)
   //   Shipping Fee = BK shipping-flagged debits + live J&T/SPX courier fees (Sales Tracker)
-  //   Revolving    = Adspent + COG + Shipping · VAT 12% applies to the FB-synced portion only
-  const adspentTotal = m.adspent + fbAdSpend
-  const vatAds = fbAdSpend * VAT_RATE
+  //   Revolving    = Adspent + COG + Shipping · the embedded 12% VAT is added into Total OPEX + Revolving
+  const adspentTotal = fbPaid / (1 + VAT_RATE)   // ex-VAT portion of the actual FB Paid charges
+  const vatAds = fbPaid - adspentTotal           // embedded 12% VAT
   const shippingTotal = m.shipping + jnt.shippingFee + spx.shippingFee
   const revolvingFund = adspentTotal + m.cog + shippingTotal
   const totalOpexRevolving = m.opex + revolvingFund + vatAds
@@ -218,7 +215,7 @@ export default function BusinessFinancePage() {
     { label: "OPERATING REVENUE", amount: m.operatingRevenue, color: "bg-blue-500", icon: TrendingUp, tip: "Gross revenue excluding revolving-fund accounts (Adspent / COG / Shipping)." },
     { label: "TOTAL OPEX + REVOLVING FUND", amount: totalOpexRevolving, color: "bg-red-500", icon: TrendingDown, tip: "OPEX-type expense debits plus the revolving fund total (incl. VAT on FB ad spend)." },
     { label: "COG PURCHASE", amount: m.cog, color: "bg-orange-500", icon: ShoppingCart, tip: "Debits on accounts flagged 'COG Purchase Account' in Finance Settings." },
-    { label: "ADSPENT", amount: adspentTotal, color: "bg-purple-500", icon: Megaphone, tip: "FB-synced ad spend (ROAS Tracker) + Book Keeping adspent-flagged debits." },
+    { label: "ADSPENT", amount: adspentTotal, color: "bg-purple-500", icon: Megaphone, tip: "Actual FB Paid charges (Billing Hub), ex-VAT. The 12% VAT is included in Total OPEX + Revolving Fund." },
     { label: "REVOLVING FUND", amount: revolvingFund, color: "bg-slate-600", icon: RefreshCw, tip: "Adspent + COG Purchase + Shipping Fee (live + Book Keeping)." },
     { label: "SHIPPING FEE", amount: shippingTotal, color: "bg-indigo-500", icon: Truck, tip: "Live J&T + SPX courier fees (Sales Tracker source) + Book Keeping shipping-flagged debits." },
   ]
