@@ -1,10 +1,11 @@
 "use client"
 import { useState, useMemo, useRef, useEffect, Fragment } from "react"
-import { ChevronDown, Check, Calendar, Search, X, RefreshCw, Activity } from "lucide-react"
-import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subMonths, subDays, eachDayOfInterval } from "date-fns"
+import { ChevronDown, Check, Search, X, RefreshCw, Activity, ArrowDownUp, BarChart3, CalendarDays } from "lucide-react"
+import { format, startOfMonth, eachDayOfInterval } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { useFBAccounts, actId } from "@/lib/fb-store"
+import { usePageColors, colorForPage, textOn } from "@/lib/page-colors"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 
 const PLATFORMS = ["Facebook Ecom", "Instagram", "TikTok", "Shopee", "Lazada"]
@@ -109,13 +110,17 @@ function FilterPageDropdown({ options, selected, onChange }: {
                 )
               })}
             </div>
-            {selected.length > 0 && (
-              <div className="p-2 border-t border-gray-100">
-                <button onClick={() => onChange([])} className="w-full h-7 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+            <div className="p-2 border-t border-gray-100 flex gap-2">
+              <button onClick={() => onChange(filtered.map(p => p.id))}
+                className="flex-1 h-7 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                Select all{search ? " (filtered)" : ""} ({filtered.length})
+              </button>
+              {selected.length > 0 && (
+                <button onClick={() => onChange([])} className="flex-1 h-7 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
                   Clear all
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </>
       )}
@@ -163,18 +168,25 @@ const TD_CLS = "px-3 py-2 text-center text-sm border-r border-gray-200 last:bord
 const ROAS_CACHE = new Map<string, { ts: number; data: PageData }>()
 const ROAS_TTL = 5 * 60_000  // 5 min
 type AppliedRange = { from: Date; to: Date }
-let roasView: { selectedPageIds: string[]; dateA: string; dateB: string; submitted: boolean; applied: AppliedRange | null } | null = null
+let roasView: { selectedPageIds: string[]; appliedPageIds: string[]; dateA: string; dateB: string; submitted: boolean; applied: AppliedRange | null; tab: "report" | "daily" } | null = null
 
 export default function ROASTrackerPage() {
   const allPages = useActivePages()
   const adspentStore = useAdspent()
   const fb = useFBAccounts()
+  const { colors, setColor } = usePageColors()
+  // Report vs Daily-breakdown tab, at ang sort ng report table (default: highest ROAS muna).
+  const [tab, setTab] = useState<"report" | "daily">(roasView?.tab ?? "report")
+  const [roasSort, setRoasSort] = useState<"desc" | "asc">("desc")
   const [dateA, setDateA] = useState(roasView?.dateA ?? defaultDateA())
   const [dateB, setDateB] = useState(roasView?.dateB ?? defaultDateB())
   const [filterPlatform, setFilterPlatform] = useState("All")
   const [filterStatus, setFilterStatus] = useState("All")
   const [filterOwner, setFilterOwner] = useState("All")
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>(roasView?.selectedPageIds ?? [])
+  // The pages the TABLE actually renders — a SNAPSHOT taken on Submit. Ang picker (selectedPageIds)
+  // ay live, pero hindi lalabas sa table ang binagong selection hangga't hindi pinindot ang Submit.
+  const [appliedPageIds, setAppliedPageIds] = useState<string[]>(roasView?.appliedPageIds ?? [])
   const [views, setViews] = useState<Record<ToggleKey, boolean>>({
     shippedOut: false, inTransit: false, onDelivery: false, returned: false, delivered: false, cpp: false,
   })
@@ -202,6 +214,7 @@ export default function ROASTrackerPage() {
     return true
   }), [allPages, filterPlatform, filterStatus, filterOwner])
 
+  // Live selection (+ filters) — kung ano ang pinili sa picker NGAYON; ginagamit sa Submit fetch.
   const selectedPages = useMemo(() =>
     allPages.filter(p => {
       if (!selectedPageIds.includes(p.id)) return false
@@ -211,6 +224,11 @@ export default function ROASTrackerPage() {
       return true
     }),
     [allPages, selectedPageIds, filterPlatform, filterStatus, filterOwner])
+
+  // Snapshot na pinag-render ng table (from Submit) — hindi apektado ng live picker/filter changes.
+  const renderedPages = useMemo(() =>
+    appliedPageIds.map(id => allPages.find(p => p.id === id)).filter(Boolean) as typeof allPages,
+    [allPages, appliedPageIds])
 
   // Pull FB ad spend for the submitted range → adspent store (per mapped page). Makes Ad Spent
   // visible for ANY date range straight from this page — no need to open the FB Ads dashboard.
@@ -238,6 +256,7 @@ export default function ROASTrackerPage() {
     if (selectedPages.length === 0) return
     setSubmitted(true)
     setApplied({ from, to })   // lock the table to the range at submit time
+    setAppliedPageIds(selectedPages.map(p => p.id))   // snapshot pages — table shows these lang
     setErrors({})
 
     const fromStr = format(from, "yyyy-MM-dd")
@@ -281,7 +300,7 @@ export default function ROASTrackerPage() {
   }
 
   // Persist the view so returning to the tab restores the selection + range + submitted state.
-  useEffect(() => { roasView = { selectedPageIds, dateA, dateB, submitted, applied } }, [selectedPageIds, dateA, dateB, submitted, applied])
+  useEffect(() => { roasView = { selectedPageIds, appliedPageIds, dateA, dateB, submitted, applied, tab } }, [selectedPageIds, appliedPageIds, dateA, dateB, submitted, applied, tab])
 
   // On return: if there was a submitted selection, re-run once pages are loaded — cache makes it instant.
   const didRestore = useRef(false)
@@ -306,14 +325,34 @@ export default function ROASTrackerPage() {
     return base
   }
 
-  // Per-page row data — real data only, no mocks
+  // Per-page row data — real data only, no mocks. Rendered from the SUBMIT snapshot.
   const pageTableData = useMemo(() =>
-    selectedPages.map(page => ({
+    renderedPages.map(page => ({
       page,
       rows: dateRange.map(date => ({ date, ...getRow(page.id, date) })),
     })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedPages, dateRange, realData, adspentStore.map])
+    [renderedPages, dateRange, realData, adspentStore.map])
+
+  // ── Per-page REPORT summary (one row per page, totals over the range) ──
+  // ROAS = Sales ÷ Ad Spend (matches the reference sheet); VAT shown as its own column.
+  const pageReport = useMemo(() => {
+    const rows = pageTableData.map(({ page, rows }) => {
+      const parcels = rows.reduce((s, r) => s + r.orders, 0)
+      const adspent = rows.reduce((s, r) => s + r.adspent, 0)
+      const vat = adspent * VAT_RATE
+      const sales = rows.reduce((s, r) => s + r.sales, 0)
+      const roas = adspent > 0 ? sales / adspent : 0
+      return { page, parcels, adspent, vat, sales, roas }
+    })
+    rows.sort((a, b) => roasSort === "desc" ? b.roas - a.roas : a.roas - b.roas)
+    return rows
+  }, [pageTableData, roasSort])
+
+  const reportTotal = useMemo(() => pageReport.reduce((a, r) => ({
+    parcels: a.parcels + r.parcels, adspent: a.adspent + r.adspent, vat: a.vat + r.vat, sales: a.sales + r.sales,
+  }), { parcels: 0, adspent: 0, vat: 0, sales: 0 }), [pageReport])
+  const reportTotalRoas = reportTotal.adspent > 0 ? reportTotal.sales / reportTotal.adspent : 0
 
   // Aggregate totals across all selected pages per date
   const totalRows = useMemo(() =>
@@ -496,22 +535,107 @@ export default function ROASTrackerPage() {
         </div>
       )}
 
-      {/* Empty state */}
-      {selectedPages.length === 0 && (
+      {/* Empty state — walang naka-render (hindi pa nag-submit o walang pinili) */}
+      {renderedPages.length === 0 && !loading && (
         <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
-          <p className="text-gray-400 text-sm font-medium">Select a page and click Submit to view ROAS data.</p>
+          <p className="text-gray-400 text-sm font-medium">
+            {selectedPageIds.length === 0
+              ? "Pumili ng pages (o Select all) at pindutin ang Submit para makita ang ROAS."
+              : <>Pindutin ang <strong>Submit</strong> para i-load ang data mula sa Pancake POS.</>}
+          </p>
         </div>
       )}
 
-      {/* Not yet submitted */}
-      {selectedPages.length > 0 && !submitted && !loading && (
-        <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
-          <p className="text-gray-400 text-sm font-medium">Click <strong>Submit</strong> to load data from Pancake POS.</p>
-        </div>
-      )}
+      {/* Results — Report tab (per-page summary) at Daily Breakdown tab */}
+      {renderedPages.length > 0 && submitted && !loading && (
+        <div className="space-y-4">
+          {/* Tab switcher */}
+          <div className="flex items-center gap-1">
+            <button onClick={() => setTab("report")}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "report" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
+              <BarChart3 className="w-4 h-4" /> Page Report
+            </button>
+            <button onClick={() => setTab("daily")}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "daily" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
+              <CalendarDays className="w-4 h-4" /> Daily Breakdown
+            </button>
+          </div>
 
-      {/* Tables — individual pages + always a TOTAL table */}
-      {selectedPages.length > 0 && submitted && !loading && (
+          {/* ── PAGE REPORT: one row per page, sortable by ROAS, with totals ── */}
+          {tab === "report" && (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="overflow-auto max-h-[74vh]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-slate-800 text-white">
+                      <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide">Page</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Parcels</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Ad Spend</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">VAT 12%</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Total Ad Cost</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Sales</th>
+                      <th className="px-4 py-3 text-right cursor-pointer select-none hover:bg-slate-700"
+                        onClick={() => setRoasSort(s => s === "desc" ? "asc" : "desc")}
+                        title="I-click para i-sort (highest ↔ lowest)">
+                        <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide">
+                          ROAS <ArrowDownUp className="w-3.5 h-3.5" />
+                          <span className="text-[10px] font-normal opacity-70">{roasSort === "desc" ? "high→low" : "low→high"}</span>
+                        </span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pageReport.map(({ page, parcels, adspent, vat, sales, roas }) => {
+                      const bg = colorForPage(page.id, colors)
+                      return (
+                        <tr key={page.id} className="hover:bg-slate-50/70">
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <label className="relative w-4 h-4 rounded-full flex-shrink-0 cursor-pointer ring-1 ring-black/10" style={{ background: bg }} title="Palitan ang kulay">
+                                <input type="color" value={bg} onChange={e => setColor(page.id, e.target.value)}
+                                  className="absolute inset-0 opacity-0 cursor-pointer" />
+                              </label>
+                              <span className="inline-block rounded-md px-2 py-0.5 text-xs font-semibold" style={{ background: bg, color: textOn(bg) }}>{page.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{parcels.toLocaleString("en-PH")}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-blue-600 font-medium">{fmtPeso(adspent)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPeso(vat)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{fmtPeso(adspent + vat)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-800 font-medium">{fmtPeso(sales)}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            <span className="inline-block rounded-md px-2.5 py-1 text-sm font-bold text-white tabular-nums" style={{ background: roasColor(roas) }}>
+                              {roas > 0 ? roas.toFixed(2) : "—"}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  <tfoot className="sticky bottom-0 z-10">
+                    <tr style={{ background: "#f5c842" }} className="font-bold text-slate-900">
+                      <td className="px-4 py-3 text-xs uppercase tracking-wide">Total ({pageReport.length} page{pageReport.length === 1 ? "" : "s"})</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{reportTotal.parcels.toLocaleString("en-PH")}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.adspent)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.vat)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.adspent + reportTotal.vat)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{fmtPeso(reportTotal.sales)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="inline-block rounded-md px-2.5 py-1 text-sm font-bold text-white tabular-nums" style={{ background: roasColor(reportTotalRoas) }}>
+                          {reportTotalRoas > 0 ? reportTotalRoas.toFixed(2) : "—"}
+                        </span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p className="px-4 py-2.5 text-[11px] text-slate-400 border-t border-slate-100">
+                ROAS = Sales ÷ Ad Spend. I-click ang ⬤ swatch para palitan ang kulay ng page. I-click ang ROAS header para i-sort (highest ↔ lowest).
+              </p>
+            </div>
+          )}
+
+          {tab === "daily" && (
         <div className="overflow-auto rounded-xl max-h-[78vh]">
           <div className="flex gap-0 min-w-max border border-gray-200 rounded-xl overflow-hidden">
 
@@ -681,6 +805,8 @@ export default function ROASTrackerPage() {
             </table>
 
           </div>
+        </div>
+          )}
         </div>
       )}
 
