@@ -5,7 +5,7 @@ import { format, startOfMonth, eachDayOfInterval } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { useFBAccounts, actId } from "@/lib/fb-store"
-import { usePageColors, colorForPage, tint } from "@/lib/page-colors"
+import { usePageColors, colorForPage } from "@/lib/page-colors"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 
 const PLATFORMS = ["Facebook Ecom", "Instagram", "TikTok", "Shopee", "Lazada"]
@@ -179,8 +179,8 @@ export default function ROASTrackerPage() {
   const adspentStore = useAdspent()
   const fb = useFBAccounts()
   const { colors, setColor } = usePageColors()
-  // Report vs Daily-breakdown tab, at ang sort ng report table (default: highest ROAS muna).
-  const [tab, setTab] = useState<"report" | "daily">(roasView?.tab ?? "report")
+  // Daily-breakdown (default, unang tab) vs Page Report; + sort ng report (highest ROAS muna).
+  const [tab, setTab] = useState<"daily" | "report">(roasView?.tab ?? "daily")
   const [roasSort, setRoasSort] = useState<"desc" | "asc">("desc")
   const [dateA, setDateA] = useState(roasView?.dateA ?? defaultDateA())
   const [dateB, setDateB] = useState(roasView?.dateB ?? defaultDateB())
@@ -256,20 +256,22 @@ export default function ROASTrackerPage() {
     } catch {}
   }
 
-  async function handleSubmit(force = false, pages: typeof selectedPages = selectedPages) {
-    if (pages.length === 0) return
+  // Submit locks the range + selection para sa Daily Breakdown, at nag-fe-fetch ng LAHAT ng
+  // active pages para may laman agad ang Page Report (independent sa selection). Hindi na
+  // required ang selection — kung walang pinili, empty lang ang Daily tab pero puno ang Report.
+  async function handleSubmit(force = false) {
     setSubmitted(true)
     setApplied({ from, to })   // lock the table to the range at submit time
-    setAppliedPageIds(pages.map(p => p.id))   // snapshot pages — table shows these lang
+    setAppliedPageIds(selectedPages.map(p => p.id))   // selection snapshot — Daily tab lang
     setErrors({})
 
     const fromStr = format(from, "yyyy-MM-dd")
     const toStr = format(to, "yyyy-MM-dd")
-    syncAdspentFromFB(pages, fromStr, toStr)   // background — fills Ad Spent for the range
+    syncAdspentFromFB(allPages, fromStr, toStr)   // background — fills Ad Spent for the range
 
-    // Serve fresh-cached pages instantly; only network-fetch the stale/missing ones.
+    // Fetch ALL active pages (Report needs them). Serve fresh-cached instantly; only fetch stale.
     const cachedData: Record<string, PageData> = {}
-    const toFetch = pages.filter(page => {
+    const toFetch = allPages.filter(page => {
       const pageId = page.pancake_page_id || page.shop_id
       const c = ROAS_CACHE.get(`${pageId}|${fromStr}|${toStr}`)
       if (!force && c && Date.now() - c.ts < ROAS_TTL) { cachedData[page.id] = c.data; return false }
@@ -306,19 +308,14 @@ export default function ROASTrackerPage() {
   // Persist the view so returning to the tab restores the selection + range + submitted state.
   useEffect(() => { roasView = { selectedPageIds, appliedPageIds, dateA, dateB, submitted, applied, tab } }, [selectedPageIds, appliedPageIds, dateA, dateB, submitted, applied, tab])
 
-  // Page Report ay AGAD nakalabas: sa unang bisita, auto-load ang LAHAT ng active pages
-  // (parang alt-tab — nandun na agad). Kung may naka-submit nang view, i-restore yun.
+  // Sa pagbukas: auto-fetch ang lahat ng active pages para PUNO agad ang Page Report — kahit
+  // walang naka-select sa picker (hindi na kailangang mag-select-all o mag-Submit). Ang picker
+  // + Submit ay para lang sa Daily Breakdown.
   const didRestore = useRef(false)
   useEffect(() => {
     if (didRestore.current || allPages.length === 0) return
     didRestore.current = true
-    if (roasView?.submitted && (roasView.appliedPageIds?.length ?? 0) > 0) {
-      const restored = allPages.filter(p => roasView!.appliedPageIds.includes(p.id))
-      handleSubmit(false, restored)
-      return
-    }
-    setSelectedPageIds(allPages.map(p => p.id))
-    handleSubmit(false, allPages)
+    handleSubmit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allPages.length])
 
@@ -345,14 +342,16 @@ export default function ROASTrackerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [renderedPages, dateRange, realData, adspentStore.map])
 
-  // ── Per-page REPORT summary (one row per page, totals over the range) ──
+  // ── Per-page REPORT summary — LAHAT ng active pages (independent sa picker selection).
   // ROAS = Sales ÷ Ad Spend (matches the reference sheet); VAT shown as its own column.
   const pageReport = useMemo(() => {
-    const rows = pageTableData.map(({ page, rows }) => {
-      const parcels = rows.reduce((s, r) => s + r.orders, 0)
-      const adspent = rows.reduce((s, r) => s + r.adspent, 0)
+    const rows = allPages.map(page => {
+      let parcels = 0, adspent = 0, sales = 0
+      for (const date of dateRange) {
+        const r = getRow(page.id, date)
+        parcels += r.orders; adspent += r.adspent; sales += r.sales
+      }
       const vat = adspent * VAT_RATE
-      const sales = rows.reduce((s, r) => s + r.sales, 0)
       const roas = adspent > 0 ? sales / adspent : 0
       return { page, parcels, adspent, vat, sales, roas }
     })
@@ -360,7 +359,8 @@ export default function ROASTrackerPage() {
     .filter(r => r.adspent > 0 || r.sales > 0)
     rows.sort((a, b) => roasSort === "desc" ? b.roas - a.roas : a.roas - b.roas)
     return rows
-  }, [pageTableData, roasSort])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPages, dateRange, realData, adspentStore.map, roasSort])
 
   const reportTotal = useMemo(() => pageReport.reduce((a, r) => ({
     parcels: a.parcels + r.parcels, adspent: a.adspent + r.adspent, vat: a.vat + r.vat, sales: a.sales + r.sales,
@@ -479,7 +479,7 @@ export default function ROASTrackerPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => handleSubmit()}
-                disabled={loading || selectedPageIds.length === 0}
+                disabled={loading}
                 className="h-10 px-6 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2">
                 {loading && (
                   <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
@@ -490,7 +490,7 @@ export default function ROASTrackerPage() {
                 {loading ? "Fetching..." : "Submit"}
               </button>
               {submitted && (
-                <button onClick={() => handleSubmit(true)} disabled={loading || selectedPageIds.length === 0} title="Refresh (bypass cache)"
+                <button onClick={() => handleSubmit(true)} disabled={loading} title="Refresh (bypass cache)"
                   className="h-10 px-3 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                   <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
                 </button>
@@ -548,29 +548,25 @@ export default function ROASTrackerPage() {
         </div>
       )}
 
-      {/* Empty state — walang naka-render (hindi pa nag-submit o walang pinili) */}
-      {renderedPages.length === 0 && !loading && (
+      {/* No active pages sa system */}
+      {allPages.length === 0 && !loading && (
         <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
-          <p className="text-gray-400 text-sm font-medium">
-            {selectedPageIds.length === 0
-              ? "Pumili ng pages (o Select all) at pindutin ang Submit para makita ang ROAS."
-              : <>Pindutin ang <strong>Submit</strong> para i-load ang data mula sa Pancake POS.</>}
-          </p>
+          <p className="text-gray-400 text-sm font-medium">Walang active na page — magdagdag sa Pages & Store.</p>
         </div>
       )}
 
-      {/* Results — Report tab (per-page summary) at Daily Breakdown tab */}
-      {renderedPages.length > 0 && submitted && !loading && (
+      {/* Results — Daily Breakdown (default) at Page Report tabs */}
+      {allPages.length > 0 && submitted && !loading && (
         <div className="space-y-4">
-          {/* Tab switcher */}
+          {/* Tab switcher — Daily Breakdown muna, tapos Page Report */}
           <div className="flex items-center gap-1">
-            <button onClick={() => setTab("report")}
-              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "report" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
-              <BarChart3 className="w-4 h-4" /> Page Report
-            </button>
             <button onClick={() => setTab("daily")}
               className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "daily" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
               <CalendarDays className="w-4 h-4" /> Daily Breakdown
+            </button>
+            <button onClick={() => setTab("report")}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "report" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
+              <BarChart3 className="w-4 h-4" /> Page Report
             </button>
           </div>
 
@@ -597,11 +593,14 @@ export default function ROASTrackerPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {pageReport.map(({ page, parcels, adspent, vat, sales, roas }) => {
+                    {pageReport.length === 0 && (
+                      <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">Walang page na may ad spend o sales sa range na ito.</td></tr>
+                    )}
+                    {pageReport.map(({ page, parcels, adspent, vat, sales, roas }, i) => {
                       const clr = colorForPage(page.id, colors)
                       return (
-                        <tr key={page.id} className="hover:bg-slate-50" style={{ background: tint(clr, "0f") }}>
-                          <td className="px-4 py-2.5 border-l-[3px] whitespace-nowrap" style={{ borderColor: clr }}>
+                        <tr key={page.id} className={`hover:bg-blue-50/40 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
+                          <td className="px-4 py-2.5 border-l-4 whitespace-nowrap" style={{ borderColor: clr }}>
                             <div className="flex items-center gap-2.5">
                               <label className="relative w-3 h-3 rounded-full flex-shrink-0 cursor-pointer ring-1 ring-black/10" style={{ background: clr }} title="Palitan ang kulay">
                                 <input type="color" value={clr} onChange={e => setColor(page.id, e.target.value)}
@@ -647,7 +646,15 @@ export default function ROASTrackerPage() {
             </div>
           )}
 
-          {tab === "daily" && (
+          {tab === "daily" && renderedPages.length === 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
+              <p className="text-gray-400 text-sm font-medium">
+                Pumili ng pages sa <strong>Filter Page</strong> at pindutin ang <strong>Submit</strong> para sa per-araw na breakdown.
+              </p>
+            </div>
+          )}
+
+          {tab === "daily" && renderedPages.length > 0 && (
         <div className="overflow-auto rounded-xl max-h-[78vh]">
           <div className="flex gap-0 min-w-max border border-gray-200 rounded-xl overflow-hidden">
 

@@ -254,8 +254,8 @@ export default function AdspentROASSummaryPage() {
 
       {/* Table */}
       {appliedRange && !loading && rows.length > 0 && (
-        <div className="rounded-xl border border-gray-200 overflow-auto max-h-[78vh]">
-          <table className="w-full border-collapse text-sm">
+        <div className="rounded-xl border border-gray-200 overflow-auto max-h-[78vh] inline-block max-w-full align-top">
+          <table className="w-auto border-collapse text-sm">
             <thead className="sticky top-0 z-20">
               {/* Span header */}
               <tr>
