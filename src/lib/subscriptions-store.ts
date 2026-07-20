@@ -115,7 +115,7 @@ export function useSubscriptions() {
     const businessId = await getBusinessId()
     if (!businessId) { setLoaded(true); return }
     const supabase = createSupabaseBrowserClient()
-    const { data, error } = await supabase.from("subscriptions").select("*").eq("business_id", businessId).order("name", { ascending: true })
+    const { data, error } = await supabase.from("finance_subscriptions").select("*").eq("business_id", businessId).order("name", { ascending: true })
     if (!error && data) setSubs(data.map(rowTo))
     setLoaded(true)
   }, [])
@@ -125,7 +125,7 @@ export function useSubscriptions() {
     const businessId = await getBusinessId()
     if (!businessId) return
     const supabase = createSupabaseBrowserClient()
-    await supabase.from("subscriptions").insert({ ...toRow(input, businessId, uid()), created_by: currentUserName() })
+    await supabase.from("finance_subscriptions").insert({ ...toRow(input, businessId, uid()), created_by: currentUserName() })
     await refresh()
   }, [refresh])
 
@@ -134,20 +134,20 @@ export function useSubscriptions() {
     if (!businessId) return
     const { id: _drop, business_id: _b, ...patch } = toRow(input, businessId, id) as any
     const supabase = createSupabaseBrowserClient()
-    await supabase.from("subscriptions").update(patch).eq("id", id)
+    await supabase.from("finance_subscriptions").update(patch).eq("id", id)
     await refresh()
   }, [refresh])
 
   const removeSub = useCallback(async (id: string) => {
     const supabase = createSupabaseBrowserClient()
-    await supabase.from("subscriptions").delete().eq("id", id)
+    await supabase.from("finance_subscriptions").delete().eq("id", id)
     await refresh()
   }, [refresh])
 
   const toggleStatus = useCallback(async (id: string) => {
     const s = subs.find(x => x.id === id); if (!s) return
     const supabase = createSupabaseBrowserClient()
-    await supabase.from("subscriptions").update({ status: s.status === "active" ? "paused" : "active" }).eq("id", id)
+    await supabase.from("finance_subscriptions").update({ status: s.status === "active" ? "paused" : "active" }).eq("id", id)
     await refresh()
   }, [subs, refresh])
 
@@ -166,7 +166,7 @@ export function useSubscriptions() {
           type_of_expense: s.type_of_expense, expense_type: "Debit", amount: s.amount,
           bank: s.bank, voucher: "", receipt_name: "",
         }, "Recorded from Subscriptions (auto)")
-        await supabase.from("subscriptions").update({ last_billed_period: periodOf(s, dateStr) }).eq("id", s.id)
+        await supabase.from("finance_subscriptions").update({ last_billed_period: periodOf(s, dateStr) }).eq("id", s.id)
         posted++; total += s.amount
       } catch { /* skip — retry next run */ }
     }

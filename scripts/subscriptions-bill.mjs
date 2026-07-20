@@ -62,7 +62,7 @@ async function main() {
     }
   }
 
-  const { data: subs, error } = await s.from("subscriptions").select("*").eq("business_id", B)
+  const { data: subs, error } = await s.from("finance_subscriptions").select("*").eq("business_id", B)
   if (error) throw error
 
   const due = (subs || []).filter(isDue)
@@ -80,7 +80,7 @@ async function main() {
       history: [{ action: "Recorded from Subscriptions (auto)", by: "Auto-sync", date: nowIso }],
     })
     if (insErr) { console.error(`  FAIL ${sub.name}: ${insErr.message}`); continue }
-    await s.from("subscriptions").update({ last_billed_period: periodOf(sub) }).eq("id", sub.id)
+    await s.from("finance_subscriptions").update({ last_billed_period: periodOf(sub) }).eq("id", sub.id)
     posted++; total += Number(sub.amount)
     console.log(`  ✓ ${sub.name} — ${peso(sub.amount)}`)
   }
