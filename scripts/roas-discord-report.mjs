@@ -37,6 +37,7 @@ const argv = process.argv.slice(2)
 const DRY = argv.includes("--dry-run")
 const NO_FB = argv.includes("--no-fb")
 const TEXT_MODE = argv.includes("--text")   // force the old monospace text embed
+const FORCE = argv.includes("--force")      // bypass the dedup guard (manual/test send)
 const wi = argv.indexOf("--window")
 const WINDOW = wi >= 0 ? (argv[wi + 1] || "mtd") : "mtd"   // today | yesterday | mtd
 
@@ -79,6 +80,8 @@ const NOW = Date.now()
 const PH_TODAY = phDateStr(NOW)
 const PH_YEST = phDateStr(NOW - 86400000)
 const PH_SOM = (() => { const d = new Date(NOW + PH_OFFSET); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01` })()
+// Current PH time-of-day in seconds — cutoff for the "same-time-yesterday" comparison card.
+const CUTOFF_SECS = (() => { const d = new Date(NOW + PH_OFFSET); return d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds() })()
 function phNowLabel() {
   const d = new Date(NOW + PH_OFFSET)
   const p = (n) => String(n).padStart(2, "0")
@@ -171,15 +174,26 @@ async function pancakeByDate(shopId, apiKey, from, to) {
     const rs = await Promise.all(batch.map(fetchPage))
     for (const r of rs) orders.push(...r.items)
   }
-  const byDate = {}
+  // full = whole-day totals (Page Report). capped = only orders whose PH time-of-day is at or
+  // before the current time-of-day — for a fair "same-time-yesterday" comparison card.
+  const full = {}, capped = {}
   for (const o of orders) {
-    const date = toPHDate(o.inserted_at || o.created_at || "")
-    if (!date) continue
-    if (!byDate[date]) byDate[date] = { orders: 0, sales: 0 }
-    byDate[date].orders += 1
-    byDate[date].sales += Number(o.cod ?? 0)
+    const raw = o.inserted_at || o.created_at || ""
+    if (!raw) continue
+    const utcMs = new Date(raw.includes("Z") ? raw : raw + "Z").getTime()
+    if (isNaN(utcMs)) continue
+    const date = phDateStr(utcMs)
+    const cod = Number(o.cod ?? 0)
+    if (!full[date]) full[date] = { orders: 0, sales: 0 }
+    full[date].orders += 1; full[date].sales += cod
+    const phd = new Date(utcMs + PH_OFFSET)
+    const tod = phd.getUTCHours() * 3600 + phd.getUTCMinutes() * 60 + phd.getUTCSeconds()
+    if (tod <= CUTOFF_SECS) {
+      if (!capped[date]) capped[date] = { orders: 0, sales: 0 }
+      capped[date].orders += 1; capped[date].sales += cod
+    }
   }
-  return byDate
+  return { full, capped }
 }
 
 // ── FB (Meta) daily account spend (replicates api/fb/insights default mode) ─────
@@ -417,7 +431,7 @@ async function main() {
   const report = pages.map(page => {
     let orders = 0, sales = 0, adspent = 0
     for (const d of reportDates) {
-      const bd = pageByDate[page.id]?.[d]
+      const bd = pageByDate[page.id]?.full?.[d]
       orders += bd?.orders ?? 0
       sales += bd?.sales ?? 0
       adspent += adspentMap[`${page.id}|${d}`] ?? 0
@@ -429,18 +443,23 @@ async function main() {
   const totals = report.reduce((t, r) => ({ orders: t.orders + r.orders, adspent: t.adspent + r.adspent, vat: t.vat + r.vat, sales: t.sales + r.sales }), { orders: 0, adspent: 0, vat: 0, sales: 0 })
   const totalRoas = totals.adspent > 0 ? totals.sales / totals.adspent : 0
 
-  // 7. Yesterday Comparison — sum across ALL active pages. ROAS = Sales ÷ (Adspent × 1.12) (WITH VAT).
-  const aggDay = (dateStr) => {
+  // 7. Today vs Yesterday — SAME time-of-day comparison para patas. Orders/Sales ay hanggang sa
+  //    kasalukuyang PH time-of-day lang, kaya "Yesterday" = kahapon HANGGANG SA PAREHONG ORAS
+  //    (hindi buong araw). Adspent: today as-is (up-to-now na ang FB); yesterday prorated sa
+  //    parehong fraction ng araw (daily-granular ang FB spend). ROAS = Sales ÷ (Adspent × 1.12).
+  const dayFrac = CUTOFF_SECS / 86400
+  const aggDay = (dateStr, prorateAdspent) => {
     let orders = 0, sales = 0, adspent = 0
     for (const page of pages) {
-      const bd = pageByDate[page.id]?.[dateStr]
+      const bd = pageByDate[page.id]?.capped?.[dateStr]
       orders += bd?.orders ?? 0
       sales += bd?.sales ?? 0
-      adspent += adspentMap[`${page.id}|${dateStr}`] ?? 0
+      const ad = adspentMap[`${page.id}|${dateStr}`] ?? 0
+      adspent += prorateAdspent ? ad * dayFrac : ad
     }
     return { orders, sales, adspent, roas: adspent > 0 ? sales / (adspent + adspent * VAT_RATE) : 0 }
   }
-  const today = aggDay(PH_TODAY), yest = aggDay(PH_YEST)
+  const today = aggDay(PH_TODAY, false), yest = aggDay(PH_YEST, true)
 
   // 8. Build the visual report
   const nowLabel = phNowLabel()
@@ -496,18 +515,39 @@ async function main() {
 
   // 10. Send — image by default, text on --text, text fallback if rendering fails
   if (!WEBHOOK) throw new Error("Walang DISCORD_WEBHOOK_URL sa .env.local — idagdag muna.")
+
+  // Dedup guard — kapag sarado ang app at nagbukas, sabay-sabay pumuputok ang mga na-miss na slot.
+  // I-skip kung may na-send nang report sa loob ng DEDUP_MIN minuto (≥170 min ang pagitan ng tunay
+  // na slots, kaya hindi nito hinaharangan ang lehitimong report). Gamitin --force para i-bypass.
+  const SENT_FILE = join(SCRIPT_DIR, "_roas-last-sent")
+  const DEDUP_MIN = 90
+  if (!FORCE) {
+    try {
+      const last = Number(readFileSync(SENT_FILE, "utf8").trim())
+      if (last && NOW - last < DEDUP_MIN * 60000) {
+        console.log(`Skipped — may na-send nang report ${Math.round((NOW - last) / 60000)} min ago (dedup ${DEDUP_MIN}m).  ${diag}`)
+        return
+      }
+    } catch {}
+  }
+  // --force sends (manual/test) don't record the timestamp, so they never suppress a scheduled run.
+  const markSent = () => { if (FORCE) return; try { writeFileSync(SENT_FILE, String(NOW)) } catch {} }
+
   if (TEXT_MODE) {
     await postJson(buildTextEmbed())
+    markSent()
     console.log(`Sent (text) ✓  ${diag}`)
     return
   }
   try {
     const buf = await htmlToPng(renderHtml(model))
     await sendImage(buf, caption)
+    markSent()
     console.log(`Sent (image) ✓  ${diag}`)
   } catch (e) {
     console.error("Image render failed, falling back to text:", e.message)
     await postJson(buildTextEmbed())
+    markSent()
     console.log(`Sent (text-fallback) ✓  ${diag}`)
   }
 }
