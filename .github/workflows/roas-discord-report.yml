@@ -2,10 +2,17 @@
 # Cron ay nasa UTC; PH = UTC+8.
 name: ROAS Discord Report
 
+# TIMING: hindi eksakto ang GitHub Actions scheduler — pinakamatindi ang pila sa
+# TUKTOK ng oras (:00), kaya doon pinakamalaki ang delay. Kaya:
+#   1) off-peak na minuto at ~7 minutong maaga ang pagpapaputok, para tumapat sa slot;
+#   2) sini-snap ng script ang caption sa nakatakdang slot (tingnan ang SLOTS_MIN sa
+#      scripts/roas-discord-report.mjs) — kaya "6:00PM SALES REPORT" pa rin ang tatak
+#      kahit 6:12PM nag-umpisa ang runner, at may "data as of" kapag na-delay.
+# Baguhin ang SLOTS_MIN kasabay ng cron dito.
 on:
   schedule:
-    - cron: "0 1,4,7,10,13 * * *"   # 9AM, 12PM, 3PM, 6PM, 9PM PHT
-    - cron: "50 15 * * *"           # 11:50PM PHT — end-of-day wrap-up
+    - cron: "53 0,3,6,9,12 * * *"   # 8:53, 11:53, 2:53, 5:53, 8:53 PM PHT → 9AM/12PM/3PM/6PM/9PM slots
+    - cron: "52 15 * * *"           # 11:52PM PHT → 11:50PM end-of-day slot
   workflow_dispatch:                # manual "Run workflow" button
 
 permissions:

@@ -18,7 +18,11 @@ import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 import { execFile } from "child_process"
 import { promisify } from "util"
-import sharp from "sharp"
+// sharp pumapasok kasama ng Next.js bilang OPTIONAL dependency. I-guard ang import
+// para ang runner na walang binary nito ay bumagsak sa text embed, hindi mag-crash
+// bago pa man tumakbo ang script.
+let sharp = null
+try { ({ default: sharp } = await import("sharp")) } catch { /* text fallback */ }
 const execFileP = promisify(execFile)
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 
@@ -82,25 +86,97 @@ function phDateStr(ms) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
 }
 const NOW = Date.now()
-const PH_TODAY = phDateStr(NOW)
-const PH_YEST = phDateStr(NOW - 86400000)
-const PH_SOM = (() => { const d = new Date(NOW + PH_OFFSET); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01` })()
-// Current PH time-of-day in seconds — cutoff for the "same-time-yesterday" comparison card.
-const CUTOFF_SECS = (() => { const d = new Date(NOW + PH_OFFSET); return d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds() })()
-function phNowLabel() {
-  const d = new Date(NOW + PH_OFFSET)
-  const p = (n) => String(n).padStart(2, "0")
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+const phNowD = new Date(NOW + PH_OFFSET)
+const NOW_MIN = phNowD.getUTCHours() * 60 + phNowD.getUTCMinutes()
+const NOW_SECS = NOW_MIN * 60 + phNowD.getUTCSeconds()
+
+// ── Planned report slots (PH minutes-of-day) ──────────────────────────────────
+// Kasabay ng cron sa .github/workflows/roas-discord-report.yml. Ang GitHub Actions
+// scheduler ay pwedeng ma-delay ng ilang minuto hanggang oras, kaya sa halip na
+// i-stamp ang report kung anong oras nagkataong nag-umpisa ang runner, sini-snap
+// natin ito sa slot na pinagmulan nito. Dito rin nakasalalay ang report DATE: ang
+// 11:50PM na run na dumulas lampas hatinggabi ay dapat pa ring isara ang araw na
+// hinabol nito — hindi ang bagong (halos walang laman) na araw.
+const SLOTS_MIN = [9 * 60, 12 * 60, 15 * 60, 18 * 60, 21 * 60, 23 * 60 + 50]
+const EARLY_GRACE_MIN = 20    // maagang pumutok → kabilang pa rin sa slot na iyon
+const LATE_MAX_MIN = 170      // lampas dito → ad-hoc run, totoong oras ang istampa
+const ADHOC = argv.includes("--adhoc") || process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
+
+/**
+ * Aling slot ang pinagmulan ng run na ito.
+ *
+ * MAHALAGA ang pagkakasunod-sunod: ang slot na NAKARAAN na ang laging mananaig.
+ * Kung uunahin ang paghahanap ng paparating na slot (grace window), ang isang
+ * run na sobrang na-delay ay AAGAWIN ng susunod na slot — halimbawa ang 9PM na
+ * run na 160 minutong late ay pumuputok ng 11:33PM at magpapanggap na 11:50PM
+ * end-of-day report, na negatibo ang `late` kaya nawawala pa ang "data as of"
+ * na babala. Dalawang report na magkapareho ang tatak, at kulang sa laman.
+ */
+function resolveSlot() {
+  if (ADHOC) return null
+  // 1) Pinakahuling slot na lumipas na ngayong araw — dito galing ang run.
+  for (let i = SLOTS_MIN.length - 1; i >= 0; i--) {
+    if (SLOTS_MIN[i] <= NOW_MIN) {
+      const late = NOW_MIN - SLOTS_MIN[i]
+      if (late <= LATE_MAX_MIN) return { min: SLOTS_MIN[i], dayOffset: 0, late }
+      break   // luma na ito — wala nang mas bago sa likod
+    }
+  }
+  // 2) Wala pang slot na lumipas ngayong araw (madaling-araw) → ang huling slot
+  //    ng kahapon. Dito nahuhulog ang EOD run na dumulas lampas hatinggabi.
+  if (SLOTS_MIN[0] > NOW_MIN) {
+    const last = SLOTS_MIN[SLOTS_MIN.length - 1]
+    const lateY = NOW_MIN + 1440 - last
+    if (lateY <= LATE_MAX_MIN) return { min: last, dayOffset: -1, late: lateY }
+  }
+  // 3) Walang sariwang slot sa likod → maagang pumutok ang cron (~7 min by design).
+  const next = SLOTS_MIN.find((s) => s > NOW_MIN && s - NOW_MIN <= EARLY_GRACE_MIN)
+  return next == null ? null : { min: next, dayOffset: 0, late: NOW_MIN - next }
 }
-// Discord caption stamp — "JULY 20, 2026 | 9:00AM" from the actual PH send time.
+const slotRaw = resolveSlot()
+const SLOT = slotRaw && slotRaw.late <= LATE_MAX_MIN ? slotRaw : null
+const DAY_SHIFT = SLOT?.dayOffset ?? 0
+
+// Ang araw na PAKSA ng report (anchor) — hindi laging "ngayon".
+const PH_TODAY = phDateStr(NOW + DAY_SHIFT * 86400000)
+const PH_YEST = phDateStr(NOW + (DAY_SHIFT - 1) * 86400000)
+const PH_SOM = `${PH_TODAY.slice(0, 7)}-01`
+// Cutoff ng "same-time-yesterday" card: live na oras kapag ngayong araw ang paksa;
+// buong araw kapag tapos na ang araw na iyon (post-midnight na EOD run).
+const CUTOFF_SECS = DAY_SHIFT === 0 ? NOW_SECS : 86399
+function phNowLabel() {
+  const p = (n) => String(n).padStart(2, "0")
+  return `${phNowD.getUTCFullYear()}-${p(phNowD.getUTCMonth() + 1)}-${p(phNowD.getUTCDate())} ${p(phNowD.getUTCHours())}:${p(phNowD.getUTCMinutes())}`
+}
+// Discord caption stamp — "JULY 20, 2026 | 9:00AM".
 const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
-function phReportStamp() {
-  const d = new Date(NOW + PH_OFFSET)
-  let h = d.getUTCHours()
+function clockLabel(mins) {
+  let h = Math.floor(mins / 60) % 24
+  const mm = String(Math.round(mins) % 60).padStart(2, "0")
   const ampm = h >= 12 ? "PM" : "AM"
   h = h % 12 || 12
-  const min = String(d.getUTCMinutes()).padStart(2, "0")
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} | ${h}:${min}${ampm}`
+  return `${h}:${mm}${ampm}`
+}
+function stampFor(dateStr, mins) {
+  const [y, m, d] = dateStr.split("-").map(Number)
+  return `${MONTHS[m - 1]} ${d}, ${y} | ${clockLabel(mins)}`
+}
+/** Nakatakdang oras ng edisyon kung may slot; kung wala, ang totoong oras ng pag-send. */
+function phReportStamp() {
+  return SLOT ? stampFor(PH_TODAY, SLOT.min) : stampFor(phDateStr(NOW), NOW_MIN)
+}
+const lateSuffix = () => (SLOT && SLOT.late > 15 ? ` · data as of ${clockLabel(NOW_MIN)}` : "")
+
+// Debug: `node scripts/roas-discord-report.mjs --slots` → anong edisyon ang lalabas
+// ngayon, nang hindi tumatawag sa kahit anong API. Pang-check kapag na-delay ang cron.
+if (argv.includes("--slots")) {
+  const lateTxt = !SLOT ? "" : SLOT.late >= 0 ? `${SLOT.late}m late` : `${-SLOT.late}m early`
+  console.log(`PH now      : ${phNowLabel()}`)
+  console.log(`Slot        : ${SLOT ? `${clockLabel(SLOT.min)} (${lateTxt})` : "ad-hoc — walang snap"}`)
+  console.log(`Report date : ${PH_TODAY}  ·  compare vs ${PH_YEST}`)
+  console.log(`Cutoff      : ${clockLabel(Math.floor(CUTOFF_SECS / 60))}`)
+  console.log(`Caption     : 📊 ${phReportStamp()} SALES REPORT${lateSuffix()}`)
+  process.exit(0)
 }
 
 // Report window → date range + label. Fetch range always covers yesterday+today too
@@ -302,7 +378,7 @@ table{border-collapse:collapse}
       <td class="r">${fmt2(t.sales)}</td>
       <td class="r"><span class="badge" style="background:${roasHex(m.totalRoas)}">${m.totalRoas > 0 ? m.totalRoas.toFixed(2) : "—"}</span></td>
     </tr></tfoot>
-  </table><div class="note">ROAS = Sales ÷ Ad Spend · ${esc(m.windowLabel)} · PesoWise • ${m.nowLabel} PHT</div></div>
+  </table><div class="note">ROAS = Sales ÷ Ad Spend · ${esc(m.windowLabel)} · PesoWise • ${esc(m.editionNote)}</div></div>
   <div class="card yc"><table>
     <thead><tr><th class="title">Yesterday<br>Comparison</th><th class="today">Today</th><th class="yest">Yesterday</th></tr></thead>
     <tbody>
@@ -312,7 +388,15 @@ table{border-collapse:collapse}
       ${cmpRow("ROAS (w/ VAT)", roasTxt(m.today.roas), roasTxt(m.yest.roas), true)}
     </tbody>
   </table></div>
-</div></body></html>`
+</div>
+<script>
+/* Isinusulat ang natural na sukat ng layout para ma-sukat ito ng --dump-dom pass at
+   maitakda ang screenshot viewport nang eksakto. Kung wala ito, ang mahahabang pangalan
+   ng page ay lumalampas sa viewport at TAHIMIK na pinuputol ni Chrome ang comparison card. */
+var w = document.querySelector(".wrap");
+document.documentElement.setAttribute("data-size", Math.ceil(w.scrollWidth) + "x" + Math.ceil(w.scrollHeight));
+</script>
+</body></html>`
 }
 
 function findChrome() {
@@ -335,7 +419,23 @@ function findChrome() {
   return cands.find(p => p && existsSync(p)) || null
 }
 
+// Sinusukat ang natural na laki ng layout bago mag-screenshot. Ang `--screenshot`
+// ng headless Chrome ay kasing-laki lang ng `--window-size`; kapag mas malapad ang
+// content, TAHIMIK itong pinuputol (dito nawawala ang Yesterday Comparison card).
+async function measureLayout(chrome, fileUrl) {
+  try {
+    const { stdout } = await execFileP(chrome, [
+      "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
+      "--virtual-time-budget=3000", "--window-size=1400,1000", "--dump-dom", fileUrl,
+    ], { timeout: 45000, maxBuffer: 64 * 1024 * 1024 })
+    const m = stdout.match(/data-size="(\d+)x(\d+)"/)
+    if (m) return { w: Number(m[1]), h: Number(m[2]) }
+  } catch { /* fall back to a generous viewport below */ }
+  return null
+}
+
 // Render the HTML with headless Chrome → tight-cropped PNG buffer (via sharp trim).
+const BODY_PAD = 26   // kasabay ng `body{padding}` sa renderHtml
 async function htmlToPng(html) {
   const chrome = findChrome()
   if (!chrome) throw new Error("Walang Chrome/Edge na nahanap para sa screenshot.")
@@ -343,18 +443,26 @@ async function htmlToPng(html) {
   const htmlPath = join(tmpdir(), `${stamp}.html`)
   const pngPath = join(tmpdir(), `${stamp}.png`)
   writeFileSync(htmlPath, html, "utf8")
+  const fileUrl = `file:///${htmlPath.replace(/\\/g, "/")}`
   try {
+    // Viewport = natural na sukat + padding. Kapag pumalya ang pagsukat, maluwag na
+    // fallback ang gagamitin at ang sobra ay kakainin ng trim sa ibaba.
+    const nat = await measureLayout(chrome, fileUrl)
+    const vw = Math.min(4000, Math.max(900, (nat?.w ?? 2900) + BODY_PAD * 2 + 24))
+    const vh = Math.min(4000, Math.max(600, (nat?.h ?? 2000) + BODY_PAD * 2 + 24))
     await execFileP(chrome, [
       "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-sandbox",
       "--default-background-color=eef2f7ff", "--force-device-scale-factor=2",
-      `--screenshot=${pngPath}`, "--window-size=1600,1300",
-      `file:///${htmlPath.replace(/\\/g, "/")}`,
+      `--screenshot=${pngPath}`, `--window-size=${vw},${vh}`,
+      fileUrl,
     ], { timeout: 60000 })
     let buf = readFileSync(pngPath)
     // Trim the uniform page background, then re-pad for breathing room.
-    try {
-      buf = await sharp(buf).trim({ threshold: 12 }).extend({ top: 26, bottom: 26, left: 26, right: 26, background: "#eef2f7" }).png().toBuffer()
-    } catch {}
+    if (sharp) {
+      try {
+        buf = await sharp(buf).trim({ threshold: 12 }).extend({ top: 26, bottom: 26, left: 26, right: 26, background: "#eef2f7" }).png().toBuffer()
+      } catch { /* untrimmed PNG is still correct — just has extra margin */ }
+    }
     return buf
   } finally {
     rmSync(htmlPath, { force: true }); rmSync(pngPath, { force: true })
@@ -474,9 +582,17 @@ async function main() {
 
   // 8. Build the visual report
   const nowLabel = phNowLabel()
-  const caption = `📊 **${phReportStamp()} SALES REPORT**`
-  const model = { report, totals, totalRoas, today, yest, pageColors, windowLabel, nowLabel }
-  const diag = `pages=${pages.length} listed=${report.length} pancakeErr=${pancakeErrors.length} fbPages=${fbPages} fbErr=${fbErrors} window=${WINDOW}`
+  // Ang caption ay nagdadala ng NAKATAKDANG oras ng edisyon. Kapag na-delay ang
+  // runner, idinudugtong ang totoong data cutoff para tapat pa rin ang numero.
+  const caption = `📊 **${phReportStamp()} SALES REPORT**${lateSuffix()}`
+  // Ang footer ng image ay dapat TUGMA sa caption: nakatakdang oras ng edisyon, hindi ang
+  // oras na nagkataong tumakbo ang runner. Idinudugtong ang tunay na data cutoff kapag
+  // na-delay ang GitHub Actions scheduler, para tapat pa rin ang numero.
+  const editionNote = SLOT
+    ? `${clockLabel(SLOT.min)} edition${SLOT.late > 15 ? ` (data as of ${clockLabel(NOW_MIN)} PHT)` : " PHT"}`
+    : `${clockLabel(NOW_MIN)} PHT (ad-hoc)`
+  const model = { report, totals, totalRoas, today, yest, pageColors, windowLabel, nowLabel, editionNote }
+  const diag = `pages=${pages.length} listed=${report.length} pancakeErr=${pancakeErrors.length} fbPages=${fbPages} fbErr=${fbErrors} window=${WINDOW} slot=${SLOT ? clockLabel(SLOT.min) + (SLOT.late > 0 ? `+${SLOT.late}m` : "") : "adhoc"} anchor=${PH_TODAY}`
 
   // Text embed — used as fallback if image rendering fails, or when --text is passed.
   const buildTextEmbed = () => {
@@ -499,7 +615,7 @@ async function main() {
         title: "📊 Page ROAS Report",
         description: `**Page Report — ${windowLabel}**\n\`\`\`\n${reportTbl}\n\`\`\`\n**Today vs Yesterday**\n\`\`\`\n${[ct.header, ...ct.body].join("\n")}\n\`\`\``,
         color: hexInt(roasHex(totalRoas)),
-        footer: { text: `PesoWise • ${nowLabel} PHT` },
+        footer: { text: `PesoWise • ${editionNote}` },
       }],
     }
   }

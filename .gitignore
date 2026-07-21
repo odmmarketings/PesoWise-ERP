@@ -43,5 +43,8 @@ next-env.d.ts
 # daily FB sync temp scrape file
 scripts/_*.json
 
+# ROAS report runtime artifacts (preview render + dedup stamp)
+scripts/_roas-*
+
 .vercel
 .env*
