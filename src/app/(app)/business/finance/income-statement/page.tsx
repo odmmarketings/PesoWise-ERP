@@ -6,6 +6,7 @@ import { useBookkeeping } from "@/lib/bookkeeping-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
 import { useActivePages } from "@/lib/pages-store"
 import { useFbPaidCharges } from "@/lib/fb-paid-store"
+import { useProductItems, itemRemaining } from "@/lib/product-items-store"
 import { fetchJntFees } from "@/lib/sales-shared-store"
 import { fetchPageRows, mapLimit, aggregateCourier, type CourierAgg } from "@/lib/courier-live"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
@@ -24,7 +25,8 @@ const VAT_RATE = 0.12   // 12% VAT on Ad Spend
 //     + Returned), applied to In-Transit & On-Delivery amounts.
 //   PAR              = Amount × (1 − RTS%)
 //   Gross Profit     = Gross Revenue − Adspent (ex-VAT) − COG − Shipping Fee
-//   Profit & Loss    = Gross Profit − VAT (12% of Ad Spend) − OPEX   (VAT is an operating expense)
+//   OPEX             = Book Keeping OPEX debits + VAT (12% of Ad Spend)  — kasama na ang VAT
+//   Profit & Loss    = Gross Profit − OPEX
 //   Projected A/R    = J&T PAR + SPX PAR + PPW PAR (PPW = 0, to follow)
 //   Projected Funds  = Actual Company Funds + Projected A/R
 // ──────────────────────────────────────────────────────────────────────────────
@@ -107,6 +109,7 @@ export default function IncomeStatementPage() {
   const fs = useFinanceSettings()
   const activePages = useActivePages()
   const paid = useFbPaidCharges()
+  const products = useProductItems()
 
   const [dateA, setDateA] = useState(defaultDateA())
   const [dateB, setDateB] = useState(defaultDateB())
@@ -179,7 +182,25 @@ export default function IncomeStatementPage() {
   const projectedAR = jnt.totalPar + spx.totalPar + ppwPar
   const shippingFee = jnt.shippingFee + spx.shippingFee
   const grossProfit = fin.grossRevenue - adspent - fin.cog - shippingFee   // VAT is OPEX now — not deducted here
-  const profitLoss = grossProfit - vatAds - fin.opex
+  // Ang 12% VAT sa ad spend ay BAHAGI NA ng OPEX (hindi hiwalay na linya) — kaya isang
+  // bawas lang ito sa Profit & Loss. Ipinapakita pa rin sa ilalim bilang breakdown.
+  const opexTotal = fin.opex + vatAds
+  const profitLoss = grossProfit - opexTotal
+
+  // ── Warehouse Inventory — halaga ng natitirang stock sa Logistics → Product Items.
+  // Parehong pormula ng footer ng Product Items page: Σ (cog × natitirang piraso), kung
+  // saan ang natitira = goods − damage − loss − released. Hindi kasama ang deleted at
+  // archived. Kasalukuyang halaga ito (walang date range) — hindi apektado ng picker.
+  const warehouseInventory = useMemo(
+    () => products.items
+      .filter(i => !i.deleted && !i.archived)
+      .reduce((s, i) => s + i.cog * itemRemaining(i), 0),
+    [products.items])
+  const inventoryUnits = useMemo(
+    () => products.items
+      .filter(i => !i.deleted && !i.archived)
+      .reduce((s, i) => s + itemRemaining(i), 0),
+    [products.items])
   const projectedFunds = fin.actualFunds + projectedAR
 
   return (
@@ -215,8 +236,8 @@ export default function IncomeStatementPage() {
             <SRow deduct label="Cost of Good Purchase" value={peso(fin.cog)} />
             <SRow deduct label="Shipping Fee (J&T + SPX)" value={peso(shippingFee)} />
             <SRow tone="gross" label="GROSS PROFIT" value={peso(grossProfit)} />
-            <SRow deduct label="VAT (12% of Ad Spend)" value={peso(vatAds)} />
-            <SRow tone="opex" label="OPEX" value={peso(fin.opex)} />
+            <SRow tone="opex" label="OPEX" value={peso(opexTotal)} />
+            <SRow label="↳ kasama na ang VAT (12% of Ad Spend)" value={peso(vatAds)} />
             <SRow tone="pl" label="PROFIT & LOSS" value={peso(profitLoss)} />
           </div>
 
@@ -228,7 +249,7 @@ export default function IncomeStatementPage() {
 
           <p className="text-[11px] text-slate-400 px-1 flex items-start gap-1.5">
             <TrendingUp className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            Gross Profit = Gross Revenue − Adspent (ex-VAT) − COG − Shipping Fee. Shipping Fee (J&amp;T + SPX) is pulled live from the Sales Tracker; Adspent = actual FB Paid charges (Billing Hub), shown ex-VAT. The 12% VAT is now an operating expense — deducted with OPEX below Gross Profit (Profit &amp; Loss = Gross Profit − VAT − OPEX). COGS connection is still being wired.
+            Gross Profit = Gross Revenue − Adspent (ex-VAT) − COG − Shipping Fee. Shipping Fee (J&amp;T + SPX) is pulled live from the Sales Tracker; Adspent = actual FB Paid charges (Billing Hub), shown ex-VAT. Ang 12% VAT sa ad spend ay BAHAGI NA ng OPEX (isang bawas lang, hindi doble) — Profit &amp; Loss = Gross Profit − OPEX. COGS connection is still being wired.
           </p>
         </div>
 
@@ -240,8 +261,11 @@ export default function IncomeStatementPage() {
               <span className={`text-sm font-bold tabular-nums ${fin.actualFunds < 0 ? "text-rose-600" : "text-slate-800"}`}>{peso(fin.actualFunds)}</span>
             </div>
             <div className="flex items-center justify-between px-4 py-3 bg-slate-50">
-              <span className="text-sm font-semibold text-slate-600 flex items-center gap-1.5"><Warehouse className="w-4 h-4 text-slate-400" /> WAREHOUSE INVENTORY</span>
-              <span className="text-sm font-medium text-slate-400 italic">to follow</span>
+              <span className="text-sm font-semibold text-slate-600 flex items-center gap-1.5">
+                <Warehouse className="w-4 h-4 text-slate-400" /> WAREHOUSE INVENTORY
+                <span className="text-[11px] font-normal text-slate-400">· {inventoryUnits.toLocaleString("en-PH")} pcs</span>
+              </span>
+              <span className="text-sm font-bold tabular-nums text-slate-800">{peso(warehouseInventory)}</span>
             </div>
             <div className="flex items-center justify-between px-4 py-3 bg-slate-100">
               <span className="text-sm font-semibold text-slate-600">PROJECTED ACCOUNT RECEIVABLES</span>
