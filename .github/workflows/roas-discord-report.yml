@@ -8,6 +8,9 @@ on:
     - cron: "50 15 * * *"           # 11:50PM PHT — end-of-day wrap-up
   workflow_dispatch:                # manual "Run workflow" button
 
+permissions:
+  contents: read                    # least privilege — basa lang ng code
+
 concurrency:
   group: roas-discord-report        # hindi mag-o-overlap ang dalawang run
   cancel-in-progress: false
