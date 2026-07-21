@@ -6,7 +6,7 @@ import {
   ArrowUp, ArrowDown, ArrowUpDown, ChevronRight, X, LayoutGrid, Layers, Pencil, Check, Trash2, CheckCircle2, Eye,
   ExternalLink, Send, Wrench, Info, MoreHorizontal,
 } from "lucide-react"
-import { format, startOfMonth } from "date-fns"
+import { format } from "date-fns"
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
@@ -16,7 +16,9 @@ import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 
 const VAT = 1.12
-function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
+// Default range = NGAYONG ARAW lang (hindi buong buwan). Iisang state lang ito kaya
+// sabay nitong sakop ang Dashboard, Ads Manager, at Daily Ad Spend na tabs.
+function defaultDateA() { return format(new Date(), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
@@ -139,7 +141,7 @@ export default function FacebookAdsPage() {
         <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Megaphone className="w-5 h-5" /> FACEBOOK ADS</h1>
         <div className="flex items-center gap-2">
           <DateRangePicker a={from} b={to} variant="header"
-            onApply={(a, b) => { setFrom(a || defaultDateA()); setTo(b || defaultDateB()) }} placeholder="This month" />
+            onApply={(a, b) => { setFrom(a || defaultDateA()); setTo(b || defaultDateB()) }} placeholder="Today" />
           <button onClick={load} className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
         </div>
       </div>
@@ -1423,7 +1425,9 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
   const setCond = (i: number, patch: Partial<RuleCond>) => setConds(cs => cs.map((c, x) => x === i ? { ...c, ...patch } : c))
   const condComplete = (c: RuleCond) => c.v1 !== "" && (!/RANGE/.test(c.op) || c.v2 !== "")
   const needsBudget = action === "BUDGET_INC" || action === "BUDGET_DEC"
-  const canCreate = !!acct && ruleName.trim() !== "" && action !== "" && conds.length > 0 && conds.every(condComplete) && (!needsBudget || Number(budgetAmt) > 0) && !saving
+  // Hindi na humaharang ang blangkong condition sa Create — sinasala na lang sila sa
+  // payload sa ibaba, kaya pwedeng gumawa ng rule kahit walang nakalagay na metric value.
+  const canCreate = !!acct && ruleName.trim() !== "" && action !== "" && (!needsBudget || Number(budgetAmt) > 0) && !saving
 
   async function createRule() {
     if (!canCreate || !acct) return
@@ -1436,7 +1440,9 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
       { field: "entity_type", value: entity, operator: "EQUAL" },
       { field: "time_preset", value: timeRange, operator: "EQUAL" },
       ...(applyTo === "SELECTED" ? [{ field: `${entity.toLowerCase()}.id`, value: selectedIds, operator: "IN" }] : []),
-      ...conds.map(c => ({ field: c.metric, value: condVal(c), operator: c.op })),
+      // Ang mga blangko ay ITINATAPON, hindi ipinapadala bilang "> 0" — kung wala kang
+      // nilagay na value, walang metric condition na isasama sa rule.
+      ...conds.filter(condComplete).map(c => ({ field: c.metric, value: condVal(c), operator: c.op })),
     ]
     const sign = action === "BUDGET_INC" ? 1 : -1
     const execution_spec: any =

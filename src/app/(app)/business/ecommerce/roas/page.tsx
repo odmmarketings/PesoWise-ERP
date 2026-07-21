@@ -1,7 +1,7 @@
 "use client"
 import { useState, useMemo, useRef, useEffect, Fragment } from "react"
 import { ChevronDown, Check, Search, X, RefreshCw, Activity, ArrowDownUp, BarChart3, CalendarDays } from "lucide-react"
-import { format, startOfMonth, eachDayOfInterval, subDays } from "date-fns"
+import { format, eachDayOfInterval, subDays } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { useFBAccounts, actId } from "@/lib/fb-store"
@@ -22,7 +22,8 @@ const VIEW_TOGGLES = [
 
 type ToggleKey = typeof VIEW_TOGGLES[number]["key"]
 
-function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
+// Default range = NGAYONG ARAW lang (hindi month-to-date) — ito ang laging gustong makita.
+function defaultDateA() { return format(new Date(), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
 
 function fmtPeso(n: number) {
@@ -300,13 +301,21 @@ export default function ROASTrackerPage() {
 
     const fromStr = format(from, "yyyy-MM-dd")
     const toStr = format(to, "yyyy-MM-dd")
-    syncAdspentFromFB(allPages, fromStr, toStr)   // background — fills Ad Spent for the range
+    // Ang "Today vs Yesterday" card ay laging kailangan ng NGAYON at KAHAPON, kahit
+    // makitid ang piniling range (default = today lang). Kaya pinapalawak natin ang
+    // FETCH window para lagi silang sakop. Ang DISPLAY (dateRange/applied) ay nananatili
+    // sa eksaktong piniling range, kaya walang dagdag na row sa mga table.
+    const todayStr = format(new Date(), "yyyy-MM-dd")
+    const yestStr = format(subDays(new Date(), 1), "yyyy-MM-dd")
+    const qFrom = fromStr < yestStr ? fromStr : yestStr
+    const qTo = toStr > todayStr ? toStr : todayStr
+    syncAdspentFromFB(allPages, qFrom, qTo)   // background — fills Ad Spent for the range
 
     // Fetch ALL active pages (Report needs them). Serve fresh-cached instantly; only fetch stale.
     const cachedData: Record<string, PageData> = {}
     const toFetch = allPages.filter(page => {
       const pageId = page.pancake_page_id || page.shop_id
-      const c = ROAS_CACHE.get(`${pageId}|${fromStr}|${toStr}`)
+      const c = ROAS_CACHE.get(`${pageId}|${qFrom}|${qTo}`)
       if (!force && c && Date.now() - c.ts < ROAS_TTL) { cachedData[page.id] = c.data; return false }
       return true
     })
@@ -324,9 +333,9 @@ export default function ROASTrackerPage() {
         return
       }
       try {
-        const data = await fetchPageOrders(page.api_key, pageId, fromStr, toStr)
+        const data = await fetchPageOrders(page.api_key, pageId, qFrom, qTo)
         newData[page.id] = data
-        ROAS_CACHE.set(`${pageId}|${fromStr}|${toStr}`, { ts: Date.now(), data })
+        ROAS_CACHE.set(`${pageId}|${qFrom}|${qTo}`, { ts: Date.now(), data })
       } catch (e: any) {
         newErrors[page.id] = e?.message || "Failed to fetch data"
         newData[page.id] = {}
@@ -471,6 +480,21 @@ export default function ROASTrackerPage() {
         <Activity className="w-5 h-5" /> PAGE ROAS TRACKER
       </h1>
 
+      {/* Tabs — nasa taas mismo (katulad ng Facebook Ads tabs), laging kita at hindi
+          nakadepende sa Submit. Ang laman ng bawat tab ay nasa ibaba pa rin. */}
+      {allPages.length > 0 && (
+        <div className="flex items-center gap-1 -mt-2">
+          <button onClick={() => setTab("daily")}
+            className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "daily" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
+            <CalendarDays className="w-4 h-4" /> Daily Breakdown
+          </button>
+          <button onClick={() => setTab("report")}
+            className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "report" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
+            <BarChart3 className="w-4 h-4" /> Page Report
+          </button>
+        </div>
+      )}
+
       {/* Filter bar */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <div className="flex flex-wrap gap-4 items-start">
@@ -522,7 +546,7 @@ export default function ROASTrackerPage() {
           <div className="flex flex-col gap-1">
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Date Range</label>
             <DateRangePicker a={dateA} b={dateB} variant="header"
-              onApply={(a, b) => { setDateA(a || defaultDateA()); setDateB(b || defaultDateB()) }} placeholder="This month" />
+              onApply={(a, b) => { setDateA(a || defaultDateA()); setDateB(b || defaultDateB()) }} placeholder="Today" />
           </div>
 
           {/* Submit */}
@@ -610,17 +634,6 @@ export default function ROASTrackerPage() {
       {/* Results — Daily Breakdown (default) at Page Report tabs */}
       {allPages.length > 0 && submitted && !loading && (
         <div className="space-y-4">
-          {/* Tab switcher — Daily Breakdown muna, tapos Page Report */}
-          <div className="flex items-center gap-1">
-            <button onClick={() => setTab("daily")}
-              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "daily" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
-              <CalendarDays className="w-4 h-4" /> Daily Breakdown
-            </button>
-            <button onClick={() => setTab("report")}
-              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "report" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
-              <BarChart3 className="w-4 h-4" /> Page Report
-            </button>
-          </div>
 
           {/* ── PAGE REPORT: per-page summary + Today-vs-Yesterday glance card ── */}
           {tab === "report" && (
