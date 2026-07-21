@@ -9,12 +9,17 @@
 import { createClient } from "@supabase/supabase-js"
 import { readFileSync } from "fs"
 
-const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8").split(/\r?\n/)
-    .filter(l => l.includes("=") && !l.startsWith("#"))
-    .map(l => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()])
-)
-const s = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+// Config: .env.local kapag local; process.env kapag CI/cloud (GitHub Actions secrets).
+let env = {}
+try {
+  env = Object.fromEntries(
+    readFileSync(new URL("../.env.local", import.meta.url), "utf8").split(/\r?\n/)
+      .filter(l => l.includes("=") && !l.startsWith("#"))
+      .map(l => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()])
+  )
+} catch { /* walang .env.local (cloud) — process.env ang gagamitin */ }
+const pick = (k) => process.env[k] || env[k] || ""
+const s = createClient(pick("NEXT_PUBLIC_SUPABASE_URL"), pick("SUPABASE_SERVICE_ROLE_KEY"), {
   auth: { autoRefreshToken: false, persistSession: false },
 })
 

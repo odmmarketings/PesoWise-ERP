@@ -1,0 +1,36 @@
+# PesoWise — Page ROAS report → Discord, tumatakbo sa CLOUD (kahit patay ang PC).
+# Cron ay nasa UTC; PH = UTC+8.
+name: ROAS Discord Report
+
+on:
+  schedule:
+    - cron: "0 1,4,7,10,13 * * *"   # 9AM, 12PM, 3PM, 6PM, 9PM PHT
+    - cron: "50 15 * * *"           # 11:50PM PHT — end-of-day wrap-up
+  workflow_dispatch:                # manual "Run workflow" button
+
+concurrency:
+  group: roas-discord-report        # hindi mag-o-overlap ang dalawang run
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Send ROAS report to Discord
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node scripts/roas-discord-report.mjs --window today

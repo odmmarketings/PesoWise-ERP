@@ -23,14 +23,19 @@ const execFileP = promisify(execFile)
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 
 // ── env.local parse (same convention as scripts/fb-accounts.mjs) ──────────────
-const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8").split(/\r?\n/)
-    .filter(l => l.includes("=") && !l.startsWith("#"))
-    .map(l => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()])
-)
-const SUPABASE_URL = env.NEXT_PUBLIC_SUPABASE_URL
-const SERVICE_KEY = env.SUPABASE_SERVICE_ROLE_KEY
-const WEBHOOK = process.env.DISCORD_WEBHOOK_URL || env.DISCORD_WEBHOOK_URL || ""
+// Config: .env.local kapag local; process.env kapag CI/cloud (GitHub Actions secrets).
+let env = {}
+try {
+  env = Object.fromEntries(
+    readFileSync(new URL("../.env.local", import.meta.url), "utf8").split(/\r?\n/)
+      .filter(l => l.includes("=") && !l.startsWith("#"))
+      .map(l => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()])
+  )
+} catch { /* walang .env.local (cloud) — process.env ang gagamitin */ }
+const pick = (k) => process.env[k] || env[k] || ""
+const SUPABASE_URL = pick("NEXT_PUBLIC_SUPABASE_URL")
+const SERVICE_KEY = pick("SUPABASE_SERVICE_ROLE_KEY")
+const WEBHOOK = pick("DISCORD_WEBHOOK_URL")
 
 // ── CLI flags ─────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
@@ -311,17 +316,23 @@ table{border-collapse:collapse}
 }
 
 function findChrome() {
+  // CHROME_PATH wins (set ito ng GitHub Actions workflow sa Linux runner).
+  if (process.env.CHROME_PATH && existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH
   const pf = process.env["ProgramFiles"] || "C:\\Program Files"
   const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
   const local = process.env["LOCALAPPDATA"] || ""
   const cands = [
+    // Windows (local)
     `${pf}\\Google\\Chrome\\Application\\chrome.exe`,
     `${pf86}\\Google\\Chrome\\Application\\chrome.exe`,
     `${local}\\Google\\Chrome\\Application\\chrome.exe`,
     `${pf}\\Microsoft\\Edge\\Application\\msedge.exe`,
     `${pf86}\\Microsoft\\Edge\\Application\\msedge.exe`,
+    // Linux (GitHub Actions / servers)
+    "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium-browser", "/usr/bin/chromium",
   ]
-  return cands.find(p => existsSync(p)) || null
+  return cands.find(p => p && existsSync(p)) || null
 }
 
 // Render the HTML with headless Chrome → tight-cropped PNG buffer (via sharp trim).
