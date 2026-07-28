@@ -127,6 +127,9 @@ export const businessNav: NavSection[] = [
       {
         href: "/business/logistics/warehouse", icon: Warehouse, label: "Warehouse",
         children: [
+          // Ang parent row ay nag-e-expand lang (hindi nag-na-navigate), kaya kailangan
+          // ng sariling child link para maabot ang dashboard mismo.
+          { href: "/business/logistics/warehouse", label: "Warehouse Dashboard" },
           { href: "/business/logistics/warehouse/fulfillment", label: "Fulfillment" },
           { href: "/business/logistics/warehouse/shipped-out", label: "Shipped Out (Barcode)" },
           { href: "/business/logistics/warehouse/ppw", label: "PPW (Barcode)" },
