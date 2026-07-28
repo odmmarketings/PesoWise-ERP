@@ -5,7 +5,7 @@ import * as XLSX from "xlsx-js-style"
 import {
   Warehouse, RefreshCw, Package, Clock, Truck, ScanBarcode, Undo2, PackageCheck,
   Eye, EyeOff, BarChart3, Users, AlertTriangle, CheckCircle2, Sparkles, PauseCircle,
-  ClipboardList, FileSpreadsheet,
+  ClipboardList, FileSpreadsheet, XCircle,
 } from "lucide-react"
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -97,6 +97,8 @@ const disp = (s: string) => DISPLAY[s] || s
 const PIPELINE = ["New", "Confirmed", "Restocking", "Prioritize Order", "Packaging", "Waiting for Pick Up", "Shipped"]
 // Hindi pa nakakalabas ng bodega — ito ang bumubuo ng backlog.
 const PENDING = new Set(["New", "Confirmed", "Restocking", "Prioritize Order", "Packaging"])
+// Nakaalis na o hindi na dapat bilangin bilang naiwan — ginagamit sa PPW.
+const GONE = new Set(["Shipped", "Delivered", "Returning", "Returned", "Cancelled", "Deleted"])
 
 function courierLabel(raw: string): string {
   const s = String(raw || "").toLowerCase()
@@ -166,6 +168,17 @@ export default function WarehouseDashboardPage() {
     return m
   }, [withStatus])
   const totalAmount = useMemo(() => withStatus.reduce((s, r) => s + Number(r.final_price || 0), 0), [withStatus])
+
+  // PPW — may nakadikit nang waybill (tracking) pero hindi pa nakukuha ng courier.
+  // Parehong kahulugan ng PPW page; nakasakop lang ito sa napiling range dito.
+  const ppw = useMemo(() => {
+    let count = 0, amt = 0
+    for (const r of withStatus) {
+      if (!String(r.tracking_no || "").trim() || GONE.has(r._st)) continue
+      count++; amt += Number(r.final_price || 0)
+    }
+    return { count, amt }
+  }, [withStatus])
 
   const today = dstr(new Date())
   const todayScans = useMemo(() => scanStore.scans.filter(s => s.date === today), [scanStore.scans, today])
@@ -287,12 +300,14 @@ export default function WarehouseDashboardPage() {
   ]
   const opsCards = [
     { label: "TOTAL ORDERS", value: num(rows.length), amt: totalAmount, color: "bg-slate-700", icon: ClipboardList },
+    { label: "PPW · PENDING WAYBILL", value: num(ppw.count), amt: ppw.amt, color: "bg-amber-600", icon: ScanBarcode },
     { label: "DELIVERED", value: num(count["Delivered"] || 0), amt: amount["Delivered"] || 0, color: "bg-emerald-600", icon: PackageCheck },
     { label: "SCANNED OUT TODAY", value: num(scannedToday), amt: scannedTodayAmount, color: "bg-blue-600", icon: ScanBarcode },
     {
       label: "RTS RETURNING / RETURNED", value: `${num(count["Returning"] || 0)} / ${num(count["Returned"] || 0)}`,
       amt: (amount["Returning"] || 0) + (amount["Returned"] || 0), color: "bg-rose-500", icon: Undo2,
     },
+    { label: "CANCELLED", value: num(count["Cancelled"] || 0), amt: amount["Cancelled"] || 0, color: "bg-red-700", icon: XCircle },
   ]
 
   return (
@@ -336,7 +351,7 @@ export default function WarehouseDashboardPage() {
       </div>
 
       {/* Ops */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
         {opsCards.map(c => (
           <div key={c.label} className={`relative overflow-hidden ${c.color} rounded-xl px-4 py-3 h-[78px] flex items-center justify-between`}>
             <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.12] text-white" />
