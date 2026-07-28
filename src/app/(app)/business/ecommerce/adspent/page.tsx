@@ -7,6 +7,7 @@ import {
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
+import { cachedJson } from "@/lib/pancake-cache"
 
 function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
@@ -18,16 +19,10 @@ function fmt2(n: number) {
 // Real per-day data (order count + COD amount) from Pancake POS for one page.
 // Uses the `full` phase of the shared proxy route — it returns the byDate breakdown.
 async function fetchPageByDate(apiKey: string, pageId: string, from: string, to: string) {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
-    + `&from=${from}&to=${to}&phase=full`,
-    { cache: "no-store" }
+    + `&from=${from}&to=${to}&phase=full`
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) {
-    const detail = json.detail ? ` — ${json.detail}` : ""
-    throw new Error((json.error || "API error") + detail)
-  }
   const byDate = (json.byDate ?? {}) as Record<string, { orders: number; sales: number }>
   const out: Record<string, { orders: number; amount: number }> = {}
   for (const [d, v] of Object.entries(byDate)) out[d] = { orders: v.orders, amount: v.sales }

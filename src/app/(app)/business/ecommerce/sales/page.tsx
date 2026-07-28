@@ -11,6 +11,7 @@ import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems, itemRemaining } from "@/lib/product-items-store"
 import { fetchJntFees, upsertJntFees, fetchOrderBaselines, upsertOrderBaselines } from "@/lib/sales-shared-store"
+import { cachedJson } from "@/lib/pancake-cache"
 
 const PARCEL_STATUSES = ["New","Encoded","Packed","Parcel for Fulfillment","Pending Printed Waybill","Shipped Out","In-Transit","On-Delivery","Out of Delivery Zone","Delivering","Delivered","For Return","Returning","Returned","Remitted","Closed","Cancelled by Customer","Cancelled by Warehouse","Owned","Problematic/Damage","No-Record"]
 const MOPS = ["COD", "Gcash", "Bank Transfer", "Credit Card", "Maya"]
@@ -161,13 +162,11 @@ const DEFERRED = "Not Yet Mapped"
 
 // Fetch mapped order rows for one page from the shared Pancake proxy route (phase=rows).
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&phase=rows&basis=sales_order${noCache ? "&nocache=1" : ""}`,
-    { cache: "no-store" }
+    { force: noCache }
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return Array.isArray(json.rows) ? json.rows : []
 }
 

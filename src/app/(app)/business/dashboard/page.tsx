@@ -5,6 +5,7 @@ import { Activity, TrendingUp, ShoppingBag, Package, Truck, RotateCcw, AlertCirc
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
+import { cachedJson } from "@/lib/pancake-cache"
 
 function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
@@ -161,14 +162,12 @@ async function fetchOrders(
   apiKey: string, pageId: string, from: string, to: string, basis: string,
   phase: "fast" | "full" | "all" = "all", noCache = false, fields = ""
 ): Promise<OrdersResponse> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&basis=${encodeURIComponent(basis)}&phase=${phase}`
     + `${fields ? `&fields=${fields}` : ""}${noCache ? "&nocache=1" : ""}`,
-    { cache: "no-store" }
+    { force: noCache }
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return json as OrdersResponse
 }
 

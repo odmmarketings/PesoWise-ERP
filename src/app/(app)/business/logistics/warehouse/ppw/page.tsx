@@ -9,6 +9,9 @@ import {
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
+import { cachedJson } from "@/lib/pancake-cache"
+import { courierOf, COURIERS, COURIER_COLOR } from "@/lib/courier"
+import { StatCardsSkeleton, TableSkeleton } from "@/components/business/Skeleton"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // PPW — PENDING PRINTED WAYBILL. Ang tanong na sinasagot nito: ILAN ANG NAIWANG
@@ -33,13 +36,11 @@ const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH"
 const PPW_LOOKBACK_DAYS = 90
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, basis: string, noCache = false): Promise<any[]> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&phase=rows&basis=${basis}${noCache ? "&nocache=1" : ""}`,
-    { cache: "no-store" }
+    { force: noCache }
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return Array.isArray(json.rows) ? json.rows : []
 }
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {
@@ -70,20 +71,11 @@ const statusLabel = (raw: string): string => {
 // Nakaalis na o hindi na dapat bilangin bilang naiwan.
 const GONE = new Set(["Shipped", "Delivered", "Returning", "Returned", "Cancelled", "Deleted"])
 
-const COURIERS = ["SPX", "J&T"] as const
-function courierLabel(raw: string): string {
-  const s = String(raw || "").toLowerCase()
-  if (/spx|shopee/.test(s)) return "SPX"
-  if (/j&t|jnt|\bjt\b/.test(s)) return "J&T"
-  return "OTHER"
-}
-const COURIER_COLOR: Record<string, string> = { "SPX": "#f97316", "J&T": "#dc2626", "OTHER": "#94a3b8" }
-
-function CourierBadge({ courier }: { courier: string }) {
-  const l = courierLabel(courier)
+function CourierBadge({ courier, tracking }: { courier: string; tracking?: string }) {
+  const l = courierOf(courier, tracking)
   return (
     <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold"
-      style={{ background: `${COURIER_COLOR[l]}1a`, color: COURIER_COLOR[l] }} title={courier || "walang courier"}>
+      style={{ background: `${COURIER_COLOR[l]}1a`, color: COURIER_COLOR[l] }} title={courier || "mula sa tracking prefix"}>
       <span className="w-1.5 h-1.5 rounded-full" style={{ background: COURIER_COLOR[l] }} /> {l}
     </span>
   )
@@ -111,7 +103,8 @@ export default function PpwPage() {
 
   const decorate = (r: any, pageName: string): Row => ({
     ...r, page_name: pageName, _st: statusLabel(r.order_status),
-    _courier: courierLabel(r.courier), _amt: Number(r.final_price || 0),
+    // Tracking bilang fallback — madalas blangko ang partner_name sa PPW parcels.
+    _courier: courierOf(r.courier, r.tracking_no), _amt: Number(r.final_price || 0),
   })
 
   async function load(noCache = false) {
@@ -261,6 +254,9 @@ export default function PpwPage() {
       {/* ── PPW MONITOR ── */}
       {tab === "ppw" && (
         <div className="space-y-4">
+          {loading && ppwRows.length === 0 ? (
+            <StatCardsSkeleton count={3} height="h-[86px]" className="grid grid-cols-1 md:grid-cols-3 gap-2.5" />
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
             <div className="relative overflow-hidden rounded-xl px-4 py-3 h-[86px] flex items-center justify-between bg-slate-800">
               <ScanBarcode strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.14] text-white" />
@@ -280,6 +276,7 @@ export default function PpwPage() {
               </div>
             ))}
           </div>
+          )}
 
           {/* Aging — ito ang nagsasabi kung may nabubulok na parcel sa bodega */}
           <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex items-center gap-4 flex-wrap">
@@ -319,7 +316,7 @@ export default function PpwPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400 italic">Loading…</td></tr>}
+                  {loading && <tr><td colSpan={8} className="p-0"><TableSkeleton rows={5} cols={6} /></td></tr>}
                   {!loading && ppw.count === 0 && (
                     <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400 italic">
                       <CheckCircle2 className="w-5 h-5 text-emerald-500 inline mr-1.5" />
@@ -329,7 +326,7 @@ export default function PpwPage() {
                   {ppw.list.map(r => (
                     <tr key={r.id} className="hover:bg-blue-50/40">
                       <td className="px-4 py-2.5 font-mono text-slate-800 whitespace-nowrap">{r.tracking_no}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap"><CourierBadge courier={r.courier} /></td>
+                      <td className="px-4 py-2.5 whitespace-nowrap"><CourierBadge courier={r.courier} tracking={r.tracking_no} /></td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[140px] truncate">{r.page_name}</td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[160px] truncate">{r.customer_name || "—"}</td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[200px] truncate" title={r.order_item}>{r.order_item || "—"}</td>
@@ -438,7 +435,7 @@ export default function PpwPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {loading && <tr><td colSpan={3 + shownCouriers.length * 2} className="px-4 py-10 text-center text-sm text-slate-400 italic">Loading…</td></tr>}
+                  {loading && <tr><td colSpan={3 + shownCouriers.length * 2} className="p-0"><TableSkeleton rows={5} cols={5} /></td></tr>}
                   {!loading && fp.days.length === 0 && (
                     <tr><td colSpan={3 + shownCouriers.length * 2} className="px-4 py-10 text-center text-sm text-slate-400 italic">Walang naipadalang parcel sa range na ito.</td></tr>
                   )}

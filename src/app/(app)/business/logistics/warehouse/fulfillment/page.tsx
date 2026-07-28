@@ -12,6 +12,7 @@ import { useProductItems } from "@/lib/product-items-store"
 import { currentUserName } from "@/lib/current-user"
 import { MEMBERS } from "@/lib/finance-settings-store"
 import { fetchFulfillmentMeta, upsertFulfillmentMeta, cacheFulfillmentMeta } from "@/lib/fulfillment-meta-store"
+import { cachedJson } from "@/lib/pancake-cache"
 
 // FULFILLMENT (LHIKE Warehouse manual) — warehouse-facing view of live Pancake orders:
 // toggleable columns, per-column filters, Group (page), packer assignment (person icon),
@@ -25,13 +26,11 @@ const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH"
 const INP = "w-full h-8 rounded border border-slate-300 px-2 text-xs bg-white focus:outline-none focus:border-blue-400"
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&phase=rows&basis=sales_order${noCache ? "&nocache=1" : ""}`,
-    { cache: "no-store" }
+    { force: noCache }
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return Array.isArray(json.rows) ? json.rows : []
 }
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {

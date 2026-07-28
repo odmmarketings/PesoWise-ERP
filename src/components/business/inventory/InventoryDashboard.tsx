@@ -14,6 +14,7 @@ import { useStockReleases } from "@/lib/stock-releases-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
+import { cachedJson } from "@/lib/pancake-cache"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INVENTORY DASHBOARD — buod ng buong warehouse: magkano ang nakatali sa stock,
@@ -37,13 +38,10 @@ const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${pa
 // Pancake rows sa SHIPPED-OUT basis — ang date window ay ang oras na naipadala sa courier,
 // kaya eksaktong "lahat ng lumabas sa warehouse" sa range. (Kapareho ng Fulfillment proxy.)
 async function fetchShippedRows(apiKey: string, pageId: string, from: string, to: string): Promise<any[]> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
-    + `&from=${from}&to=${to}&phase=rows&basis=shipped_out`,
-    { cache: "no-store" }
+    + `&from=${from}&to=${to}&phase=rows&basis=shipped_out`
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return Array.isArray(json.rows) ? json.rows : []
 }
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {

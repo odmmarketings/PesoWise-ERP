@@ -7,6 +7,7 @@ import {
 import { useActivePages } from "@/lib/pages-store"
 import { useRtsMeta, type RtsMeta, type RtsItemCount } from "@/lib/rts-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
+import { cachedJson } from "@/lib/pancake-cache"
 
 // RTS ITEMS (LHIKE manual) — Return-to-Sender parcels, live from Pancake (orders whose status
 // is Returning/Returned across all connected pages). Features: sortable/filterable table w/
@@ -18,13 +19,11 @@ const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH"
 const INP = "h-8 w-full rounded border border-slate-300 px-1.5 text-xs bg-white focus:outline-none focus:border-blue-400"
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&phase=rows&basis=sales_order${noCache ? "&nocache=1" : ""}`,
-    { cache: "no-store" }
+    { force: noCache }
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return Array.isArray(json.rows) ? json.rows : []
 }
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {

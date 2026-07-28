@@ -9,14 +9,14 @@
 // Tracker) over Pancake's own shipping_fee.
 // ──────────────────────────────────────────────────────────────────────────────
 
+import { cachedJson } from "@/lib/pancake-cache"
+
 export const normTracking = (s: any) => String(s ?? "").trim().toUpperCase()
 
-export async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string): Promise<any[]> {
-  const res = await fetch(
+export async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, force = false): Promise<any[]> {
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
-    + `&from=${from}&to=${to}&phase=rows&basis=sales_order`, { cache: "no-store" })
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
+    + `&from=${from}&to=${to}&phase=rows&basis=sales_order${force ? "&nocache=1" : ""}`, { force })
   return Array.isArray(json.rows) ? json.rows : []
 }
 

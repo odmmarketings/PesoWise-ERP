@@ -12,6 +12,8 @@ import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems } from "@/lib/product-items-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
 import { useShippedOutScans, type ShippedScanItem } from "@/lib/shipped-out-store"
+import { cachedJson } from "@/lib/pancake-cache"
+import { courierOf, courierTally, COURIERS, COURIER_COLOR } from "@/lib/courier"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // SHIPPED OUT (Barcode) — i-scan ang waybill tracking (camera / hardware scanner /
@@ -59,13 +61,11 @@ function beep(kind: "ok" | "warn" | "error") {
 }
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&phase=rows&basis=sales_order${noCache ? "&nocache=1" : ""}`,
-    { cache: "no-store" }
+    { force: noCache }
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return Array.isArray(json.rows) ? json.rows : []
 }
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {
@@ -79,35 +79,26 @@ const parseItems = (orderItem: string) => String(orderItem || "").split(",").map
   return m ? { qty: Number(m[1]) || 1, name: m[2].trim() } : { qty: 1, name: seg }
 })
 
-// Dalawa lang ang courier natin: SPX at J&T. Ang kahit anong iba (o walang courier)
-// ay napupunta sa OTHER — hindi ito itinatago para walang parcel na nawawala sa bilang.
-const MAIN_COURIERS = ["SPX", "J&T"] as const
-function courierLabel(raw: string): string {
-  const s = String(raw || "").toLowerCase()
-  if (/spx|shopee/.test(s)) return "SPX"
-  if (/j&t|jnt|\bjt\b/.test(s)) return "J&T"
-  return "OTHER"
-}
+// Dalawa lang ang courier natin: SPX at J&T (tingnan ang src/lib/courier.ts — may
+// tracking-prefix fallback kapag blangko ang partner_name). Lumalabas lang ang OTHER
+// kung may parcel talagang hindi matukoy — hindi ito itinatago para walang mawala.
+const MAIN_COURIERS = COURIERS
+const courierLabel = (raw: string, tracking = "") => courierOf(raw, tracking)
 const COURIER_STYLE: Record<string, { bg: string; text: string; dot: string }> = {
-  "SPX": { bg: "bg-orange-50", text: "text-orange-700", dot: "#f97316" },
-  "J&T": { bg: "bg-red-50", text: "text-red-700", dot: "#dc2626" },
-  "OTHER": { bg: "bg-slate-100", text: "text-slate-600", dot: "#94a3b8" },
+  "SPX": { bg: "bg-orange-50", text: "text-orange-700", dot: COURIER_COLOR["SPX"] },
+  "J&T": { bg: "bg-red-50", text: "text-red-700", dot: COURIER_COLOR["J&T"] },
+  "OTHER": { bg: "bg-slate-100", text: "text-slate-600", dot: COURIER_COLOR["OTHER"] },
 }
 /** Fixed na tally: laging kita ang SPX at J&T (kahit 0); lalabas ang OTHER kung may laman. */
-function courierTally(list: { courier: string }[]) {
-  const m = new Map<string, number>()
-  for (const s of list) m.set(courierLabel(s.courier), (m.get(courierLabel(s.courier)) || 0) + 1)
-  const out = MAIN_COURIERS.map(label => ({ label, count: m.get(label) || 0 }))
-  const other = m.get("OTHER") || 0
-  if (other > 0) out.push({ label: "OTHER" as any, count: other })
-  return out
+function courierTallyOf(list: { courier: string; tracking_no: string }[]) {
+  return courierTally(list, s => ({ name: s.courier, tracking: s.tracking_no }))
 }
-function CourierBadge({ courier }: { courier: string }) {
-  const l = courierLabel(courier)
+function CourierBadge({ courier, tracking }: { courier: string; tracking?: string }) {
+  const l = courierLabel(courier, tracking)
   const st = COURIER_STYLE[l]
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.bg} ${st.text}`}
-      title={courier || "walang courier"}>
+      title={courier || "mula sa tracking prefix"}>
       <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.dot }} />
       {l}
     </span>
@@ -274,7 +265,7 @@ export default function ShippedOutPage() {
   // ── Today panel (kanan, kagaya ng reference) ─────────────────────────────────
   const today = dstr(new Date())
   const todayScans = useMemo(() => store.scans.filter(s => s.date === today), [store.scans, today])
-  const todayCouriers = useMemo(() => courierTally(todayScans), [todayScans])
+  const todayCouriers = useMemo(() => courierTallyOf(todayScans), [todayScans])
 
   // ── Report tab ───────────────────────────────────────────────────────────────
   const [repA, setRepA] = useState(monthStart())
@@ -283,9 +274,9 @@ export default function ShippedOutPage() {
   const repScans = useMemo(() =>
     store.scans.filter(s =>
       s.date >= repA && s.date <= repB &&
-      (repCourier === "All" || courierLabel(s.courier) === repCourier))
+      (repCourier === "All" || courierLabel(s.courier, s.tracking_no) === repCourier))
   , [store.scans, repA, repB, repCourier])
-  const repCouriers = useMemo(() => courierTally(repScans), [repScans])
+  const repCouriers = useMemo(() => courierTallyOf(repScans), [repScans])
 
   const repTotals = useMemo(() => ({
     amount: repScans.reduce((s, r) => s + (r.amount || 0), 0),
@@ -295,7 +286,7 @@ export default function ShippedOutPage() {
   function exportReport() {
     const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Less sa Inventory (units)", "Amount", "Scanned By"]
     const data = [headers, ...repScans.map(s => [
-      fmtDT(s.created_at), s.tracking_no, courierLabel(s.courier), s.page_name, s.customer, s.order_item,
+      fmtDT(s.created_at), s.tracking_no, courierLabel(s.courier, s.tracking_no), s.page_name, s.customer, s.order_item,
       s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.deducted_total, s.amount, s.scanned_by,
     ]), ["TOTAL", "", "", "", "", "", "", repTotals.units, repTotals.amount, ""]]
     const ws = XLSX.utils.aoa_to_sheet(data)
@@ -391,7 +382,7 @@ export default function ShippedOutPage() {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-mono text-slate-800 truncate">{s.tracking_no}</p>
                     <p className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
-                      <CourierBadge courier={s.courier} /> {num(s.deducted_total)} unit{s.deducted_total === 1 ? "" : "s"} less · {fmtDT(s.created_at)}
+                      <CourierBadge courier={s.courier} tracking={s.tracking_no} /> {num(s.deducted_total)} unit{s.deducted_total === 1 ? "" : "s"} less · {fmtDT(s.created_at)}
                     </p>
                   </div>
                 </div>
@@ -489,7 +480,7 @@ export default function ShippedOutPage() {
                     <tr key={s.id} className="hover:bg-slate-50/70">
                       <td className="px-4 py-2.5 whitespace-nowrap text-xs text-slate-500">{fmtDT(s.created_at)}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap font-mono text-slate-800">{s.tracking_no}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap"><CourierBadge courier={s.courier} /></td>
+                      <td className="px-4 py-2.5 whitespace-nowrap"><CourierBadge courier={s.courier} tracking={s.tracking_no} /></td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-slate-600 max-w-[140px] truncate">{s.page_name || "—"}</td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[160px] truncate">{s.customer || "—"}</td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[200px] truncate" title={s.order_item}>{s.order_item || "—"}</td>

@@ -15,6 +15,9 @@ import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
 import { fetchFulfillmentMeta } from "@/lib/fulfillment-meta-store"
+import { cachedJson } from "@/lib/pancake-cache"
+import { courierOf, COURIER_COLOR } from "@/lib/courier"
+import { StatCardsSkeleton, TableSkeleton } from "@/components/business/Skeleton"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // WAREHOUSE DASHBOARD — isang tingin sa buong operasyon ng bodega: nasaan ang mga
@@ -35,16 +38,13 @@ const peso = (n: number) => {
   return "₱" + Math.round(v).toLocaleString("en-PH")
 }
 const CHARTS_KEY = "pesowise_whdash_charts"
-const COURIER_PALETTE = ["#2563eb", "#0891b2", "#0d9488", "#059669", "#ca8a04", "#ea580c", "#dc2626", "#9333ea"]
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
-  const res = await fetch(
+  const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&phase=rows&basis=sales_order${noCache ? "&nocache=1" : ""}`,
-    { cache: "no-store" }
+    { force: noCache }
   )
-  const json = await res.json()
-  if (!res.ok || !json.success) throw new Error(json.error || "API error")
   return Array.isArray(json.rows) ? json.rows : []
 }
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {
@@ -100,15 +100,8 @@ const PENDING = new Set(["New", "Confirmed", "Restocking", "Prioritize Order", "
 // Nakaalis na o hindi na dapat bilangin bilang naiwan — ginagamit sa PPW.
 const GONE = new Set(["Shipped", "Delivered", "Returning", "Returned", "Cancelled", "Deleted"])
 
-function courierLabel(raw: string): string {
-  const s = String(raw || "").toLowerCase()
-  if (/j&t|jt/.test(s)) return "J&T"
-  if (/spx|shopee/.test(s)) return "SPX"
-  if (/flash/.test(s)) return "FLASH"
-  if (/ninja/.test(s)) return "NINJAVAN"
-  if (/lbc/.test(s)) return "LBC"
-  return raw ? raw.toUpperCase().slice(0, 12) : "—"
-}
+// Ginagamit ang shared resolver — may tracking fallback kapag blangko ang partner_name.
+const courierLabel = (raw: string, tracking = "") => courierOf(raw, tracking)
 
 type FfMeta = { packer?: string; shift?: string; packed_date?: string }
 
@@ -265,8 +258,11 @@ export default function WarehouseDashboardPage() {
   , [count])
   const byCourier = useMemo(() => {
     const m = new Map<string, number>()
-    for (const r of withStatus) m.set(courierLabel(r.courier), (m.get(courierLabel(r.courier)) || 0) + 1)
-    return Array.from(m, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8)
+    for (const r of withStatus) {
+      const k = courierLabel(r.courier, r.tracking_no)
+      m.set(k, (m.get(k) || 0) + 1)
+    }
+    return Array.from(m, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
   }, [withStatus])
   // Stacked pipeline per page — ang bisuwal na katumbas ng summary table.
   const pipelineByPage = useMemo(() =>
@@ -334,6 +330,9 @@ export default function WarehouseDashboardPage() {
       {/* Pipeline — kulay ng Pancake status */}
       <div>
         <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Order Pipeline · sa loob ng napiling range</p>
+        {loading && rows.length === 0 ? (
+          <StatCardsSkeleton count={6} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5" />
+        ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
           {pipelineCards.map(c => (
             <div key={c.key} className="relative overflow-hidden rounded-xl px-4 py-3 h-[78px] flex items-center justify-between"
@@ -348,9 +347,13 @@ export default function WarehouseDashboardPage() {
             </div>
           ))}
         </div>
+        )}
       </div>
 
       {/* Ops */}
+      {loading && rows.length === 0 ? (
+        <StatCardsSkeleton count={6} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5" />
+      ) : (
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
         {opsCards.map(c => (
           <div key={c.label} className={`relative overflow-hidden ${c.color} rounded-xl px-4 py-3 h-[78px] flex items-center justify-between`}>
@@ -364,6 +367,7 @@ export default function WarehouseDashboardPage() {
           </div>
         ))}
       </div>
+      )}
 
       {/* Scan coverage strip */}
       <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex items-center gap-3 flex-wrap">
@@ -389,7 +393,9 @@ export default function WarehouseDashboardPage() {
             <FileSpreadsheet className="w-3.5 h-3.5" /> Export
           </Button>
         </div>
-        {summary.cols.length === 0 ? (
+        {loading && rows.length === 0 ? (
+          <TableSkeleton rows={6} cols={7} />
+        ) : summary.cols.length === 0 ? (
           <p className="px-4 py-8 text-sm text-slate-400 italic text-center">Walang order sa pipeline para sa range na ito.</p>
         ) : (
           <div className="overflow-x-auto">
@@ -501,7 +507,7 @@ export default function WarehouseDashboardPage() {
                   <PieChart>
                     <Pie data={byCourier} dataKey="value" nameKey="name" outerRadius={90}
                       label={(e: any) => `${e.name} (${e.value})`} labelLine={false} fontSize={10}>
-                      {byCourier.map((_, i) => <Cell key={i} fill={COURIER_PALETTE[i % COURIER_PALETTE.length]} />)}
+                      {byCourier.map(c => <Cell key={c.name} fill={COURIER_COLOR[c.name] || "#94a3b8"} />)}
                     </Pie>
                     <Tooltip />
                   </PieChart>
