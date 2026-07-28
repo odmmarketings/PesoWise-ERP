@@ -93,7 +93,7 @@ export const businessNav: NavSection[] = [
   {
     section: "PROBLEM MANAGEMENT",
     items: [
-      { href: "/business/board", icon: ClipboardList, label: "Problems" },
+      { href: "/business/board", icon: ClipboardList, label: "Problem Cost Solution" },
       { href: "/business/board/settings", icon: Settings, label: "Departments" },
     ],
   },
