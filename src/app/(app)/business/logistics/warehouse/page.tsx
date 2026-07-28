@@ -1,13 +1,15 @@
 "use client"
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
+import * as XLSX from "xlsx-js-style"
 import {
-  Warehouse, RefreshCw, PackageOpen, Package, Clock, Truck, ScanBarcode, Undo2,
-  Eye, EyeOff, BarChart3, Users, AlertTriangle, CheckCircle2,
+  Warehouse, RefreshCw, Package, Clock, Truck, ScanBarcode, Undo2, PackageCheck,
+  Eye, EyeOff, BarChart3, Users, AlertTriangle, CheckCircle2, Sparkles, PauseCircle,
+  ClipboardList, FileSpreadsheet,
 } from "lucide-react"
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
@@ -15,10 +17,10 @@ import { useShippedOutScans } from "@/lib/shipped-out-store"
 import { fetchFulfillmentMeta } from "@/lib/fulfillment-meta-store"
 
 // ──────────────────────────────────────────────────────────────────────────────
-// WAREHOUSE DASHBOARD — isang tingin sa buong operasyon ng bodega: ilang order ang
-// dapat i-pack, nasaan sila sa pipeline, sino ang nag-pack, ilan ang na-scan
-// palabas, at ilan ang pabalik (RTS). Live Pancake orders + fulfillment annotations
-// + shipped-out scans — walang inimbentong numero.
+// WAREHOUSE DASHBOARD — isang tingin sa buong operasyon ng bodega: nasaan ang mga
+// order sa pipeline, ilan ang dapat i-pack, ilan ang na-scan palabas, sino ang
+// nag-pack, at ilan ang pabalik (RTS). Live Pancake orders + fulfillment
+// annotations + shipped-out scans — walang inimbentong numero.
 // ──────────────────────────────────────────────────────────────────────────────
 
 const pad = (n: number) => String(n).padStart(2, "0")
@@ -26,7 +28,7 @@ const dstr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.g
 const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01` }
 const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
 const CHARTS_KEY = "pesowise_whdash_charts"
-const PALETTE = ["#2563eb", "#0891b2", "#0d9488", "#059669", "#65a30d", "#ca8a04", "#d97706", "#ea580c", "#dc2626", "#db2777", "#9333ea", "#4f46e5"]
+const COURIER_PALETTE = ["#2563eb", "#0891b2", "#0d9488", "#059669", "#ca8a04", "#ea580c", "#dc2626", "#9333ea"]
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
   const res = await fetch(
@@ -64,12 +66,30 @@ const statusLabel = (raw: string): string => {
   for (const o of STATUS_MATCH) if (o.match.some(m => s.includes(m))) return o.l
   return raw.charAt(0).toUpperCase() + raw.slice(1)
 }
+
+// Mga kulay ng Pancake POS mismo — pareho ang gamit sa cards, charts, at summary
+// para iisa ang ibig sabihin ng bawat kulay saanman sa dashboard.
 const STATUS_COLOR: Record<string, string> = {
-  "New": "#94a3b8", "Restocking": "#f59e0b", "Prioritize Order": "#f43f5e", "Confirmed": "#3b82f6",
-  "Packaging": "#a855f7", "Waiting for Pick Up": "#6366f1", "Shipped": "#f97316",
-  "Delivered": "#10b981", "Returning": "#f59e0b", "Returned": "#ef4444", "Cancelled": "#dc2626", "Deleted": "#cbd5e1",
+  "New": "#06b6d4",                  // cyan
+  "Restocking": "#eab308",           // gold — on hold
+  "Prioritize Order": "#f43f5e",     // rose
+  "Confirmed": "#3b82f6",            // blue
+  "Packaging": "#a855f7",            // purple
+  "Waiting for Pick Up": "#d946ef",  // magenta
+  "Shipped": "#f97316",              // orange
+  "Delivered": "#10b981",
+  "Returning": "#f59e0b",
+  "Returned": "#ef4444",
+  "Cancelled": "#dc2626",
+  "Deleted": "#cbd5e1",
 }
-const TO_FULFILL = new Set(["New", "Confirmed", "Restocking", "Prioritize Order"])
+const DISPLAY: Record<string, string> = { "Restocking": "Restocking (on hold)" }
+const disp = (s: string) => DISPLAY[s] || s
+
+// Ang pipeline = mga order na nasa loob pa ng operasyon (hindi pa tapos/kanselado).
+const PIPELINE = ["New", "Confirmed", "Restocking", "Prioritize Order", "Packaging", "Waiting for Pick Up", "Shipped"]
+// Hindi pa nakakalabas ng bodega — ito ang bumubuo ng backlog.
+const PENDING = new Set(["New", "Confirmed", "Restocking", "Prioritize Order", "Packaging"])
 
 function courierLabel(raw: string): string {
   const s = String(raw || "").toLowerCase()
@@ -127,25 +147,17 @@ export default function WarehouseDashboardPage() {
   // ── Derived ─────────────────────────────────────────────────────────────────
   const withStatus = useMemo(() => rows.map(r => ({ ...r, _st: statusLabel(r.order_status) })), [rows])
 
-  const stats = useMemo(() => {
-    let toFulfill = 0, packaging = 0, pickup = 0, shipped = 0, delivered = 0, returning = 0, returned = 0
-    for (const r of withStatus) {
-      if (TO_FULFILL.has(r._st)) toFulfill++
-      else if (r._st === "Packaging") packaging++
-      else if (r._st === "Waiting for Pick Up") pickup++
-      else if (r._st === "Shipped") shipped++
-      else if (r._st === "Delivered") delivered++
-      else if (r._st === "Returning") returning++
-      else if (r._st === "Returned") returned++
-    }
-    return { toFulfill, packaging, pickup, shipped, delivered, returning, returned }
+  const count = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const r of withStatus) m[r._st] = (m[r._st] || 0) + 1
+    return m
   }, [withStatus])
 
   const today = dstr(new Date())
   const scannedToday = useMemo(() => scanStore.scans.filter(s => s.date === today).length, [scanStore.scans, today])
   const scansInRange = useMemo(() => scanStore.scans.filter(s => s.date >= win.from && s.date <= win.to), [scanStore.scans, win])
 
-  // Scan coverage — ilan sa mga umalis na order (Shipped/Delivered/pabalik) ang dumaan sa scanner.
+  // Scan coverage — ilan sa mga umalis na order ang dumaan sa scanner.
   const coverage = useMemo(() => {
     const outbound = withStatus.filter(r => ["Shipped", "Delivered", "Returning", "Returned", "Waiting for Pick Up"].includes(r._st) && r.tracking_no)
     const scanned = new Set(scanStore.scans.map(s => s.tracking_no.toLowerCase()))
@@ -168,9 +180,9 @@ export default function WarehouseDashboardPage() {
     return Array.from(m, ([name, v]) => ({ name, ...v })).sort((a, b) => b.packed - a.packed)
   }, [meta, win])
 
-  // Backlog — pinakamatagal nang nakabinbin na hindi pa naipapadala.
+  // Backlog — pinakamatagal nang hindi nakakalabas ng bodega.
   const backlog = useMemo(() => {
-    const stuck = withStatus.filter(r => TO_FULFILL.has(r._st) || r._st === "Packaging")
+    const stuck = withStatus.filter(r => PENDING.has(r._st))
     const now = Date.now()
     return stuck.map(r => {
       const t = new Date(String(r.date_added || "") + "T00:00:00").getTime()
@@ -178,22 +190,63 @@ export default function WarehouseDashboardPage() {
     }).sort((a, b) => b._age - a._age)
   }, [withStatus])
 
-  // Charts
-  const byStatus = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of withStatus) m.set(r._st, (m.get(r._st) || 0) + 1)
-    return STATUS_MATCH.map(s => ({ name: s.l, value: m.get(s.l) || 0 })).filter(x => x.value > 0)
-  }, [withStatus])
+  // ── SUMMARY: bawat page × bawat status ng pipeline ──────────────────────────
+  // Tinatago ang kolum na puro sero para hindi magulo, pero hinding-hindi
+  // itinatago ang may laman (walang nawawalang datos).
+  const summary = useMemo(() => {
+    const perPage = new Map<string, Record<string, number>>()
+    for (const p of activePages) perPage.set(p.name, {})
+    for (const r of withStatus) {
+      const k = r.page_name || "—"
+      const cur = perPage.get(k) || {}
+      cur[r._st] = (cur[r._st] || 0) + 1
+      perPage.set(k, cur)
+    }
+    const cols = PIPELINE.filter(s => Array.from(perPage.values()).some(c => (c[s] || 0) > 0))
+    const list = Array.from(perPage, ([name, counts]) => {
+      const total = cols.reduce((s, c) => s + (counts[c] || 0), 0)
+      return { name, counts, total }
+    }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+    const totals: Record<string, number> = {}
+    for (const c of cols) totals[c] = list.reduce((s, r) => s + (r.counts[c] || 0), 0)
+    const grand = cols.reduce((s, c) => s + totals[c], 0)
+    return { cols, list, totals, grand }
+  }, [withStatus, activePages])
+
+  function exportSummary() {
+    const headers = ["Page name", ...summary.cols.map(disp), "TOTAL"]
+    const body = summary.list.map(r => [r.name, ...summary.cols.map(c => r.counts[c] || 0), r.total])
+    const foot = ["TOTAL", ...summary.cols.map(c => summary.totals[c]), summary.grand]
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...body, foot])
+    for (let c = 0; c < headers.length; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c })
+      if (ws[addr]) (ws[addr] as any).s = { fill: { patternType: "solid", fgColor: { rgb: "FF1E293B" } }, font: { bold: true, color: { rgb: "FFFFFFFF" } } }
+      const f = XLSX.utils.encode_cell({ r: body.length + 1, c })
+      if (ws[f]) (ws[f] as any).s = { fill: { patternType: "solid", fgColor: { rgb: "FFF1F5F9" } }, font: { bold: true } }
+    }
+    ws["!cols"] = headers.map((h, i) => ({ wch: i === 0 ? 30 : Math.max(12, h.length + 2) }))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Warehouse Summary")
+    XLSX.writeFile(wb, `Warehouse-Summary_${win.from}_to_${win.to}.xlsx`)
+  }
+
+  // ── Charts ──────────────────────────────────────────────────────────────────
+  const byStatus = useMemo(() =>
+    STATUS_MATCH.map(s => ({ name: disp(s.l), key: s.l, value: count[s.l] || 0 })).filter(x => x.value > 0)
+  , [count])
   const byCourier = useMemo(() => {
     const m = new Map<string, number>()
     for (const r of withStatus) m.set(courierLabel(r.courier), (m.get(courierLabel(r.courier)) || 0) + 1)
     return Array.from(m, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8)
   }, [withStatus])
-  const byPage = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of withStatus) m.set(r.page_name || "—", (m.get(r.page_name || "—") || 0) + 1)
-    return Array.from(m, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10)
-  }, [withStatus])
+  // Stacked pipeline per page — ang bisuwal na katumbas ng summary table.
+  const pipelineByPage = useMemo(() =>
+    summary.list.filter(r => r.total > 0).slice(0, 8).map(r => {
+      const o: Record<string, any> = { name: r.name.length > 18 ? r.name.slice(0, 17) + "…" : r.name }
+      for (const c of summary.cols) o[disp(c)] = r.counts[c] || 0
+      return o
+    })
+  , [summary])
   const scanTrend = useMemo(() => {
     const m = new Map<string, number>()
     for (const s of scanStore.scans) m.set(s.date, (m.get(s.date) || 0) + 1)
@@ -205,13 +258,22 @@ export default function WarehouseDashboardPage() {
     return out
   }, [scanStore.scans])
 
-  const cards = [
-    { label: "TO FULFILL", value: num(stats.toFulfill), color: "bg-slate-700", icon: PackageOpen },
-    { label: "PACKAGING", value: num(stats.packaging), color: "bg-purple-500", icon: Package },
-    { label: "WAITING FOR PICKUP", value: num(stats.pickup), color: "bg-indigo-500", icon: Clock },
-    { label: "SHIPPED (RANGE)", value: num(stats.shipped), color: "bg-orange-500", icon: Truck },
+  // ── Cards ───────────────────────────────────────────────────────────────────
+  // Pipeline strip: eksaktong kulay ng Pancake status. "Packaging" ang tunay na
+  // to-fulfill (may laman na, hinihintay lang mabalot).
+  const pipelineCards: { key: string; label: string; icon: any }[] = [
+    { key: "New", label: "New", icon: Sparkles },
+    { key: "Confirmed", label: "Confirmed", icon: CheckCircle2 },
+    { key: "Restocking", label: "Restocking (on hold)", icon: PauseCircle },
+    { key: "Packaging", label: "Packaging · To Fulfill", icon: Package },
+    { key: "Waiting for Pick Up", label: "Waiting for Pick Up", icon: Clock },
+    { key: "Shipped", label: "Shipped", icon: Truck },
+  ]
+  const opsCards = [
+    { label: "TOTAL ORDERS", value: num(rows.length), color: "bg-slate-700", icon: ClipboardList },
+    { label: "DELIVERED", value: num(count["Delivered"] || 0), color: "bg-emerald-600", icon: PackageCheck },
     { label: "SCANNED OUT TODAY", value: num(scannedToday), color: "bg-blue-600", icon: ScanBarcode },
-    { label: "RTS INCOMING / BACK", value: `${num(stats.returning)} / ${num(stats.returned)}`, color: "bg-rose-500", icon: Undo2 },
+    { label: "RTS RETURNING / RETURNED", value: `${num(count["Returning"] || 0)} / ${num(count["Returned"] || 0)}`, color: "bg-rose-500", icon: Undo2 },
   ]
 
   return (
@@ -235,9 +297,26 @@ export default function WarehouseDashboardPage() {
 
       {loadErr && <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{loadErr}</div>}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
-        {cards.map(c => (
+      {/* Pipeline — kulay ng Pancake status */}
+      <div>
+        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Order Pipeline · sa loob ng napiling range</p>
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
+          {pipelineCards.map(c => (
+            <div key={c.key} className="relative overflow-hidden rounded-xl px-4 py-3 h-[78px] flex items-center justify-between"
+              style={{ background: STATUS_COLOR[c.key] }}>
+              <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.18] text-white" />
+              <div className="text-right ml-auto z-10 min-w-0">
+                <p className="text-2xl font-bold text-white leading-none tabular-nums">{num(count[c.key] || 0)}</p>
+                <p className="text-[10px] text-white/85 font-semibold mt-1 tracking-wider uppercase leading-tight">{c.label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Ops */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
+        {opsCards.map(c => (
           <div key={c.label} className={`relative overflow-hidden ${c.color} rounded-xl px-4 py-3 h-[78px] flex items-center justify-between`}>
             <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.12] text-white" />
             <div className="text-right ml-auto z-10 min-w-0">
@@ -261,6 +340,67 @@ export default function WarehouseDashboardPage() {
         <span className="text-[11px] text-slate-400">· {num(scansInRange.length)} scan{scansInRange.length === 1 ? "" : "s"} sa range</span>
       </div>
 
+      {/* ── SUMMARY MATRIX ── */}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><ClipboardList className="w-4 h-4 text-blue-600" /> Pipeline Summary per Page</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Bilang ng order kada status · {win.from} → {win.to} · hindi kasama ang Delivered / Cancelled (labas na sa pipeline)</p>
+          </div>
+          <Button variant="outline" onClick={exportSummary} disabled={summary.grand === 0} className="h-8 text-xs">
+            <FileSpreadsheet className="w-3.5 h-3.5" /> Export
+          </Button>
+        </div>
+        {summary.cols.length === 0 ? (
+          <p className="px-4 py-8 text-sm text-slate-400 italic text-center">Walang order sa pipeline para sa range na ito.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-slate-800 text-white">
+                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider sticky left-0 bg-slate-800 z-10">Page name</th>
+                  {summary.cols.map(c => (
+                    <th key={c} className="px-3 py-2.5 text-center text-[11px] font-bold uppercase tracking-wider whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full" style={{ background: STATUS_COLOR[c] }} />
+                        {disp(c)}
+                      </span>
+                    </th>
+                  ))}
+                  <th className="px-4 py-2.5 text-center text-[11px] font-bold uppercase tracking-wider bg-slate-900">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {summary.list.map((r, i) => (
+                  <tr key={r.name} className={`${i % 2 ? "bg-slate-50/60" : "bg-white"} hover:bg-blue-50/40 ${r.total === 0 ? "opacity-45" : ""}`}>
+                    <td className={`px-4 py-2.5 font-semibold text-slate-800 whitespace-nowrap sticky left-0 z-10 ${i % 2 ? "bg-slate-50/60" : "bg-white"}`}>{r.name}</td>
+                    {summary.cols.map(c => {
+                      const v = r.counts[c] || 0
+                      return (
+                        <td key={c} className="px-3 py-2.5 text-center tabular-nums">
+                          {v === 0 ? <span className="text-slate-300">0</span>
+                            : <span className="font-bold" style={{ color: STATUS_COLOR[c] }}>{num(v)}</span>}
+                        </td>
+                      )
+                    })}
+                    <td className="px-4 py-2.5 text-center tabular-nums font-extrabold text-slate-900 bg-slate-50">{num(r.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-100 border-t-2 border-slate-300">
+                  <td className="px-4 py-2.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-700 sticky left-0 bg-slate-100 z-10">Total</td>
+                  {summary.cols.map(c => (
+                    <td key={c} className="px-3 py-2.5 text-center tabular-nums font-extrabold" style={{ color: STATUS_COLOR[c] }}>{num(summary.totals[c])}</td>
+                  ))}
+                  <td className="px-4 py-2.5 text-center tabular-nums font-extrabold text-white bg-slate-800">{num(summary.grand)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Graphs — naka-hide by default */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
         <div className="flex items-center justify-between">
@@ -273,21 +413,40 @@ export default function WarehouseDashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
             <ChartBox title="Orders by Status" subtitle="Saan nakabara ang pipeline">
               {byStatus.length === 0 ? <Empty /> : (
-                <ResponsiveContainer width="100%" height={260}>
+                <ResponsiveContainer width="100%" height={270}>
                   <BarChart data={byStatus} layout="vertical" margin={{ left: 8, right: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
-                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
                     <Tooltip />
-                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
-                      {byStatus.map(s => <Cell key={s.name} fill={STATUS_COLOR[s.name] || "#94a3b8"} />)}
+                    <Bar dataKey="value" name="Orders" radius={[0, 6, 6, 0]}>
+                      {byStatus.map(s => <Cell key={s.key} fill={STATUS_COLOR[s.key] || "#94a3b8"} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </ChartBox>
+
+            <ChartBox title="Pipeline per Page" subtitle="Top 8 — bisuwal na bersyon ng summary sa itaas">
+              {pipelineByPage.length === 0 ? <Empty /> : (
+                <ResponsiveContainer width="100%" height={270}>
+                  <BarChart data={pipelineByPage}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-18} textAnchor="end" height={70} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    {summary.cols.map((c, i) => (
+                      <Bar key={c} dataKey={disp(c)} stackId="p" fill={STATUS_COLOR[c]}
+                        radius={i === summary.cols.length - 1 ? [4, 4, 0, 0] : undefined} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </ChartBox>
+
             <ChartBox title="Shipped Out Scans (last 14 days)" subtitle="Bilang ng parcels na na-scan palabas kada araw">
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={250}>
                 <LineChart data={scanTrend}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={1} />
@@ -297,29 +456,17 @@ export default function WarehouseDashboardPage() {
                 </LineChart>
               </ResponsiveContainer>
             </ChartBox>
+
             <ChartBox title="Orders by Courier">
               {byCourier.length === 0 ? <Empty /> : (
-                <ResponsiveContainer width="100%" height={240}>
+                <ResponsiveContainer width="100%" height={250}>
                   <PieChart>
                     <Pie data={byCourier} dataKey="value" nameKey="name" outerRadius={90}
                       label={(e: any) => `${e.name} (${e.value})`} labelLine={false} fontSize={10}>
-                      {byCourier.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                      {byCourier.map((_, i) => <Cell key={i} fill={COURIER_PALETTE[i % COURIER_PALETTE.length]} />)}
                     </Pie>
                     <Tooltip />
                   </PieChart>
-                </ResponsiveContainer>
-              )}
-            </ChartBox>
-            <ChartBox title="Orders per Page" subtitle="Top 10 — saan galing ang volume">
-              {byPage.length === 0 ? <Empty /> : (
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={byPage} layout="vertical" margin={{ left: 8, right: 16 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
-                    <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Bar dataKey="value" fill="#0d9488" radius={[0, 6, 6, 0]} />
-                  </BarChart>
                 </ResponsiveContainer>
               )}
             </ChartBox>
@@ -333,7 +480,7 @@ export default function WarehouseDashboardPage() {
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
             <Users className="w-4 h-4 text-blue-600" />
             <p className="text-sm font-bold text-slate-800">Packer Leaderboard</p>
-            <span className="text-[11px] text-slate-400">· packages packed sa range (mula sa Fulfillment assignments)</span>
+            <span className="text-[11px] text-slate-400">· packages packed sa range</span>
           </div>
           {packers.length === 0 ? (
             <p className="px-4 py-6 text-sm text-slate-400 italic">Walang packed-date annotations sa range — i-assign ang packer + packed date sa Fulfillment.</p>
@@ -359,7 +506,7 @@ export default function WarehouseDashboardPage() {
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4 text-amber-500" />
             <p className="text-sm font-bold text-slate-800">Fulfillment Backlog</p>
-            <span className="text-[11px] text-slate-400">· pinakamatagal nang hindi naipapadala</span>
+            <span className="text-[11px] text-slate-400">· hindi pa nakakalabas ng bodega, pinakamatanda muna</span>
           </div>
           {backlog.length === 0 ? (
             <p className="px-4 py-6 text-sm text-slate-400 italic flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Walang backlog — lahat ng orders ay gumagalaw. 🎉</p>
@@ -374,7 +521,8 @@ export default function WarehouseDashboardPage() {
                     </td>
                     <td className="px-4 py-2.5 text-slate-600 max-w-[160px] truncate" title={r.order_item}>{r.order_item || "—"}</td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: `${STATUS_COLOR[r._st] || "#94a3b8"}22`, color: STATUS_COLOR[r._st] || "#64748b" }}>{r._st}</span>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                        style={{ background: `${STATUS_COLOR[r._st] || "#94a3b8"}22`, color: STATUS_COLOR[r._st] || "#64748b" }}>{disp(r._st)}</span>
                     </td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">
                       <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${r._age >= 3 ? "bg-rose-100 text-rose-700" : r._age >= 1 ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
@@ -402,5 +550,5 @@ function ChartBox({ title, subtitle, children }: { title: string; subtitle?: str
   )
 }
 const Empty = ({ label = "Wala pang datos." }: { label?: string }) => (
-  <div className="h-[220px] flex items-center justify-center text-sm text-slate-400 italic">{label}</div>
+  <div className="h-[230px] flex items-center justify-center text-sm text-slate-400 italic">{label}</div>
 )
