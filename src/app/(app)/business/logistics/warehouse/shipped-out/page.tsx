@@ -78,15 +78,39 @@ const parseItems = (orderItem: string) => String(orderItem || "").split(",").map
   return m ? { qty: Number(m[1]) || 1, name: m[2].trim() } : { qty: 1, name: seg }
 })
 
-// Pang-grupo ng courier para sa tally tiles (dynamic pero nililinis ang label).
+// Dalawa lang ang courier natin: SPX at J&T. Ang kahit anong iba (o walang courier)
+// ay napupunta sa OTHER — hindi ito itinatago para walang parcel na nawawala sa bilang.
+const MAIN_COURIERS = ["SPX", "J&T"] as const
 function courierLabel(raw: string): string {
   const s = String(raw || "").toLowerCase()
-  if (/j&t|jt/.test(s)) return "J&T"
   if (/spx|shopee/.test(s)) return "SPX"
-  if (/flash/.test(s)) return "FLASH"
-  if (/ninja/.test(s)) return "NINJAVAN"
-  if (/lbc/.test(s)) return "LBC"
-  return (raw || "OTHER").toUpperCase().slice(0, 12)
+  if (/j&t|jnt|\bjt\b/.test(s)) return "J&T"
+  return "OTHER"
+}
+const COURIER_STYLE: Record<string, { bg: string; text: string; dot: string }> = {
+  "SPX": { bg: "bg-orange-50", text: "text-orange-700", dot: "#f97316" },
+  "J&T": { bg: "bg-red-50", text: "text-red-700", dot: "#dc2626" },
+  "OTHER": { bg: "bg-slate-100", text: "text-slate-600", dot: "#94a3b8" },
+}
+/** Fixed na tally: laging kita ang SPX at J&T (kahit 0); lalabas ang OTHER kung may laman. */
+function courierTally(list: { courier: string }[]) {
+  const m = new Map<string, number>()
+  for (const s of list) m.set(courierLabel(s.courier), (m.get(courierLabel(s.courier)) || 0) + 1)
+  const out = MAIN_COURIERS.map(label => ({ label, count: m.get(label) || 0 }))
+  const other = m.get("OTHER") || 0
+  if (other > 0) out.push({ label: "OTHER" as any, count: other })
+  return out
+}
+function CourierBadge({ courier }: { courier: string }) {
+  const l = courierLabel(courier)
+  const st = COURIER_STYLE[l]
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.bg} ${st.text}`}
+      title={courier || "walang courier"}>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.dot }} />
+      {l}
+    </span>
+  )
 }
 
 type Banner = { kind: "ok" | "warn" | "err"; title: string; sub: string }
@@ -248,28 +272,23 @@ export default function ShippedOutPage() {
   // ── Today panel (kanan, kagaya ng reference) ─────────────────────────────────
   const today = dstr(new Date())
   const todayScans = useMemo(() => store.scans.filter(s => s.date === today), [store.scans, today])
-  const todayCouriers = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const s of todayScans) m.set(courierLabel(s.courier), (m.get(courierLabel(s.courier)) || 0) + 1)
-    return Array.from(m, ([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count)
-  }, [todayScans])
+  const todayCouriers = useMemo(() => courierTally(todayScans), [todayScans])
 
   // ── Report tab ───────────────────────────────────────────────────────────────
   const [repA, setRepA] = useState(monthStart())
   const [repB, setRepB] = useState(dstr(new Date()))
+  const [repCourier, setRepCourier] = useState("All")
   const repScans = useMemo(() =>
-    store.scans.filter(s => s.date >= repA && s.date <= repB)
-  , [store.scans, repA, repB])
-  const repCouriers = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const s of repScans) m.set(courierLabel(s.courier), (m.get(courierLabel(s.courier)) || 0) + 1)
-    return Array.from(m, ([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count)
-  }, [repScans])
+    store.scans.filter(s =>
+      s.date >= repA && s.date <= repB &&
+      (repCourier === "All" || courierLabel(s.courier) === repCourier))
+  , [store.scans, repA, repB, repCourier])
+  const repCouriers = useMemo(() => courierTally(repScans), [repScans])
 
   function exportReport() {
     const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Deducted (units)", "Deducted Detail", "Scanned By"]
     const data = [headers, ...repScans.map(s => [
-      fmtDT(s.created_at), s.tracking_no, s.courier, s.page_name, s.customer, s.order_item,
+      fmtDT(s.created_at), s.tracking_no, courierLabel(s.courier), s.page_name, s.customer, s.order_item,
       s.deducted_total, s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.scanned_by,
     ])]
     const ws = XLSX.utils.aoa_to_sheet(data)
@@ -364,16 +383,23 @@ export default function ShippedOutPage() {
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-mono text-slate-800 truncate">{s.tracking_no}</p>
-                    <p className="text-[11px] text-slate-400 truncate">{s.courier || "—"} · {num(s.deducted_total)} unit{s.deducted_total === 1 ? "" : "s"} less · {fmtDT(s.created_at)}</p>
+                    <p className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
+                      <CourierBadge courier={s.courier} /> {num(s.deducted_total)} unit{s.deducted_total === 1 ? "" : "s"} less · {fmtDT(s.created_at)}
+                    </p>
                   </div>
                 </div>
               ))}
             </div>
             <div className="border-t border-slate-200">
-              <div className="grid grid-cols-3 divide-x divide-slate-100 text-center">
-                {(todayCouriers.length ? todayCouriers.slice(0, 3) : [{ label: "—", count: 0 }]).map(c => (
+              {/* Fixed na tally — laging kita ang SPX at J&T kahit 0 */}
+              <div className={`grid divide-x divide-slate-100 text-center ${todayCouriers.length > 2 ? "grid-cols-3" : "grid-cols-2"}`}>
+                {todayCouriers.map(c => (
                   <div key={c.label} className="px-2 py-2">
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase">{c.label}</p>
+                    <p className="text-[10px] font-semibold uppercase flex items-center justify-center gap-1"
+                      style={{ color: COURIER_STYLE[c.label]?.dot }}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: COURIER_STYLE[c.label]?.dot }} />
+                      {c.label}
+                    </p>
                     <p className="text-sm font-extrabold text-slate-800 tabular-nums">{num(c.count)}</p>
                   </div>
                 ))}
@@ -393,6 +419,15 @@ export default function ShippedOutPage() {
             <DateRangePicker a={repA} b={repB} variant="header"
               onApply={(a, b) => { setRepA(a || monthStart()); setRepB(b || dstr(new Date())) }} placeholder="This month" />
             <span className="text-xs text-slate-400">{repA} → {repB}</span>
+            {/* Courier filter — SPX / J&T lang ang gamit natin */}
+            <div className="flex items-center gap-1">
+              {["All", ...MAIN_COURIERS, "OTHER"].map(c => (
+                <button key={c} onClick={() => setRepCourier(c)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${repCourier === c ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                  {c}
+                </button>
+              ))}
+            </div>
             <div className="ml-auto">
               <Button variant="outline" onClick={exportReport} disabled={repScans.length === 0}>
                 <FileSpreadsheet className="w-4 h-4" /> Export to Excel
@@ -400,11 +435,14 @@ export default function ShippedOutPage() {
             </div>
           </div>
 
-          {/* Courier tally (reference footer style) */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
-            {repCouriers.slice(0, 4).map(c => (
+          {/* Courier tally — SPX at J&T laging kita (OTHER kung may laman) */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+            {repCouriers.map(c => (
               <div key={c.label} className="bg-white rounded-xl border border-slate-200 px-4 py-3">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1"><Truck className="w-3 h-3" /> {c.label}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1"
+                  style={{ color: COURIER_STYLE[c.label]?.dot }}>
+                  <Truck className="w-3 h-3" /> {c.label}
+                </p>
                 <p className="text-xl font-extrabold text-slate-800 tabular-nums">{num(c.count)}</p>
               </div>
             ))}
@@ -438,7 +476,7 @@ export default function ShippedOutPage() {
                     <tr key={s.id} className="hover:bg-slate-50/70">
                       <td className="px-4 py-2.5 whitespace-nowrap text-xs text-slate-500">{fmtDT(s.created_at)}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap font-mono text-slate-800">{s.tracking_no}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{s.courier || "—"}</td>
+                      <td className="px-4 py-2.5 whitespace-nowrap"><CourierBadge courier={s.courier} /></td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-slate-600 max-w-[140px] truncate">{s.page_name || "—"}</td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[160px] truncate">{s.customer || "—"}</td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[220px] truncate" title={s.order_item}>{s.order_item || "—"}</td>
