@@ -5,10 +5,11 @@ import { Input } from "@/components/ui/input"
 import * as XLSX from "xlsx-js-style"
 import {
   Tag, Plus, Search, Pencil, X, ChevronLeft, ChevronRight, Check, Settings, Archive, ArchiveRestore,
-  FolderOpen, List, Wrench, Upload, FileSpreadsheet, RotateCcw, Trash2,
+  FolderOpen, List, Wrench, Upload, FileSpreadsheet, RotateCcw, Trash2, LayoutDashboard,
 } from "lucide-react"
 import { useProductItems, itemRemaining, ITEM_STATUSES, type ProductItem, type NewItemInput, type ItemStatus } from "@/lib/product-items-store"
 import { useSuppliers } from "@/lib/supplier-store"
+import { InventoryDashboard } from "@/components/business/inventory/InventoryDashboard"
 
 const INP = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400"
 const FINP = "w-full h-8 rounded-lg border border-slate-200 px-2 text-xs bg-white focus:outline-none focus:border-blue-400"
@@ -120,6 +121,7 @@ const EMPTY_FILTERS = { sku: "", name: "", cog: "", color: "", size: "", type: "
 export default function ProductItemsPage() {
   const store = useProductItems()
   const sup = useSuppliers()
+  const [tab, setTab] = useState<"dashboard" | "list">("list")
   const [screen, setScreen] = useState<"list" | "add" | "edit" | "view" | "upload">("list")
   const [view, setView] = useState<"list" | "archived" | "deleted">("list")
   const [active, setActive] = useState<ProductItem | null>(null)
@@ -198,6 +200,7 @@ export default function ProductItemsPage() {
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">{filtered.length} record{filtered.length === 1 ? "" : "s"}</p>
         </div>
+        {tab === "list" && (
         <div className="flex items-center gap-2">
           <div className="relative">
             <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => setToolsOpen(o => !o)}><Wrench className="w-4 h-4" /> Tools</Button>
@@ -224,8 +227,24 @@ export default function ProductItemsPage() {
             </Button>
           )}
         </div>
+        )}
       </div>
 
+      {/* Tabs — Inventory Dashboard | Product List */}
+      <div className="flex items-center gap-1">
+        <button onClick={() => setTab("dashboard")}
+          className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "dashboard" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
+          <LayoutDashboard className="w-4 h-4" /> Inventory Dashboard
+        </button>
+        <button onClick={() => setTab("list")}
+          className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${tab === "list" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100 border border-slate-200"}`}>
+          <List className="w-4 h-4" /> Product List
+        </button>
+      </div>
+
+      {tab === "dashboard" && <InventoryDashboard items={store.items} />}
+
+      {tab === "list" && (<>
       {/* Records selector */}
       <label className="flex items-center gap-2 text-sm text-slate-500">
         <select className="h-9 rounded-lg border border-slate-300 px-3 text-sm bg-white" value={perPage} onChange={e => { setPerPage(parseInt(e.target.value)); setPage(1) }}>
@@ -328,6 +347,7 @@ export default function ProductItemsPage() {
           </div>
         </div>
       </div>
+      </>)}
 
       {/* Soft-delete confirmation */}
       {confirmDel && (
