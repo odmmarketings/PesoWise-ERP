@@ -118,6 +118,8 @@ export const businessNav: NavSection[] = [
       {
         href: "/business/logistics/inventory", icon: Package, label: "Inventory",
         children: [
+          // Ang parent row ay nag-e-expand lang, kaya sariling link ang dashboard.
+          { href: "/business/logistics/inventory", label: "Inventory Dashboard" },
           { href: "/business/logistics/inventory/products", label: "Product Items" },
           { href: "/business/logistics/inventory/unit-codes", label: "Unit Codes" },
           { href: "/business/logistics/inventory/stocks", label: "Stocks" },
