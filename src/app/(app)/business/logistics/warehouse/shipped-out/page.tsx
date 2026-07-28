@@ -36,6 +36,7 @@ const fmtDT = (iso: string) => {
   return isNaN(d.getTime()) ? "" : d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 }
 const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
+const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // Scanner feedback (WebAudio) — kapareho ng RTS scanner para pamilyar sa staff.
 function beep(kind: "ok" | "warn" | "error") {
@@ -237,7 +238,8 @@ export default function ShippedOutPage() {
     const res = await store.addScan({
       tracking_no: code, courier: String(row.courier || ""), page_name: String(row.page_name || ""),
       order_id: String(row.id || ""), customer: String(row.customer_name || ""),
-      order_item: String(row.order_item || ""), items, deducted_total: total, date: dstr(new Date()),
+      order_item: String(row.order_item || ""), items, deducted_total: total,
+      amount: Number(row.final_price || 0), date: dstr(new Date()),
     })
     if (res === "duplicate") {
       setBusy(false); beep("error")
@@ -285,12 +287,17 @@ export default function ShippedOutPage() {
   , [store.scans, repA, repB, repCourier])
   const repCouriers = useMemo(() => courierTally(repScans), [repScans])
 
+  const repTotals = useMemo(() => ({
+    amount: repScans.reduce((s, r) => s + (r.amount || 0), 0),
+    units: repScans.reduce((s, r) => s + (r.deducted_total || 0), 0),
+  }), [repScans])
+
   function exportReport() {
-    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Deducted (units)", "Deducted Detail", "Scanned By"]
+    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Less sa Inventory (units)", "Amount", "Scanned By"]
     const data = [headers, ...repScans.map(s => [
       fmtDT(s.created_at), s.tracking_no, courierLabel(s.courier), s.page_name, s.customer, s.order_item,
-      s.deducted_total, s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.scanned_by,
-    ])]
+      s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.deducted_total, s.amount, s.scanned_by,
+    ]), ["TOTAL", "", "", "", "", "", "", repTotals.units, repTotals.amount, ""]]
     const ws = XLSX.utils.aoa_to_sheet(data)
     for (let c = 0; c < headers.length; c++) {
       const addr = XLSX.utils.encode_cell({ r: 0, c })
@@ -436,7 +443,7 @@ export default function ShippedOutPage() {
           </div>
 
           {/* Courier tally — SPX at J&T laging kita (OTHER kung may laman) */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
             {repCouriers.map(c => (
               <div key={c.label} className="bg-white rounded-xl border border-slate-200 px-4 py-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1"
@@ -450,11 +457,15 @@ export default function ShippedOutPage() {
               <p className="text-[10px] font-semibold text-slate-300 uppercase tracking-wider">Total Shipped Out</p>
               <p className="text-xl font-extrabold text-white tabular-nums">{num(repScans.length)}</p>
             </div>
+            <div className="bg-emerald-600 rounded-xl px-4 py-3">
+              <p className="text-[10px] font-semibold text-emerald-100 uppercase tracking-wider">Total Amount</p>
+              <p className="text-xl font-extrabold text-white tabular-nums">{peso(repTotals.amount)}</p>
+            </div>
           </div>
 
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm border-collapse">
+              <table className="w-full min-w-[1150px] text-sm border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-slate-500 text-[11px] font-semibold uppercase tracking-wide border-b border-slate-200">
                     <th className="px-4 py-3 text-left">Date/Time</th>
@@ -463,14 +474,16 @@ export default function ShippedOutPage() {
                     <th className="px-4 py-3 text-left">Page</th>
                     <th className="px-4 py-3 text-left">Customer</th>
                     <th className="px-4 py-3 text-left">Order</th>
+                    <th className="px-4 py-3 text-left">Item Name</th>
                     <th className="px-4 py-3 text-right">Less sa Inventory</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
                     <th className="px-4 py-3 text-left">Scanned By</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {!store.loaded && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400 italic">Loading…</td></tr>}
+                  {!store.loaded && <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400 italic">Loading…</td></tr>}
                   {store.loaded && repScans.length === 0 && (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400 italic">Walang na-scan sa range na ito.</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400 italic">Walang na-scan sa range na ito.</td></tr>
                   )}
                   {repScans.map(s => (
                     <tr key={s.id} className="hover:bg-slate-50/70">
@@ -479,16 +492,42 @@ export default function ShippedOutPage() {
                       <td className="px-4 py-2.5 whitespace-nowrap"><CourierBadge courier={s.courier} /></td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-slate-600 max-w-[140px] truncate">{s.page_name || "—"}</td>
                       <td className="px-4 py-2.5 text-slate-600 max-w-[160px] truncate">{s.customer || "—"}</td>
-                      <td className="px-4 py-2.5 text-slate-600 max-w-[220px] truncate" title={s.order_item}>{s.order_item || "—"}</td>
+                      <td className="px-4 py-2.5 text-slate-600 max-w-[200px] truncate" title={s.order_item}>{s.order_item || "—"}</td>
+                      <td className="px-4 py-2.5 max-w-[240px]">
+                        {s.items.length === 0 ? <span className="text-slate-300">—</span> : (
+                          <div className="flex flex-wrap gap-1">
+                            {s.items.map((i, x) => (
+                              <span key={x} className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">
+                                <strong className="tabular-nums">{num(i.deducted)}×</strong> {i.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
                         {s.deducted_total > 0
-                          ? <span className="font-semibold text-slate-800 tabular-nums" title={s.items.map(i => `${i.deducted}× ${i.name}`).join(", ")}>{num(s.deducted_total)} unit{s.deducted_total === 1 ? "" : "s"}</span>
+                          ? <span className="font-semibold text-slate-800 tabular-nums">{num(s.deducted_total)} unit{s.deducted_total === 1 ? "" : "s"}</span>
                           : <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700">walang match</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums font-semibold text-slate-800">
+                        {s.amount > 0 ? peso(s.amount) : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-xs text-slate-500">{s.scanned_by || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
+                {repScans.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-slate-100 border-t-2 border-slate-300 font-extrabold text-slate-900">
+                      <td className="px-4 py-2.5 text-[11px] uppercase tracking-wider" colSpan={7}>
+                        Total · {num(repScans.length)} parcel{repScans.length === 1 ? "" : "s"}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">{num(repTotals.units)} units</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">{peso(repTotals.amount)}</td>
+                      <td className="px-4 py-2.5" />
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>

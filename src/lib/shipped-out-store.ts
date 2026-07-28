@@ -19,6 +19,7 @@ export interface ShippedScan {
   order_item: string
   items: ShippedScanItem[]
   deducted_total: number
+  amount: number        // halaga ng order (COD / final price) noong ma-scan
   scanned_by: string
   date: string          // YYYY-MM-DD
   created_at: string
@@ -32,7 +33,8 @@ function rowTo(r: any): ShippedScan {
     id: r.id, tracking_no: r.tracking_no || "", courier: r.courier || "",
     page_name: r.page_name || "", order_id: r.order_id || "", customer: r.customer || "",
     order_item: r.order_item || "", items: Array.isArray(r.items) ? r.items : [],
-    deducted_total: Number(r.deducted_total) || 0, scanned_by: r.scanned_by || "",
+    deducted_total: Number(r.deducted_total) || 0, amount: Number(r.amount) || 0,
+    scanned_by: r.scanned_by || "",
     date: r.date || "", created_at: r.created_at || "",
   }
 }
