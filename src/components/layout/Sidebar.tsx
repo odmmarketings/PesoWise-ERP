@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 import {
   LayoutDashboard, Receipt, Target, TrendingUp, Bell, FileText,
   Wallet, Settings, Users, ShoppingBag, Package,
-  UserCheck, Kanban, DollarSign, LogOut, ChevronRight,
+  UserCheck, DollarSign, LogOut, ChevronRight,
   Activity, Store, PieChart, ShoppingCart, FlaskConical,
   Shield, Calculator, Boxes, BookOpen, ChevronDown, Banknote, Droplet,
   ClipboardList, Factory, Warehouse, Undo2,
@@ -91,10 +91,10 @@ export const businessNav: NavSection[] = [
     ],
   },
   {
-    section: "BOARD",
+    section: "PROBLEM MANAGEMENT",
     items: [
-      { href: "/business/board", icon: Kanban, label: "Kanban Board" },
-      { href: "/business/board/settings", icon: Settings, label: "Settings" },
+      { href: "/business/board", icon: ClipboardList, label: "Problems" },
+      { href: "/business/board/settings", icon: Settings, label: "Departments" },
     ],
   },
   {

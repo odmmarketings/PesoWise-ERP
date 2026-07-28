@@ -7,3 +7,12 @@ export function currentUserName(): string {
     return u.name || u.email || ""
   } catch { return "" }
 }
+
+// Ang email ng naka-login na account — ito ang katugma ng roster (`business_users.company_email`),
+// kaya ito ang gamit sa assignment at permissions (hal. Problem Management).
+export function currentUserEmail(): string {
+  if (typeof window === "undefined") return ""
+  try {
+    return String(JSON.parse(localStorage.getItem("pesowise_current_user") || "{}").email || "")
+  } catch { return "" }
+}
