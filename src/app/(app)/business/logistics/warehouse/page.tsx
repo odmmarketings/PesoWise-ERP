@@ -27,6 +27,13 @@ const pad = (n: number) => String(n).padStart(2, "0")
 const dstr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01` }
 const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
+// Maikling peso para kasya sa card label — walang decimals, may K/M kapag malaki.
+const peso = (n: number) => {
+  const v = isFinite(n) ? n : 0
+  if (Math.abs(v) >= 1_000_000) return "₱" + (v / 1_000_000).toFixed(2) + "M"
+  if (Math.abs(v) >= 100_000) return "₱" + Math.round(v / 1_000) + "K"
+  return "₱" + Math.round(v).toLocaleString("en-PH")
+}
 const CHARTS_KEY = "pesowise_whdash_charts"
 const COURIER_PALETTE = ["#2563eb", "#0891b2", "#0d9488", "#059669", "#ca8a04", "#ea580c", "#dc2626", "#9333ea"]
 
@@ -147,14 +154,23 @@ export default function WarehouseDashboardPage() {
   // ── Derived ─────────────────────────────────────────────────────────────────
   const withStatus = useMemo(() => rows.map(r => ({ ...r, _st: statusLabel(r.order_status) })), [rows])
 
+  // Bilang AT halaga (COD / final price) kada status — parehong ipinapakita sa cards.
   const count = useMemo(() => {
     const m: Record<string, number> = {}
     for (const r of withStatus) m[r._st] = (m[r._st] || 0) + 1
     return m
   }, [withStatus])
+  const amount = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const r of withStatus) m[r._st] = (m[r._st] || 0) + Number(r.final_price || 0)
+    return m
+  }, [withStatus])
+  const totalAmount = useMemo(() => withStatus.reduce((s, r) => s + Number(r.final_price || 0), 0), [withStatus])
 
   const today = dstr(new Date())
-  const scannedToday = useMemo(() => scanStore.scans.filter(s => s.date === today).length, [scanStore.scans, today])
+  const todayScans = useMemo(() => scanStore.scans.filter(s => s.date === today), [scanStore.scans, today])
+  const scannedToday = todayScans.length
+  const scannedTodayAmount = useMemo(() => todayScans.reduce((s, r) => s + (r.amount || 0), 0), [todayScans])
   const scansInRange = useMemo(() => scanStore.scans.filter(s => s.date >= win.from && s.date <= win.to), [scanStore.scans, win])
 
   // Scan coverage — ilan sa mga umalis na order ang dumaan sa scanner.
@@ -270,10 +286,13 @@ export default function WarehouseDashboardPage() {
     { key: "Shipped", label: "Shipped", icon: Truck },
   ]
   const opsCards = [
-    { label: "TOTAL ORDERS", value: num(rows.length), color: "bg-slate-700", icon: ClipboardList },
-    { label: "DELIVERED", value: num(count["Delivered"] || 0), color: "bg-emerald-600", icon: PackageCheck },
-    { label: "SCANNED OUT TODAY", value: num(scannedToday), color: "bg-blue-600", icon: ScanBarcode },
-    { label: "RTS RETURNING / RETURNED", value: `${num(count["Returning"] || 0)} / ${num(count["Returned"] || 0)}`, color: "bg-rose-500", icon: Undo2 },
+    { label: "TOTAL ORDERS", value: num(rows.length), amt: totalAmount, color: "bg-slate-700", icon: ClipboardList },
+    { label: "DELIVERED", value: num(count["Delivered"] || 0), amt: amount["Delivered"] || 0, color: "bg-emerald-600", icon: PackageCheck },
+    { label: "SCANNED OUT TODAY", value: num(scannedToday), amt: scannedTodayAmount, color: "bg-blue-600", icon: ScanBarcode },
+    {
+      label: "RTS RETURNING / RETURNED", value: `${num(count["Returning"] || 0)} / ${num(count["Returned"] || 0)}`,
+      amt: (amount["Returning"] || 0) + (amount["Returned"] || 0), color: "bg-rose-500", icon: Undo2,
+    },
   ]
 
   return (
@@ -307,7 +326,9 @@ export default function WarehouseDashboardPage() {
               <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.18] text-white" />
               <div className="text-right ml-auto z-10 min-w-0">
                 <p className="text-2xl font-bold text-white leading-none tabular-nums">{num(count[c.key] || 0)}</p>
-                <p className="text-[10px] text-white/85 font-semibold mt-1 tracking-wider uppercase leading-tight">{c.label}</p>
+                <p className="text-[10px] text-white/85 font-semibold mt-1 tracking-wider uppercase leading-tight">
+                  {c.label} <span className="text-white/70 normal-case tracking-normal">({peso(amount[c.key] || 0)})</span>
+                </p>
               </div>
             </div>
           ))}
@@ -321,7 +342,9 @@ export default function WarehouseDashboardPage() {
             <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.12] text-white" />
             <div className="text-right ml-auto z-10 min-w-0">
               <p className="text-xl font-bold text-white leading-none tabular-nums truncate">{c.value}</p>
-              <p className="text-[10px] text-white/75 font-semibold mt-1 tracking-wider uppercase leading-tight">{c.label}</p>
+              <p className="text-[10px] text-white/75 font-semibold mt-1 tracking-wider uppercase leading-tight">
+                {c.label} <span className="text-white/60 normal-case tracking-normal">({peso(c.amt)})</span>
+              </p>
             </div>
           </div>
         ))}
