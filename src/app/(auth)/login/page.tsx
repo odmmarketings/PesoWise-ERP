@@ -90,7 +90,7 @@ export default function LoginPage() {
         else localStorage.removeItem("pesowise_remember_email")
       } catch {}
 
-      router.push("/dashboard")
+      router.push("/business/dashboard")
     } catch {
       setError("Something went wrong. Please try again.")
     } finally {

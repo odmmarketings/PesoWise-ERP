@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,7 +14,7 @@ import { useStockReleases } from "@/lib/stock-releases-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INVENTORY DASHBOARD — buod ng buong warehouse: magkano ang nakatali sa stock,
@@ -202,7 +202,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
     const errors: string[] = []
     let orders = 0
 
-    await mapLimit(pages, 3, async p => {
+    await mapLimit(pages, PANCAKE_CONCURRENCY, async p => {
       try {
         const rows = await fetchShippedRows(p.api_key, p.pancake_page_id || p.shop_id, from, to)
         for (const r of rows) {

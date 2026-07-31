@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
 import * as XLSX from "xlsx-js-style"
@@ -11,7 +11,7 @@ import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems, itemRemaining } from "@/lib/product-items-store"
 import { fetchJntFees, upsertJntFees, fetchOrderBaselines, upsertOrderBaselines } from "@/lib/sales-shared-store"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
 const PARCEL_STATUSES = ["New","Encoded","Packed","Parcel for Fulfillment","Pending Printed Waybill","Shipped Out","In-Transit","On-Delivery","Out of Delivery Zone","Delivering","Delivered","For Return","Returning","Returned","Remitted","Closed","Cancelled by Customer","Cancelled by Warehouse","Owned","Problematic/Damage","No-Record"]
 const MOPS = ["COD", "Gcash", "Bank Transfer", "Credit Card", "Maya"]
@@ -1018,7 +1018,7 @@ export default function SalesTrackerPage() {
     try { baseline = await fetchOrderBaselines() } catch {}
     const baselineDirty: Record<string, number> = {}   // only new/changed snapshots get written back
 
-    await mapLimit(pages, 3, async page => {
+    await mapLimit(pages, PANCAKE_CONCURRENCY, async page => {
       const pageId = page.pancake_page_id || page.shop_id
       try {
         const rows = await fetchPageRows(page.api_key, pageId, from, to, noCache)

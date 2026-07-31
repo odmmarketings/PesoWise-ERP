@@ -9,7 +9,7 @@ import {
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { courierOf, COURIERS, COURIER_COLOR } from "@/lib/courier"
 import { StatCardsSkeleton, TableSkeleton } from "@/components/business/Skeleton"
 
@@ -32,8 +32,12 @@ const dstr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.g
 const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01` }
 const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-// Gaano kalayo ang hahanapin ng PPW — dapat malawak para mahuli ang mga lumang naiwan.
-const PPW_LOOKBACK_DAYS = 90
+// Gaano kalayo ang hahanapin ng PPW. DATI 90 — pero 22 pages × 90 araw ay ~13 MINUTO
+// bago matapos (40s median kada tawag sa Pancake), kaya hindi na natatapos mag-load ang
+// page. 30 araw ang sapat: ang PPW ay parcel na HINDI PA nakukuha, at kung 30+ araw na
+// nakabinbin ang isang waybill, hindi na iyon "pending" — problema na iyon at lalabas
+// pa rin sa 3+ araw (stale) na aging bucket.
+const PPW_LOOKBACK_DAYS = 30
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, basis: string, noCache = false): Promise<any[]> {
   const json = await cachedJson(
@@ -114,7 +118,7 @@ export default function PpwPage() {
     const errs: string[] = []
     const ppwFrom = dstr(new Date(Date.now() - PPW_LOOKBACK_DAYS * 86400000))
     const today = dstr(new Date())
-    await mapLimit(pagesWithCreds, 3, async p => {
+    await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async p => {
       const id = p.pancake_page_id || p.shop_id
       try {
         const [a, b] = await Promise.all([

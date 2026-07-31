@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useEffect, useRef } from "react"
 import { DollarSign, ChevronDown } from "lucide-react"
 import {
@@ -7,7 +7,7 @@ import {
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
 function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
@@ -96,7 +96,7 @@ export default function AdspentROASSummaryPage() {
     const merged: Record<string, { orders: number; amount: number }> = {}
     const errs: string[] = []
 
-    await mapLimit(pagesWithCreds, 3, async page => {
+    await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async page => {
       const pageId = page.pancake_page_id || page.shop_id
       try {
         const data = await fetchPageByDate(page.api_key, pageId, fromStr, toStr)

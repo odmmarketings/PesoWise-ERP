@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useEffect } from "react"
 import * as XLSX from "xlsx-js-style"
 import {
@@ -12,7 +12,7 @@ import { useProductItems } from "@/lib/product-items-store"
 import { currentUserName } from "@/lib/current-user"
 import { MEMBERS } from "@/lib/finance-settings-store"
 import { fetchFulfillmentMeta, upsertFulfillmentMeta, cacheFulfillmentMeta } from "@/lib/fulfillment-meta-store"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
 // FULFILLMENT (LHIKE Warehouse manual) — warehouse-facing view of live Pancake orders:
 // toggleable columns, per-column filters, Group (page), packer assignment (person icon),
@@ -85,6 +85,10 @@ const ORDER_STATUSES: { l: string; match: string[]; code?: number }[] = [
   { l: "Cancelled", match: ["cancel"], code: 6 },
   { l: "Deleted", match: ["delete", "remove"] },
 ]
+// Prefix ng bilang ng Packaging sa Group dropdown, hal. "( 12) ". NBSP ang pad para
+// pantay ang hanay ng numero — kinakain ng browser ang ordinaryong space sa <option>.
+const pkgTag = (n: number) => `(${String(n).padStart(3, " ")}) `
+
 const orderStatusLabel = (raw: string): string => {
   const s = String(raw || "").toLowerCase()
   if (!s) return ""
@@ -200,7 +204,7 @@ export default function FulfillmentPage() {
     const { from, to } = fetchWindow
     const out: FfRow[] = []
     const errs: string[] = []
-    await mapLimit(pagesWithCreds, 3, async p => {
+    await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async p => {
       try {
         const rs = await fetchPageRows(p.api_key, p.pancake_page_id || p.shop_id, from, to, noCache)
         for (const r of rs) out.push({ ...r, page_name: p.name })
@@ -222,6 +226,24 @@ export default function FulfillmentPage() {
     ? ORDER_STATUSES.map(o => o.l)
     : Array.from(new Set(rows.map(r => String(cellVal(r, k))).filter(Boolean))).sort()
   const pageNames = useMemo(() => Array.from(new Set(rows.map(r => r.page_name))).sort(), [rows])
+
+  // ── Ilan ang naka-PACKAGING kada page ───────────────────────────────────────
+  // Ito ang tunay na pila ng trabaho: naka-tag nang Packaging pero hindi pa
+  // naipapadala. Inilalagay sa UNAHAN ng pangalan sa Group dropdown para hindi
+  // na kailangang pindutin ang bawat page para malaman kung may gagawin doon.
+  // Sinusunod nito ang status_override, tulad ng kolum na Parcel Status.
+  const packagingBy = useMemo(() => {
+    const m: Record<string, number> = {}
+    let all = 0
+    for (const r of rows) {
+      const st = meta[r.id]?.status_override || orderStatusLabel(r.order_status) || r.parcel_status || ""
+      if (st !== "Packaging") continue
+      m[r.page_name] = (m[r.page_name] || 0) + 1
+      all++
+    }
+    m.ALL = all
+    return m
+  }, [rows, meta])
 
   const filtered = useMemo(() => rows.filter(r => {
     if (group !== "ALL" && r.page_name !== group) return false
@@ -248,8 +270,29 @@ export default function FulfillmentPage() {
   const visCols = COLS.filter(c => visible.has(c.k))
   const selRows = filtered.filter(r => sel.has(r.id))
 
+  // ── Pili ng maramihan, Pancake-style ────────────────────────────────────────
+  // Ang header checkbox ay pumipili lang ng NAKIKITANG page. Kaya kailangan ng
+  // malinaw na pagkakaiba ng "10 sa page na ito" laban sa "lahat ng 4,347" —
+  // kung hindi, aakalain ng user na napili na niya lahat gayong isang page lang.
+  const pageAllSel = paginated.length > 0 && paginated.every(r => sel.has(r.id))
+  const pageSomeSel = paginated.some(r => sel.has(r.id))
+  const allFilteredSel = filtered.length > 0 && selRows.length === filtered.length
+  const nfmt = (n: number) => n.toLocaleString("en-PH")
+
   const setF = (k: string, part: "a" | "b", v: string) => setDraft(d => ({ ...d, [k]: { a: part === "a" ? v : (d[k]?.a || ""), b: part === "b" ? v : (d[k]?.b || "") } }))
   const applyFilters = () => { setApplied(draft); setPage(1) }
+
+  // ── Burahin lahat ng filter ─────────────────────────────────────────────────
+  // Sinasama ang Group dahil filter din iyon sa pananaw ng user. HINDI kasama ang
+  // date range: hindi iyon filter kundi saklaw ng hinihilang datos — ang pagbura
+  // niyon ay magpapa-refetch sa Pancake, na matagal at hindi naman hinihingi.
+  const activeFilters = useMemo(() => {
+    let n = Object.values(applied).filter(f => f?.a || f?.b).length
+    if (group !== "ALL") n++
+    return n
+  }, [applied, group])
+  const hasFilters = activeFilters > 0 || Object.values(draft).some(f => f?.a || f?.b)
+  const clearFilters = () => { setDraft({}); setApplied({}); setGroup("ALL"); setPage(1) }
 
   // ── COG per product name: unit code (recipe Σ qty×cog) or a direct product item ──
   const cogByName = useMemo(() => {
@@ -476,27 +519,71 @@ export default function FulfillmentPage() {
         <div className="flex items-center justify-between flex-wrap gap-2 mt-4">
           <label className="flex items-center gap-2 text-sm text-slate-500">
             <select className="h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white" value={perPage} onChange={e => { setPerPage(parseInt(e.target.value)); setPage(1) }}>
-              {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+              {[10, 25, 50, 100, 250, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
             </select> records
           </label>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            Group
-            <select className="h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white min-w-[140px]" value={group} onChange={e => { setGroup(e.target.value); setPage(1) }}>
-              <option value="ALL">ALL</option>
-              {pageNames.map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </label>
+          <div className="flex items-center gap-2">
+            {hasFilters && (
+              <button onClick={clearFilters} title="Burahin lahat ng filter (pati Group)"
+                className="h-9 px-3 rounded-lg border border-rose-200 bg-rose-50 text-sm font-medium text-rose-600 hover:bg-rose-100 flex items-center gap-1.5">
+                <X className="w-3.5 h-3.5" /> Clear filter{activeFilters > 0 ? ` (${activeFilters})` : ""}
+              </button>
+            )}
+            <label className="flex items-center gap-2 text-sm text-slate-600">
+              Group
+              <select className="h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white min-w-[140px]" value={group} onChange={e => { setGroup(e.target.value); setPage(1) }}>
+                {/* Bilang muna bago ang pangalan. NBSP ang pad — kinakain ng browser
+                    ang normal na space sa loob ng <option>, kaya hindi mag-a-align. */}
+                <option value="ALL">{pkgTag(packagingBy.ALL || 0)}ALL</option>
+                {pageNames.map(n => <option key={n} value={n}>{pkgTag(packagingBy[n] || 0)}{n}</option>)}
+              </select>
+            </label>
+          </div>
         </div>
 
         {loadErr && <p className="text-xs text-rose-500 mt-2">⚠ {loadErr}</p>}
         {pagesWithCreds.length === 0 && <p className="text-sm text-slate-400 mt-3">No connected Pancake pages — add API keys in Pages &amp; Store first.</p>}
+
+        {/* Selection bar — lumalabas lang kapag may napili. Sinasabi nito kung ILAN,
+            at nag-aalok na palawakin ang pili sa LAHAT ng naka-filter, hindi lang sa
+            nakikitang page (kaya nakakalito ang plain select-all sa mahabang listahan). */}
+        {sel.size > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+            <span className="font-semibold text-blue-700">
+              {nfmt(sel.size)} {sel.size === 1 ? "order" : "orders"} ang napili
+            </span>
+            {allFilteredSel ? (
+              <span className="text-blue-600">— lahat ng {nfmt(filtered.length)} sa filter na ito.</span>
+            ) : pageAllSel && filtered.length > paginated.length ? (
+              <>
+                <span className="text-slate-500">— itong page lang.</span>
+                <button onClick={() => setSel(new Set(filtered.map(r => r.id)))}
+                  className="font-semibold text-blue-600 underline underline-offset-2 hover:text-blue-800">
+                  Piliin lahat ng {nfmt(filtered.length)}
+                </button>
+              </>
+            ) : null}
+            <button onClick={() => setSel(new Set())}
+              className="ml-auto text-slate-500 underline underline-offset-2 hover:text-slate-700">
+              Alisin ang pili
+            </button>
+          </div>
+        )}
 
         {/* Table — header (titles + filter row) sticks on vertical scroll; checkbox + No stick on horizontal */}
         <div className="overflow-auto scrollbar-dark mt-3 max-h-[68vh]">
           <table className="w-full text-sm border border-slate-200">
             <thead className="sticky top-0 z-40">
               <tr className="bg-slate-50 border-b border-slate-200 text-left">
-                <th className="px-2 py-2.5 sticky left-0 z-30 bg-slate-50 w-[36px] min-w-[36px] max-w-[36px] border-r border-slate-200"><input type="checkbox" checked={paginated.length > 0 && paginated.every(r => sel.has(r.id))} onChange={e => setSel(e.target.checked ? new Set([...sel, ...paginated.map(r => r.id)]) : new Set([...sel].filter(id => !paginated.some(r => r.id === id))))} className="accent-blue-600" /></th>
+                <th className="px-2 py-2.5 sticky left-0 z-30 bg-slate-50 w-[36px] min-w-[36px] max-w-[36px] border-r border-slate-200"><input
+                  type="checkbox" className="accent-blue-600" checked={pageAllSel}
+                  // Kalahating tsek kapag hindi buo ang page — para hindi mukhang walang napili.
+                  ref={el => { if (el) el.indeterminate = pageSomeSel && !pageAllSel }}
+                  onChange={e => setSel(prev => {
+                    const ids = new Set(paginated.map(r => r.id))
+                    if (e.target.checked) return new Set([...prev, ...ids])
+                    return new Set([...prev].filter(id => !ids.has(id)))
+                  })} /></th>
                 <th className="px-3 py-2.5 sticky left-[36px] z-30 bg-slate-50 w-[48px] min-w-[48px] max-w-[48px] text-xs font-bold text-slate-600 border-r border-slate-200">No</th>
                 {visCols.map(c => <th key={c.k} className="px-3 py-2.5 text-xs font-bold text-slate-600 whitespace-nowrap border-r border-slate-200 bg-slate-50">{c.l}</th>)}
                 <th className="px-3 py-2.5 text-xs font-bold text-slate-600 bg-slate-50">Actions</th>
@@ -557,7 +644,10 @@ export default function FulfillmentPage() {
 
         {/* Footer — entries, pagination, total price */}
         <div className="flex items-center justify-between flex-wrap gap-2 mt-3 text-sm text-slate-600">
-          <span>Showing {showFrom} to {showTo} of {filtered.length} entries</span>
+          <span>
+            Showing {showFrom} to {showTo} of {nfmt(filtered.length)} entries
+            {sel.size > 0 && <span className="font-semibold text-blue-600"> · {nfmt(sel.size)} napili</span>}
+          </span>
           <div className="flex items-center gap-1">
             <button disabled={pageSafe <= 1} onClick={() => setPage(p => p - 1)} className="w-8 h-8 rounded border border-slate-300 flex items-center justify-center disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
             {Array.from({ length: Math.min(pages, 7) }, (_, x) => x + Math.max(1, Math.min(pageSafe - 3, pages - 6))).map(n => (

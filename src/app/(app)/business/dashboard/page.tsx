@@ -1,11 +1,11 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
 import { Activity, TrendingUp, ShoppingBag, Package, Truck, RotateCcw, AlertCircle, XCircle, ArrowDownUp, Clock, RefreshCw } from "lucide-react"
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
 function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
@@ -234,7 +234,7 @@ export default function BusinessDashboardPage() {
     // Paints the main cards in ~1 request's time instead of waiting for the full order pull.
     const fastAgg = emptyAgg()
     const lastMonthAgg = { count: 0, amount: 0 }
-    await mapLimit(pages, 3, async page => {
+    await mapLimit(pages, PANCAKE_CONCURRENCY, async page => {
       const pageId = page.pancake_page_id || page.shop_id
       try {
         // "Today's Sales" = orders placed today (always sales-order/creation basis).
@@ -295,7 +295,7 @@ export default function BusinessDashboardPage() {
     // ── PHASE 2 (FULL): pagination-derived data — In-Transit/On-Delivery tallies + daily breakdown.
     const newDaily: DailyData = {}
     let inTransit = 0, inTransitSales = 0, onDelivery = 0, onDeliverySales = 0
-    await mapLimit(pages, 3, async page => {
+    await mapLimit(pages, PANCAKE_CONCURRENCY, async page => {
       const pageId = page.pancake_page_id || page.shop_id
       try {
         const { byDate, courier } = await fetchOrders(page.api_key, pageId, fStr, tStr, basisKey, "full", noCache)

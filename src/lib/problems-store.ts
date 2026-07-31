@@ -364,27 +364,64 @@ export function useProblems() {
     })
   }, [])
 
-  /** Susunod na Problem ID — PRB-0001, PRB-0002, … */
+  const codeOf = (seq: number) => `PRB-${String(seq).padStart(4, "0")}`
+
+  /**
+   * Susunod na Problem ID — PRB-0001, PRB-0002, …
+   * PARA SA UI LANG (preview sa form). Batay sa local state, kaya puwedeng luma.
+   * HUWAG itong gamitin sa pag-save — tingnan ang nextSeqFromDb() sa ibaba.
+   */
   const nextCode = useCallback(() => {
     const max = problems.reduce((m, p) => {
       const n = Number(String(p.code).match(/PRB-(\d+)/)?.[1] || 0)
       return Math.max(m, n)
     }, 0)
-    return `PRB-${String(max + 1).padStart(4, "0")}`
+    return codeOf(max + 1)
   }, [problems])
+
+  /**
+   * Ang bilang na gagamitin sa PAG-SAVE, hango mismo sa database.
+   *
+   * BAKIT: dati ay ang local `problems` ang pinagbabatayan ng code. Kapag may
+   * ibang user na nakapag-dagdag pagkatapos ng huling refresh mo — o kapag dalawa
+   * kayong sabay na nag-submit — pareho kayong makakakuha ng KAPAREHONG code.
+   * Ganito nabuo ang dalawang PRB-0002 sa live data.
+   */
+  const nextSeqFromDb = useCallback(async (businessId: string): Promise<number> => {
+    const supabase = createSupabaseBrowserClient()
+    const { data } = await supabase.from("problems").select("code").eq("business_id", businessId)
+    return (data || []).reduce((m: number, r: { code: string }) => {
+      const n = Number(String(r.code).match(/PRB-(\d+)/)?.[1] || 0)
+      return Math.max(m, n)
+    }, 0) + 1
+  }, [])
 
   const addProblem = useCallback(async (input: NewProblemInput): Promise<Problem | null> => {
     const businessId = await getBusinessId()
     if (!businessId) return null
     const supabase = createSupabaseBrowserClient()
     const id = uid("prb")
-    const code = nextCode()
-    const row = {
-      id, business_id: businessId, code, ...inputToRow(input),
+    const base = {
+      id, business_id: businessId, ...inputToRow(input),
       created_by: currentUserName() || currentUserEmail(), created_at: nowIso(), updated_at: nowIso(),
     }
-    const { error } = await supabase.from("problems").insert(row)
-    if (error) throw new Error(error.message)
+    // Kunin ang bilang sa DB, at kung sakaling may nakaunang kumuha ng parehong
+    // code sa pagitan ng basa at sulat, subukan ang susunod. Limang subok — sapat
+    // na iyon kahit ilang tao ang sabay-sabay; kung lagpas pa, may ibang problema.
+    let seq = await nextSeqFromDb(businessId)
+    let code = ""
+    let saved = false
+    let lastErr = ""
+    for (let attempt = 0; attempt < 5; attempt++, seq++) {
+      code = codeOf(seq)
+      const { error } = await supabase.from("problems").insert({ ...base, code })
+      if (!error) { saved = true; break }
+      lastErr = error.message
+      // Duplicate lang ang sulit ulitin — ibang error, itapon agad.
+      if (!/duplicate|unique|already exists/i.test(error.message)) throw new Error(error.message)
+    }
+    if (!saved) throw new Error(lastErr || "Hindi na-save ang problema")
+    const row = { ...base, code }
     await logActivity(id, "Problem created", `${code} — ${input.title}`)
     if (input.owner_email) {
       await logActivity(id, "Assigned to user", input.owner_name || input.owner_email)
@@ -397,7 +434,7 @@ export function useProblems() {
     }
     await refresh()
     return { ...rowToProblem(row), id, code }
-  }, [nextCode, logActivity, refresh])
+  }, [nextSeqFromDb, logActivity, refresh])
 
   const updateProblem = useCallback(async (id: string, patch: Partial<NewProblemInput>, before?: Problem) => {
     const supabase = createSupabaseBrowserClient()

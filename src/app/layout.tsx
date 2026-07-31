@@ -6,12 +6,12 @@ import "./globals.css"
 const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "PesoWise — Smart Personal & Business Finance Tracker",
-  description: "Track your expenses, manage budgets, and grow your wealth with AI-powered insights. Built for Filipinos.",
-  keywords: "personal finance, expense tracker, budget, Philippines, peso, savings",
+  title: "PesoWise — Business Finance & Operations ERP",
+  description: "Sales, logistics, inventory, ad spend, and bookkeeping in one ERP. Built for Philippine COD e-commerce sellers.",
+  keywords: "business ERP, e-commerce, COD, logistics, inventory, bookkeeping, Philippines, peso",
   openGraph: {
-    title: "PesoWise — Smart Finance Tracker",
-    description: "AI-powered personal and business finance for Filipinos",
+    title: "PesoWise — Business Finance & Operations ERP",
+    description: "Sales, logistics, inventory, and ad spend in one ERP for Filipino sellers",
     type: "website",
   },
 }

@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -111,7 +111,7 @@ Non-obvious facts (verified against a live shop — do not "simplify" these away
 - Card heights: `h-[78px]`, amounts: `text-2xl font-bold`, labels: `text-[11px] uppercase tracking-wider`
 - Global CSS classes in `src/app/globals.css`: `.page-title` (page headings), `.scrollbar-dark` (dark sidebar scrollbar)
 - The sidebar is `h-screen` with `overflow-y-auto` on the nav — keeps it scrollable without overflowing the viewport
-- Stale `.next` cache causes hydration mismatches after large style changes. Fix: stop server → `Remove-Item -Recurse -Force D:\pesowise\.next` → restart + hard refresh browser
+- Stale `.next` cache causes hydration mismatches after large style changes. Fix: stop server → `Remove-Item -Recurse -Force D:\Claude Files\pesowise\.next` → restart + hard refresh browser
 
 ### ROAS Tracker specifics
 

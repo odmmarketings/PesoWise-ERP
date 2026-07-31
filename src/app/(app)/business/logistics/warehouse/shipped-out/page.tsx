@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import * as XLSX from "xlsx-js-style"
@@ -12,7 +12,8 @@ import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems } from "@/lib/product-items-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
 import { useShippedOutScans, type ShippedScanItem } from "@/lib/shipped-out-store"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
+import { scanSound, primeScanSound } from "@/lib/scan-sound"
 import { courierOf, courierTally, COURIERS, COURIER_COLOR } from "@/lib/courier"
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -40,25 +41,8 @@ const fmtDT = (iso: string) => {
 const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-// Scanner feedback (WebAudio) — kapareho ng RTS scanner para pamilyar sa staff.
-function beep(kind: "ok" | "warn" | "error") {
-  try {
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext
-    const ctx: AudioContext = ((beep as any)._ctx = (beep as any)._ctx || new Ctx())
-    if (ctx.state === "suspended") ctx.resume()
-    const play = (freq: number, start: number, dur: number, type: OscillatorType = "sine", gain = 0.3) => {
-      const o = ctx.createOscillator(), g = ctx.createGain()
-      o.type = type; o.frequency.value = freq
-      g.gain.setValueAtTime(gain, ctx.currentTime + start)
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur)
-      o.connect(g); g.connect(ctx.destination)
-      o.start(ctx.currentTime + start); o.stop(ctx.currentTime + start + dur + 0.02)
-    }
-    if (kind === "ok") { play(1200, 0, 0.1); play(1700, 0.11, 0.16) }
-    else if (kind === "warn") { play(900, 0, 0.09); play(650, 0.1, 0.09); play(1100, 0.2, 0.18) }
-    else { play(170, 0, 0.4, "square", 0.4); play(140, 0.18, 0.3, "square", 0.35) }
-  } catch {}
-}
+// Scanner feedback — galing sa @/lib/scan-sound para eksaktong pareho ng RTS.
+const beep = scanSound
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
   const json = await cachedJson(
@@ -134,7 +118,7 @@ export default function ShippedOutPage() {
     setLoading(true); setLoadErr("")
     const out: any[] = []
     const errs: string[] = []
-    await mapLimit(pagesWithCreds, 3, async p => {
+    await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async p => {
       try {
         const rs = await fetchPageRows(p.api_key, p.pancake_page_id || p.shop_id, win.from, win.to, noCache)
         for (const r of rs) out.push({ ...r, page_name: p.name })
@@ -541,6 +525,9 @@ function CameraScanOverlay({ onDecode, onClose }: { onDecode: (code: string) => 
 
   async function start() {
     controlsRef.current?.stop()
+    // Tap ito — dito lang pumapayag ang iOS/Android na buhayin ang WebAudio.
+    // Kung wala nito, tahimik ang kauna-unahang beep pagkatapos buksan ang camera.
+    primeScanSound()
     setState("starting"); setErr("")
     const constraints: MediaStreamConstraints = {
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },

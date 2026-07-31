@@ -42,7 +42,7 @@ function RegisterForm() {
         (window as any).fbq("track", "Lead")
       }
 
-      router.push("/dashboard")
+      router.push("/business/dashboard")
     } catch {
       setError("Something went wrong. Please try again.")
     } finally {

@@ -11,20 +11,9 @@ import {
   ClipboardList, Factory, Warehouse, Undo2,
   Megaphone, Link2, BarChart3, Award, Coins, CreditCard, Repeat
 } from "lucide-react"
-import type { AppMode, Plan } from "@/lib/types"
+import type { Plan } from "@/lib/types"
 import { useState, useEffect, useMemo } from "react"
 import { accessFor } from "@/lib/users-store"
-
-const personalNav = [
-  { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/expenses", icon: Receipt, label: "Expenses" },
-  { href: "/income", icon: DollarSign, label: "Income" },
-  { href: "/budgets", icon: Target, label: "Budgets" },
-  { href: "/savings", icon: TrendingUp, label: "Savings & Net Worth", plan: "premium" as Plan },
-  { href: "/bills", icon: Bell, label: "Bill Reminders", plan: "premium" as Plan },
-  { href: "/reports", icon: FileText, label: "Reports", plan: "premium" as Plan },
-  { href: "/money-guide", icon: Wallet, label: "50/40/10 Guide", plan: "premium" as Plan },
-]
 
 type NavChild = { href: string; label: string }
 type NavItem = { href: string; icon: any; label: string; plan?: Plan; children?: NavChild[] }
@@ -157,13 +146,12 @@ export const businessNav: NavSection[] = [
 ]
 
 interface SidebarProps {
-  mode: AppMode
   plan: Plan
   userName: string
   onLogout: () => void
 }
 
-export function Sidebar({ mode, plan, userName, onLogout }: SidebarProps) {
+export function Sidebar({ plan, userName, onLogout }: SidebarProps) {
   const pathname = usePathname()
   const [collapsedSections, setCollapsedSections] = useState<string[]>([])
 
@@ -210,48 +198,15 @@ export function Sidebar({ mode, plan, userName, onLogout }: SidebarProps) {
     <aside className="w-64 h-screen bg-slate-900 flex flex-col text-slate-300 flex-shrink-0">
       {/* Logo */}
       <div className="h-16 flex items-center px-6 border-b border-slate-800">
-        <Link href="/dashboard" className="flex items-center gap-2">
+        <Link href="/business/dashboard" className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-green-600 flex items-center justify-center text-white font-bold text-sm">₱</div>
-          <span className="font-bold text-white text-lg">{mode === "business" ? "PesoWise ERP" : "PesoWise"}</span>
+          <span className="font-bold text-white text-lg">PesoWise ERP</span>
         </Link>
       </div>
 
-      {/* Mode label */}
-      <div className="px-4 py-2 border-b border-slate-800">
-        <div className={`text-xs font-semibold uppercase tracking-wider px-2 py-1 rounded ${mode === "business" ? "text-blue-400" : "text-green-400"}`}>
-          {mode === "business" ? "⚡ Business Mode" : "👤 Personal Finance"}
-        </div>
-      </div>
-
-      {/* Navigation */}
+      {/* Navigation — section-grouped (filtered per User Management permissions) */}
       <nav className="flex-1 px-3 pb-4 overflow-y-auto space-y-0.5 scrollbar-dark">
-        {mode === "personal" ? (
-          // Personal nav — flat list
-          <div className="pt-2 space-y-0.5">
-            {personalNav.map((item) => {
-              const locked = isLocked(item.plan)
-              return (
-                <Link
-                  key={item.href}
-                  href={locked ? "#" : item.href}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-colors",
-                    pathname === item.href ? "bg-slate-700 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-slate-200",
-                    locked && "opacity-50 cursor-not-allowed"
-                  )}
-                >
-                  <item.icon className="w-4 h-4 flex-shrink-0" />
-                  <span className="flex-1">{item.label}</span>
-                  {locked && (
-                    <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-medium">PRO</span>
-                  )}
-                </Link>
-              )
-            })}
-          </div>
-        ) : (
-          // Business nav — section-grouped (filtered per User Management permissions)
-          visibleBusinessNav.map((section) => {
+        {visibleBusinessNav.map((section) => {
             const collapsed = collapsedSections.includes(section.section)
             const sectionActive = section.items.some(i => i.href === bestHref)
             return (
@@ -328,8 +283,7 @@ export function Sidebar({ mode, plan, userName, onLogout }: SidebarProps) {
                 )}
               </div>
             )
-          })
-        )}
+        })}
       </nav>
 
       {/* Bottom */}

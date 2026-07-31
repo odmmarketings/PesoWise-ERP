@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   ClipboardList, Plus, Search, LayoutDashboard, ListChecks, AlertTriangle,
-  CheckCircle2, Clock, Activity, Timer, RefreshCw,
+  CheckCircle2, Clock, Activity, Timer, RefreshCw, Trash2,
 } from "lucide-react"
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line,
@@ -18,6 +18,7 @@ import {
 } from "@/lib/problems-store"
 import { useErpUsers } from "@/lib/users-store"
 import { currentUserEmail } from "@/lib/current-user"
+import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { ProblemFormModal } from "@/components/business/problems/ProblemFormModal"
 import { ProblemDetailModal } from "@/components/business/problems/ProblemDetailModal"
 
@@ -44,6 +45,10 @@ export default function ProblemManagementPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [edit, setEdit] = useState<Problem | null>(null)
   const [detail, setDetail] = useState<Problem | null>(null)
+  // Delete = admin lang, at laging may kumpirmasyon. Tinatanggal nito ang problema
+  // KASAMA ang buong RCA thread nito — walang undo, kaya hindi puwedeng one-click.
+  const [confirmDel, setConfirmDel] = useState<Problem | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // Filters
   const [q, setQ] = useState("")
@@ -350,12 +355,11 @@ export default function ProblemManagementPage() {
                   <option value="deadline">Deadline</option>
                   <option value="completed">Completed Date</option>
                 </select>
-                <input type="date" className={SEL} value={dateA} onChange={e => setDateA(e.target.value)} />
-                <span className="text-slate-400 text-sm">→</span>
-                <input type="date" className={SEL} value={dateB} onChange={e => setDateB(e.target.value)} />
-                {(dateA || dateB) && (
-                  <button onClick={() => { setDateA(""); setDateB("") }} className="text-xs text-blue-600 hover:underline">clear</button>
-                )}
+                {/* Isang Pancake-style na range picker imbes na dalawang native
+                    <input type="date">. Ang native ay iba-iba ang itsura kada
+                    browser/OS at may sariling Clear/Today na hindi tugma sa app. */}
+                <DateRangePicker a={dateA} b={dateB} placeholder="All dates"
+                  onApply={(a, b) => { setDateA(a); setDateB(b) }} />
               </div>
             </div>
           </div>
@@ -374,14 +378,15 @@ export default function ProblemManagementPage() {
                     <th className="px-4 py-3 text-left">Target</th>
                     <th className="px-4 py-3 text-left">Days Left</th>
                     <th className="px-4 py-3 text-left">Last Updated</th>
+                    {role === "admin" && <th className="px-4 py-3 text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {!store.loaded && (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400 italic">Loading…</td></tr>
+                    <tr><td colSpan={role === "admin" ? 9 : 8} className="px-4 py-10 text-center text-sm text-slate-400 italic">Loading&hellip;</td></tr>
                   )}
                   {store.loaded && rows.length === 0 && (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400 italic">
+                    <tr><td colSpan={role === "admin" ? 9 : 8} className="px-4 py-10 text-center text-sm text-slate-400 italic">
                       Walang problemang tumutugma sa filter. I-click ang “Report a Problem” para magdagdag.
                     </td></tr>
                   )}
@@ -414,6 +419,16 @@ export default function ProblemManagementPage() {
                         <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-400">
                           {p.updated_at ? new Date(p.updated_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" }) : "—"}
                         </td>
+                        {role === "admin" && (
+                          <td className="px-4 py-3 whitespace-nowrap text-right">
+                            {/* stopPropagation — kung hindi, bubuksan din ang detail modal. */}
+                            <button onClick={e => { e.stopPropagation(); setConfirmDel(p) }}
+                              title={`Delete ${p.code}`} aria-label={`Delete ${p.code}`}
+                              className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     )
                   })}
@@ -446,6 +461,50 @@ export default function ProblemManagementPage() {
           }}
           onApprove={async () => { await store.approveProblem(detail.id); setDetail(null) }}
         />
+      )}
+
+      {/* ── Kumpirmasyon bago mag-delete (admin lang) ────────────────────────────
+          Ipinapakita ang code at pamagat para may makitang totoong pagkakakilanlan
+          ang admin bago pumindot — hindi sapat ang "Sigurado ka ba?". */}
+      {confirmDel && role === "admin" && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => !deleting && setConfirmDel(null)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-rose-600" />
+              <h2 className="text-base font-bold text-slate-800">Delete this problem?</h2>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
+                <p className="font-semibold text-slate-800 text-sm leading-tight">{confirmDel.title}</p>
+                <p className="text-[11px] text-slate-400 font-mono mt-0.5">{confirmDel.code} · {confirmDel.department || "—"}</p>
+              </div>
+              <p className="text-sm text-slate-600">
+                Mabubura ang problemang ito kasama ang <strong>root cause, solusyon, comments, at buong timeline</strong> nito.
+                <strong className="text-rose-600"> Hindi na ito maibabalik.</strong>
+              </p>
+            </div>
+            <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+              <button onClick={() => setConfirmDel(null)} disabled={deleting}
+                className="h-9 px-4 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button disabled={deleting}
+                onClick={async () => {
+                  setDeleting(true)
+                  try {
+                    await store.removeProblem(confirmDel.id)
+                    // Kung bukas ang detail ng kaparehong problema, isara — wala na ito.
+                    if (detail?.id === confirmDel.id) setDetail(null)
+                    setConfirmDel(null)
+                  } finally { setDeleting(false) }
+                }}
+                className="h-9 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold disabled:opacity-50">
+                {deleting ? "Binubura…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

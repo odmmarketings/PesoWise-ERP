@@ -26,8 +26,8 @@ function IntroModal({ onClose }: { onClose: () => void }) {
               <Wallet className="w-5 h-5 text-green-600" />
             </div>
             <div>
-              <h3 className="font-semibold text-slate-900">Personal Finance</h3>
-              <p className="text-sm text-slate-500">Track daily expenses, set budgets, monitor savings, and get AI-powered insights on your spending habits.</p>
+              <h3 className="font-semibold text-slate-900">Sales &amp; Logistics</h3>
+              <p className="text-sm text-slate-500">Live Pancake POS orders, warehouse pipeline, PPW monitoring, and barcode-driven Shipped Out scanning.</p>
             </div>
           </div>
           <div className="flex gap-4">
@@ -35,8 +35,8 @@ function IntroModal({ onClose }: { onClose: () => void }) {
               <Building2 className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <h3 className="font-semibold text-slate-900">Business ERP Mode</h3>
-              <p className="text-sm text-slate-500">Switch to Business Mode for full ERP — sales tracking, inventory, HR, e-commerce ROAS, and more.</p>
+              <h3 className="font-semibold text-slate-900">Full Business ERP</h3>
+              <p className="text-sm text-slate-500">Inventory, bookkeeping, income statement, ad spend and ROAS, suppliers, and user management.</p>
             </div>
           </div>
           <div className="flex gap-4">
@@ -184,7 +184,7 @@ export default function LandingPage() {
             <span className="block text-green-400 mt-2">The Smart Way</span>
           </h1>
           <p className="text-xl text-slate-300 max-w-2xl mx-auto mb-10">
-            AI-powered personal finance tracker and business ERP — all in one app. Track expenses, manage budgets, and grow your wealth.
+            Buong business ERP sa isang app — sales, logistics, inventory, ad spend, at bookkeeping. Gawa para sa Philippine COD sellers.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Button size="xl" asChild>

@@ -19,6 +19,16 @@ const CACHE = new Map<string, Entry>()
 const INFLIGHT = new Map<string, Promise<any>>()
 const DEFAULT_TTL = 15 * 60_000   // 15 minuto
 
+// Ilang page ang sabay na hihilahin. Napatunayan sa live: 40s ang median ng isang
+// `phase=rows` na tawag, kaya sa 3 lang ay 13 MINUTO bago matapos ang 22 pages.
+// Isa itong lugar para mapalitan — huwag nang magkalat ng magic number sa bawat page.
+export const PANCAKE_CONCURRENCY = 8
+
+// Walang timeout dati, kaya kapag hindi sumagot ang Pancake ay HABAMBUHAY na naka-
+// spinner ang page (walang error, walang laman — mukhang sira). Ito ang huling
+// depensa: pinipilit nitong matapos ang bawat tawag, panalo man o talo.
+const DEFAULT_TIMEOUT = 60_000    // 60 segundo
+
 // Ang `nocache=1` ay para lang sa server — hindi dapat ito gumawa ng hiwalay na entry,
 // kung hindi mananatiling luma ang normal na susi pagkatapos ng Refresh.
 const keyOf = (url: string) => url.replace(/([?&])nocache=1&?/, "$1").replace(/[?&]$/, "")
@@ -27,9 +37,10 @@ const keyOf = (url: string) => url.replace(/([?&])nocache=1&?/, "$1").replace(/[
  * Fetch na may cache. Ibinabalik ang JSON.
  * @param force  laktawan ang cache (Refresh button) at palitan ang laman nito
  */
-export async function cachedJson(url: string, opts?: { force?: boolean; ttl?: number }): Promise<any> {
+export async function cachedJson(url: string, opts?: { force?: boolean; ttl?: number; timeout?: number }): Promise<any> {
   const key = keyOf(url)
   const ttl = opts?.ttl ?? DEFAULT_TTL
+  const timeout = opts?.timeout ?? DEFAULT_TIMEOUT
 
   if (!opts?.force) {
     const hit = CACHE.get(key)
@@ -41,7 +52,16 @@ export async function cachedJson(url: string, opts?: { force?: boolean; ttl?: nu
   }
 
   const p = (async () => {
-    const res = await fetch(url, { cache: "no-store" })
+    let res: Response
+    try {
+      res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeout) })
+    } catch (e: any) {
+      // Sinasalo ang abort para maging malinaw na mensahe imbes na "signal is aborted".
+      if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+        throw new Error(`timeout — hindi sumagot ang Pancake sa loob ng ${Math.round(timeout / 1000)}s`)
+      }
+      throw e
+    }
     const json = await res.json().catch(() => null)
     if (!res.ok || !json || json.success === false) {
       throw new Error(json?.error || `HTTP ${res.status}`)

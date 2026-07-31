@@ -26,7 +26,7 @@ export function middleware(request: NextRequest) {
   if (pathname.startsWith("/admin")) {
     const userEmail = request.cookies.get("pesowise-user-email")?.value
     if (userEmail !== process.env.ADMIN_EMAIL) {
-      return NextResponse.redirect(new URL("/dashboard", request.url))
+      return NextResponse.redirect(new URL("/business/dashboard", request.url))
     }
   }
 

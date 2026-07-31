@@ -1,13 +1,15 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useEffect, useRef } from "react"
 import * as XLSX from "xlsx-js-style"
 import {
   Undo2, RefreshCw, Search, X, Check, ChevronLeft, ChevronRight, Upload, ScanLine, Download, Camera,
+  PackageCheck, PackageX, Receipt, AlertTriangle,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { useRtsMeta, type RtsMeta, type RtsItemCount } from "@/lib/rts-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
+import { scanSound, primeScanSound } from "@/lib/scan-sound"
 
 // RTS ITEMS (LHIKE manual) — Return-to-Sender parcels, live from Pancake (orders whose status
 // is Returning/Returned across all connected pages). Features: sortable/filterable table w/
@@ -16,6 +18,7 @@ import { cachedJson } from "@/lib/pancake-cache"
 // friendly). Received/Checked/Claims state is per TRACKING NUMBER in pesowise_rts_meta.
 
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
 const INP = "h-8 w-full rounded border border-slate-300 px-1.5 text-xs bg-white focus:outline-none focus:border-blue-400"
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
@@ -30,27 +33,11 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   let i = 0; await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-// ── Scanner feedback sounds (WebAudio, no files): Receive = mabilis na double-beep pataas,
-// Check = triple-beep pababa-pataas, Error = mahaba't mababang buzz. Magkaiba para rinig agad
-// ng staff kung anong mode / kung mali, kahit hindi nakatingin sa screen.
-function beep(kind: "receive" | "check" | "error") {
-  try {
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext
-    const ctx: AudioContext = ((beep as any)._ctx = (beep as any)._ctx || new Ctx())
-    if (ctx.state === "suspended") ctx.resume()
-    const play = (freq: number, start: number, dur: number, type: OscillatorType = "sine", gain = 0.3) => {
-      const o = ctx.createOscillator(), g = ctx.createGain()
-      o.type = type; o.frequency.value = freq
-      g.gain.setValueAtTime(gain, ctx.currentTime + start)
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur)
-      o.connect(g); g.connect(ctx.destination)
-      o.start(ctx.currentTime + start); o.stop(ctx.currentTime + start + dur + 0.02)
-    }
-    if (kind === "receive") { play(1200, 0, 0.1); play(1700, 0.11, 0.16) }
-    else if (kind === "check") { play(900, 0, 0.09); play(650, 0.1, 0.09); play(1100, 0.2, 0.18) }
-    else { play(170, 0, 0.4, "square", 0.4); play(140, 0.18, 0.3, "square", 0.35) }
-  } catch {}
-}
+// ── Scanner feedback sounds — galing sa @/lib/scan-sound (iisang kopya sa buong app).
+// "receive" ay ang pangkalahatang tagumpay na tunog; iba ang "check" para marinig
+// ng staff kung anong mode ang tumatakbo kahit hindi nakatingin sa screen.
+const beep = (kind: "receive" | "check" | "error") =>
+  scanSound(kind === "receive" ? "ok" : kind)
 
 type RtsRow = Record<string, any> & { id: string; page_name: string }
 const isRts = (r: RtsRow) => /return/i.test(String(r.order_status || "")) || /Return/i.test(String(r.parcel_status || ""))
@@ -164,7 +151,7 @@ export default function RtsItemsPage() {
     setLoading(true); setLoadErr("")
     const out: RtsRow[] = []
     const errs: string[] = []
-    await mapLimit(pagesWithCreds, 3, async p => {
+    await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async p => {
       try {
         const rs = await fetchPageRows(p.api_key, p.pancake_page_id || p.shop_id, fetchWindow.from, fetchWindow.to, noCache)
         for (const r of rs) if (isRts(r)) out.push({ ...r, page_name: p.name })
@@ -212,6 +199,23 @@ export default function RtsItemsPage() {
   }, [filtered, rts.meta])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyFilters = () => { setApplied(draft); setPage(1) }
+
+  // ── Burahin lahat ng filter ─────────────────────────────────────────────────
+  // Kasama ang date range dito — sa RTS, ang walang laman na petsa ay HINDI "walang
+  // filter" kundi ang default na "this month" (tingnan ang fetchWindow). Kaya ang
+  // pag-clear ay magpapabalik sa default na buwan, at magre-refetch KUNG iba ang
+  // dating range. Bilang isa lang ang magkapares na petsa para tumpak ang bilang.
+  const countActive = (f: typeof empty) => {
+    let n = 0
+    if (f.dateA || f.dateB) n++
+    if (f.courier !== "All") n++
+    if (f.status !== "All") n++
+    for (const k of ["csr", "customer", "address", "contact", "order", "qty", "price", "pageN", "tracking"] as const) if (f[k]) n++
+    return n
+  }
+  const activeFilters = countActive(applied)
+  const hasFilters = activeFilters > 0 || countActive(draft) > 0
+  const clearFilters = () => { setDraft({ ...empty }); setApplied({ ...empty }); setPage(1) }
   const toggleExpand = (id: string) => setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   const COLS =["No", "Order Date", "CSR", "Customer Name", "Address", "Contact", "Order", "Total Qty", "Price", "Page", "Tracking Number", "Courier", "RTS Status", "Claim", "Actions"]
@@ -263,28 +267,32 @@ export default function RtsItemsPage() {
               {["Today", "Yesterday", "Last 7 days", "Last 30 days", "This month", "All time"].map(p => <option key={p}>{p}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            <button onClick={() => setStatDetail("expected")} className="text-left rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 hover:ring-2 hover:ring-indigo-300 transition-shadow" title="Lahat ng returns na dineklara ni Pancake sa kasalukuyang date range ng table">
-              <p className="text-[10px] uppercase tracking-wider text-indigo-600">Expected RTS</p>
-              <p className="text-xl font-extrabold tabular-nums text-indigo-700 leading-tight">{expectedStats.total}</p>
-              <p className="text-[10px] font-semibold text-indigo-400 tabular-nums">{expectedStats.received} received · {expectedStats.pending} pending</p>
-            </button>
-            <button onClick={() => setStatDetail("received")} className="text-left rounded-xl border border-teal-200 bg-teal-50/60 px-3 py-2 hover:ring-2 hover:ring-teal-300 transition-shadow">
-              <p className="text-[10px] uppercase tracking-wider text-teal-600">Received</p>
-              <p className="text-xl font-extrabold tabular-nums text-teal-700">{scanStats.received}</p>
-            </button>
-            <button onClick={() => setStatDetail("claims")} className="text-left rounded-xl border border-purple-200 bg-purple-50/60 px-3 py-2 hover:ring-2 hover:ring-purple-300 transition-shadow">
-              <p className="text-[10px] uppercase tracking-wider text-purple-600">Claims</p>
-              <p className="text-xl font-extrabold tabular-nums text-purple-700">{scanStats.claims}{scanStats.claimAmt > 0 && <span className="text-xs font-semibold text-purple-500 ml-1.5">{peso(scanStats.claimAmt)}</span>}</p>
-            </button>
-            <button onClick={() => setStatDetail("damage")} className="text-left rounded-xl border border-red-200 bg-red-50/60 px-3 py-2 hover:ring-2 hover:ring-red-300 transition-shadow">
-              <p className="text-[10px] uppercase tracking-wider text-red-500">Damage</p>
-              <p className="text-xl font-extrabold tabular-nums text-red-600">{scanStats.damage} <span className="text-xs font-semibold text-red-400">pcs</span></p>
-            </button>
-            <button onClick={() => setStatDetail("loss")} className="text-left rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 hover:ring-2 hover:ring-amber-300 transition-shadow">
-              <p className="text-[10px] uppercase tracking-wider text-amber-600">Loss</p>
-              <p className="text-xl font-extrabold tabular-nums text-amber-700">{scanStats.loss} <span className="text-xs font-semibold text-amber-500">pcs</span></p>
-            </button>
+          {/* Solid-colour na cards — kapareho ng Warehouse Dashboard ops cards:
+              malaking bilang, ghost icon sa likod, label at detalye sa ilalim. */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5">
+            {([
+              { k: "expected", label: "Expected RTS", value: num(expectedStats.total), sub: `${num(expectedStats.received)} received · ${num(expectedStats.pending)} pending`,
+                color: "bg-indigo-600", icon: Undo2, title: "Lahat ng returns na dineklara ni Pancake sa kasalukuyang date range ng table" },
+              { k: "received", label: "Received", value: num(scanStats.received), sub: `scanned · ${statRange.toLowerCase()}`,
+                color: "bg-teal-600", icon: PackageCheck, title: "Na-scan bilang Received sa napiling Scan Summary range" },
+              { k: "claims", label: "Claims", value: num(scanStats.claims), sub: scanStats.claimAmt > 0 ? peso(scanStats.claimAmt) : "walang halaga",
+                color: "bg-purple-600", icon: Receipt, title: "Mga parcel na may claim amount" },
+              { k: "damage", label: "Damage", value: num(scanStats.damage), sub: "pcs",
+                color: "bg-red-600", icon: AlertTriangle, title: "Bilang ng sirang piraso" },
+              { k: "loss", label: "Loss", value: num(scanStats.loss), sub: "pcs",
+                color: "bg-amber-600", icon: PackageX, title: "Bilang ng nawawalang piraso" },
+            ] as const).map(c => (
+              <button key={c.k} onClick={() => setStatDetail(c.k)} title={c.title}
+                className={`relative overflow-hidden ${c.color} rounded-xl px-4 py-3 h-[78px] flex items-center justify-between text-left hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-white/60 transition`}>
+                <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.12] text-white" />
+                <div className="text-right ml-auto z-10 min-w-0">
+                  <p className="text-xl font-bold text-white leading-none tabular-nums truncate">{c.value}</p>
+                  <p className="text-[10px] text-white/75 font-semibold mt-1 tracking-wider uppercase leading-tight truncate">
+                    {c.label} <span className="text-white/60 normal-case tracking-normal">({c.sub})</span>
+                  </p>
+                </div>
+              </button>
+            ))}
           </div>
           {statDetail && (
             <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setStatDetail("")}>
@@ -347,11 +355,19 @@ export default function RtsItemsPage() {
           )}
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-slate-500 mt-4">
-          <select className="h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white" value={perPage} onChange={e => { setPerPage(parseInt(e.target.value)); setPage(1) }}>
-            {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
-          </select> records
-        </label>
+        <div className="flex items-center justify-between flex-wrap gap-2 mt-4">
+          <label className="flex items-center gap-2 text-sm text-slate-500">
+            <select className="h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white" value={perPage} onChange={e => { setPerPage(parseInt(e.target.value)); setPage(1) }}>
+              {[10, 25, 50, 100, 250, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
+            </select> records
+          </label>
+          {hasFilters && (
+            <button onClick={clearFilters} title="Burahin lahat ng filter — babalik sa default na buwan"
+              className="h-9 px-3 rounded-lg border border-rose-200 bg-rose-50 text-sm font-medium text-rose-600 hover:bg-rose-100 flex items-center gap-1.5">
+              <X className="w-3.5 h-3.5" /> Clear filter{activeFilters > 0 ? ` (${activeFilters})` : ""}
+            </button>
+          )}
+        </div>
 
         {loadErr && <p className="text-xs text-rose-500 mt-2">⚠ {loadErr}</p>}
 
@@ -791,6 +807,9 @@ function CameraScanScreen({ rows, rts, onClose }: {
 
   async function startCamera() {
     controlsRef.current?.stop()
+    // Tinatawag ito mula sa isang tap — doon lang pumapayag ang iOS/Android na
+    // buhayin ang WebAudio. Kung hindi dito, tahimik ang KAUNA-UNAHANG beep.
+    primeScanSound()
     setCamState("starting"); setCamErr("")
     // High-res back camera — dense waybill barcodes need the extra pixels to decode.
     const constraints: MediaStreamConstraints = {

@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import * as XLSX from "xlsx-js-style"
@@ -15,7 +15,7 @@ import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
 import { fetchFulfillmentMeta } from "@/lib/fulfillment-meta-store"
-import { cachedJson } from "@/lib/pancake-cache"
+import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { courierOf, COURIER_COLOR } from "@/lib/courier"
 import { StatCardsSkeleton, TableSkeleton } from "@/components/business/Skeleton"
 
@@ -125,7 +125,7 @@ export default function WarehouseDashboardPage() {
     setLoading(true); setLoadErr("")
     const out: any[] = []
     const errs: string[] = []
-    await mapLimit(pagesWithCreds, 3, async p => {
+    await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async p => {
       try {
         const rs = await fetchPageRows(p.api_key, p.pancake_page_id || p.shop_id, win.from, win.to, noCache)
         for (const r of rs) out.push({ ...r, page_name: p.name })
