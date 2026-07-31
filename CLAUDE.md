@@ -170,6 +170,36 @@ The Sales Tracker's "Add New Order" form CREATES orders directly in Pancake POS 
 - **`api/pancake/geo/route.ts`** — `GET`, proxies Pancake's `/geo/provinces?country_code=63` / `/geo/districts` / `/geo/communes` (PH country_code = "63"). Drives **cascading address dropdowns** (Province → City → Barangay); the order's `shipping_address` carries the real `province_id`/`district_id`/`commune_id` + `country_code:"63"`. 1-hour cache.
 - Removed Price/Shipping fields from the form (pricing is automatic from the product).
 
+### Send orders to courier → books the real waybill (`api/pancake/orders/send-courier/route.ts`)
+
+Fulfillment's "Send orders to courier" makes SPX/J&T actually generate a waybill. The shape of
+this request was **recorded off the POS**, not guessed — hook `XMLHttpRequest` on
+`pos.pancake.ph`, do one real Quick update, read the payload. Redo that if Pancake changes.
+
+- **Endpoint is `POST /shops/{shop}/orders/update_multiple_orders`** — a bulk endpoint, not
+  `PUT /orders/{id}`. Body is **form-encoded** with `orders[0][...]` keys, not JSON. Reachable on
+  the public API with an `api_key` (it answers 400 to an empty payload; `orders/send_to_courier`
+  and `orders/bulk_update` both 404 — they don't exist).
+- **`partner_id` alone does NOT book anything.** It only writes the courier *name* onto the order.
+  The order then shows a courier and moves to Waiting for Pick Up with **no tracking number**, and
+  the API still answers success. That was the original bug — the ERP reported "Success" while the
+  warehouse had no waybill to print.
+- **The switch that books is `is_send_to_{courier}_phi`:**
+  - SPX (partner 125): `is_send_to_spx_phi`, `is_free_ship_spx`, `is_spx_post`, `note_spx`,
+    `allow_mutual_check_spx`, `allow_try_on_spx`, `pickup_time_spx[0]` (unix ts) + `[1]` (range id)
+  - J&T (partner 10): `is_send_to_jnt_phi`, `payment_jnt_phi: "PP_PM"`, `is_drop_off_jnt_phi`,
+    `signpart_jnt_phi`, `insurance_services_jnt_phi`
+- **Payload is deliberately minimal** (id + partner + status 9 + courier flags). The POS sends ~294
+  fields because it holds the whole order client-side; the public API returns only ~106 and leaves
+  some blank (`shipping_address`). Echoing that thin copy back would wipe data **if** the endpoint
+  replaces rather than merges. It merges — confirmed on a live order — but the route still
+  snapshots before/after and aborts loudly if any of `customer_name` / `shipping_address` /
+  `order_item` / `final_price` / `contact_no` / `items` goes from filled to empty.
+- **Booked is verified, not assumed.** After the write the order is re-read: a real booking has
+  `partner.service_partner` (deliver_info / parcel_info / fulfillment_info) and
+  `partner.extend_code` (= the tracking number). If both are missing the route returns a failure
+  with the tracking blank, so a silent non-booking can never read as success again.
+
 ## Finance modules
 
 All built to LHIKE ERP user manuals + reference screenshots. Each is a Supabase-backed store (localStorage = read cache) + page following the same conventions (records selector, per-column filter row, full-page screens via early-return, status colored text/badges, `xlsx-js-style` for real `.xlsx`).
