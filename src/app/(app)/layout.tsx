@@ -84,10 +84,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
+      {/* Z-INDEX SCALE (huwag baguhin nang hiwalay — magkakabit sila):
+            40      sticky <thead> ng mga table
+            46      GroupPicker at iba pang dropdown sa loob ng page
+            47/48   mobile sidebar backdrop / drawer
+            50      modals
+          Ang sidebar ay DAPAT mas mataas sa 40 — kung hindi, tumatagos ang
+          column headers ng table sa ibabaw ng bukas na drawer sa cellphone.
+          Ganoon ang nangyayari dati sa iPhone: kita ang "No / Order Date /
+          Page" na nakapatong sa nav. */}
       {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/50 z-20 lg:hidden" onClick={() => setSidebarOpen(false)} />
+        <div className="fixed inset-0 bg-black/50 z-[47] lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
-      <div className={`fixed lg:static inset-y-0 left-0 z-30 transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+      <div className={`fixed lg:static inset-y-0 left-0 z-[48] transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
         <Sidebar plan={user.plan} userName={user.name} onLogout={handleLogout} />
       </div>
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

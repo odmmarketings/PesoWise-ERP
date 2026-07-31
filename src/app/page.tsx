@@ -15,7 +15,7 @@ function IntroModal({ onClose }: { onClose: () => void }) {
         <div className="bg-gradient-to-br from-green-600 to-emerald-700 p-8 text-white text-center">
           <div className="text-5xl mb-3">💰</div>
           <h2 className="text-2xl font-bold">Welcome to PesoWise</h2>
-          <p className="text-green-100 mt-2 text-sm">Your all-in-one Philippine finance companion</p>
+          <p className="text-green-100 mt-2 text-sm">The all-in-one ERP for Philippine COD sellers</p>
         </div>
         <button onClick={onClose} className="absolute top-4 right-4 text-white/70 hover:text-white">
           <X className="w-5 h-5" />
@@ -44,8 +44,8 @@ function IntroModal({ onClose }: { onClose: () => void }) {
               <Brain className="w-5 h-5 text-purple-600" />
             </div>
             <div>
-              <h3 className="font-semibold text-slate-900">AI-Powered Features</h3>
-              <p className="text-sm text-slate-500">Just chat your expenses, screenshot your bank app, and let AI handle the rest. Built for busy Filipinos.</p>
+              <h3 className="font-semibold text-slate-900">Money That Reconciles</h3>
+              <p className="text-sm text-slate-500">Actual Facebook Paid charges, COG, and live courier fees — so the P&amp;L matches the bank statement.</p>
             </div>
           </div>
           <div className="pt-2 flex gap-3">
@@ -62,15 +62,17 @@ function IntroModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+// Bawat item dito ay isang module na TOTOONG nasa app. Huwag maglagay ng
+// feature na hindi pa gawa — mas mabuti nang maikli ang listahan kaysa mangako.
 const features = [
-  { icon: <BarChart3 className="w-6 h-6" />, color: "bg-green-50 text-green-600", title: "Smart Dashboard", desc: "Monthly totals, trends, and category breakdowns at a glance." },
-  { icon: <Brain className="w-6 h-6" />, color: "bg-purple-50 text-purple-600", title: "AI Expense Logger", desc: "Just type what you spent — AI auto-categorizes everything for you." },
-  { icon: <Camera className="w-6 h-6" />, color: "bg-blue-50 text-blue-600", title: "Screenshot Bank Updates", desc: "Screenshot your bank app and AI reads your balance automatically." },
-  { icon: <TrendingUp className="w-6 h-6" />, color: "bg-amber-50 text-amber-600", title: "Net Worth Tracker", desc: "Track savings across all banks and compute your real net worth." },
-  { icon: <Bell className="w-6 h-6" />, color: "bg-red-50 text-red-600", title: "Bill Reminders", desc: "Never miss a bill. Get notified before due dates, auto-cleared when paid." },
-  { icon: <Building2 className="w-6 h-6" />, color: "bg-indigo-50 text-indigo-600", title: "Business ERP Mode", desc: "Full ERP with sales tracker, ROAS, inventory, HR, and bookkeeping." },
-  { icon: <Smartphone className="w-6 h-6" />, color: "bg-pink-50 text-pink-600", title: "Auto Monthly Reports", desc: "AI-generated slideshow of your finances — bi-weekly and monthly." },
-  { icon: <Shield className="w-6 h-6" />, color: "bg-slate-50 text-slate-600", title: "50/40/10 Money Guide", desc: "AI coaches you on splitting income into Needs, Investments, and Wants." },
+  { icon: <BarChart3 className="w-6 h-6" />, color: "bg-green-50 text-green-600", title: "Page ROAS Tracker", desc: "Sales, ad spend, and ROAS per Facebook page — daily breakdown and page report." },
+  { icon: <Smartphone className="w-6 h-6" />, color: "bg-blue-50 text-blue-600", title: "Live Pancake POS Sync", desc: "Orders pulled straight from every connected page. No exports, no re-encoding." },
+  { icon: <Building2 className="w-6 h-6" />, color: "bg-indigo-50 text-indigo-600", title: "Warehouse Pipeline", desc: "Packaging, Waiting for Pick Up, PPW monitoring, and fulfillment per page." },
+  { icon: <Camera className="w-6 h-6" />, color: "bg-purple-50 text-purple-600", title: "Barcode Shipped Out", desc: "Scan the waybill and inventory deducts itself through your unit-code recipes." },
+  { icon: <TrendingUp className="w-6 h-6" />, color: "bg-amber-50 text-amber-600", title: "Real Profitability", desc: "Gross profit from actual FB Paid charges, COG, and live courier shipping fees." },
+  { icon: <Wallet className="w-6 h-6" />, color: "bg-teal-50 text-teal-600", title: "Book Keeping & P&L", desc: "Every charge posted to a ledger that reconciles 1:1 with your bank statement." },
+  { icon: <Shield className="w-6 h-6" />, color: "bg-slate-50 text-slate-600", title: "Inventory & Unit Codes", desc: "Stock in, stock out, damage and loss — with a Pancake cross-check audit." },
+  { icon: <Bell className="w-6 h-6" />, color: "bg-red-50 text-red-600", title: "Problem Management", desc: "Root-cause tracking with owners, deadlines, and approval before a case closes." },
 ]
 
 const plans = [
@@ -81,8 +83,8 @@ const plans = [
     badge: null,
     highlight: false,
     description: "Try PesoWise risk-free",
-    included: ["20 expenses per month", "3 expense categories", "Basic dashboard", "No credit card required"],
-    excluded: ["Full charts & reports", "AI features", "Bill reminders", "Export & more"],
+    included: ["1 connected page", "Sales & ROAS dashboard", "Book Keeping basics", "No credit card required"],
+    excluded: ["Unlimited pages", "Warehouse & fulfillment", "Barcode Shipped Out", "Income Statement & reports"],
     cta: "Start Free Trial",
     href: "/register",
     variant: "outline" as const,
@@ -93,16 +95,16 @@ const plans = [
     period: "/month",
     badge: "Most Popular",
     highlight: true,
-    description: "Everything you need to manage your money",
+    description: "Run sales and money in one place",
     included: [
-      "Unlimited expenses & categories",
-      "Full dashboard with charts",
-      "Month vs month comparison",
-      "Budget per category",
-      "Income & net savings tracking",
-      "Search, tags, filters",
-      "Export CSV & PDF",
-      "Multi-device sync",
+      "Unlimited connected pages",
+      "Page ROAS + Adspent summary",
+      "Sales Tracker with live Pancake orders",
+      "Book Keeping & Income Statement",
+      "Cards, FB Billing, Subscriptions",
+      "Purchase Orders & Suppliers",
+      "Export to Excel",
+      "Multi-user with role permissions",
     ],
     excluded: [],
     cta: "Get Pro",
@@ -115,18 +117,18 @@ const plans = [
     period: "/month",
     badge: "Best Value",
     highlight: false,
-    description: "AI-powered finance + Business ERP",
+    description: "The full warehouse and logistics stack",
     included: [
       "Everything in Pro",
-      "AI Chat Expense Logger",
-      "Screenshot → Auto Bank Update",
-      "Savings & Net Worth Tracker",
-      "Bill Reminders & Notifications",
-      "Monthly Report Presentation",
-      "50/40/10 Money Guide + AI Coach",
-      "Dream Purchase Tracker",
-      "Business ERP Mode (full)",
-      "Receipt photo upload",
+      "Warehouse Dashboard & Fulfillment",
+      "Barcode Shipped Out with auto-deduct",
+      "PPW monitoring",
+      "Inventory, Unit Codes & Stock audit",
+      "RTS Items with claims",
+      "Send orders to SPX / J&T",
+      "Facebook Ads manager",
+      "Problem Management (RCA)",
+      "Discord sales reporting",
       "Priority support",
     ],
     excluded: [],
