@@ -85,9 +85,6 @@ const ORDER_STATUSES: { l: string; match: string[]; code?: number }[] = [
   { l: "Cancelled", match: ["cancel"], code: 6 },
   { l: "Deleted", match: ["delete", "remove"] },
 ]
-// Prefix ng bilang ng Packaging sa Group dropdown, hal. "( 12) ". NBSP ang pad para
-// pantay ang hanay ng numero — kinakain ng browser ang ordinaryong space sa <option>.
-const pkgTag = (n: number) => `(${String(n).padStart(3, " ")}) `
 
 const orderStatusLabel = (raw: string): string => {
   const s = String(raw || "").toLowerCase()
@@ -532,15 +529,8 @@ export default function FulfillmentPage() {
                 <X className="w-3.5 h-3.5" /> Clear filter{activeFilters > 0 ? ` (${activeFilters})` : ""}
               </button>
             )}
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              Group
-              <select className="h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white min-w-[140px]" value={group} onChange={e => { setGroup(e.target.value); setPage(1) }}>
-                {/* Bilang muna bago ang pangalan. NBSP ang pad — kinakain ng browser
-                    ang normal na space sa loob ng <option>, kaya hindi mag-a-align. */}
-                <option value="ALL">{pkgTag(packagingBy.ALL || 0)}ALL</option>
-                {pageNames.map(n => <option key={n} value={n}>{pkgTag(packagingBy[n] || 0)}{n}</option>)}
-              </select>
-            </label>
+            <GroupPicker value={group} onChange={v => { setGroup(v); setPage(1) }}
+              pages={pageNames} counts={packagingBy} />
           </div>
         </div>
 
@@ -686,6 +676,76 @@ export default function FulfillmentPage() {
 
       {/* ── Tools → View COG Sold ── */}
       {cogOpen && <CogSoldModal rows={rows} cogByName={cogByName} parseItems={parseItems} onClose={() => setCogOpen(false)} />}
+    </div>
+  )
+}
+
+// ── GROUP PICKER ─────────────────────────────────────────────────────────────
+// Pinapalitan ang native <select>. Dalawang dahilan kung bakit hindi puwede iyon:
+// hindi makukulayan ang <option>, at proportional ang font kaya hindi kailanman
+// pumapantay ang hanay ng numero — kaya mukhang kalat.
+//
+// Ang pagkakasunod ay PINAKAMARAMI MUNA, hindi alpabeto: ang tanong ng packer ay
+// "saan ako magsisimula?", at ang sagot ay ang page na pinakamaraming naka-Packaging.
+// Ang mga zero ay itinutulak sa ilalim at pinapapusyaw — nandiyan pa rin kung
+// kailangan, pero hindi na nakakaabala.
+function GroupPicker({ value, onChange, pages, counts }: {
+  value: string; onChange: (v: string) => void; pages: string[]; counts: Record<string, number>
+}) {
+  const [open, setOpen] = useState(false)
+  const total = counts.ALL || 0
+  const items = useMemo(() => {
+    const rows = pages.map(n => ({ name: n, count: counts[n] || 0 }))
+    rows.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    return rows
+  }, [pages, counts])
+  const active = value === "ALL" ? total : (counts[value] || 0)
+  const withWork = items.filter(i => i.count > 0).length
+
+  const Badge = ({ n }: { n: number }) => (
+    <span className={`inline-flex items-center justify-center min-w-[30px] h-5 px-1.5 rounded-md text-[11px] font-bold tabular-nums ${
+      n > 0 ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-400"}`}>{n}</span>
+  )
+
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(o => !o)}
+        className="h-9 pl-2 pr-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 flex items-center gap-2 text-sm min-w-[230px] max-w-[320px]">
+        <Badge n={active} />
+        <span className="flex-1 text-left truncate text-slate-700">{value === "ALL" ? "All pages" : value}</span>
+        <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <>
+          {/* z-[45]/[46]: kailangang MAS MATAAS sa sticky <thead> (z-40) — kung
+              hindi, natatabunan ng column headers ang bukas na dropdown. Mas mababa
+              pa rin sa mga modal (z-50) para hindi sumapaw kapag may modal. */}
+          <div className="fixed inset-0 z-[45]" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-[46] w-[340px] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Packaging kada page</span>
+              <span className="text-[11px] text-slate-400">{withWork} sa {items.length} may laman</span>
+            </div>
+            <div className="max-h-[340px] overflow-y-auto py-1">
+              <button onClick={() => { onChange("ALL"); setOpen(false) }}
+                className={`w-full px-3 py-2 flex items-center gap-2.5 text-sm hover:bg-slate-50 ${value === "ALL" ? "bg-blue-50" : ""}`}>
+                <Badge n={total} />
+                <span className="flex-1 text-left font-semibold text-slate-800">All pages</span>
+                {value === "ALL" && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
+              </button>
+              <div className="my-1 border-t border-slate-100" />
+              {items.map(it => (
+                <button key={it.name} onClick={() => { onChange(it.name); setOpen(false) }}
+                  className={`w-full px-3 py-2 flex items-center gap-2.5 text-sm hover:bg-slate-50 ${value === it.name ? "bg-blue-50" : ""}`}>
+                  <Badge n={it.count} />
+                  <span className={`flex-1 text-left truncate ${it.count > 0 ? "text-slate-700" : "text-slate-400"}`}>{it.name}</span>
+                  {value === it.name && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
