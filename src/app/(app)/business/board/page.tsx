@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -195,7 +195,7 @@ export default function ProblemManagementPage() {
             <ClipboardList className="w-5 h-5" /> PROBLEM MANAGEMENT
           </h1>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Root Cause Analysis · {role === "admin" ? "Administrator" : role === "manager" ? `Manager · ${managed.join(", ") || "walang department"}` : "Employee"} view
+            Root Cause Analysis · {role === "admin" ? "Administrator" : role === "manager" ? `Manager · ${managed.join(", ") || "no department"}` : "Employee"} view
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -232,7 +232,7 @@ export default function ProblemManagementPage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ChartCard title="Problems by Department" subtitle="Pinakamarami sa itaas">
+            <ChartCard title="Problems by Department" subtitle="Most at the top">
               {byDept.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={byDept} layout="vertical" margin={{ left: 8, right: 16 }}>
@@ -275,7 +275,7 @@ export default function ProblemManagementPage() {
               )}
             </ChartCard>
 
-            <ChartCard title="Monthly Trend" subtitle="Na-report vs natapos, huling 6 na buwan">
+            <ChartCard title="Monthly Trend" subtitle="Reported vs completed, last 6 months">
               <ResponsiveContainer width="100%" height={240}>
                 <LineChart data={trend}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -289,7 +289,7 @@ export default function ProblemManagementPage() {
             </ChartCard>
 
             <ChartCard title="Top Employees Resolving Problems">
-              {topResolvers.length === 0 ? <Empty label="Wala pang natatapos na problema." /> : (
+              {topResolvers.length === 0 ? <Empty label="No problems completed yet." /> : (
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={topResolvers} layout="vertical" margin={{ left: 8, right: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -308,7 +308,7 @@ export default function ProblemManagementPage() {
                 <p className="text-4xl font-extrabold text-slate-800 tabular-nums">
                   {stats.avgResolution.toFixed(1)}<span className="text-lg font-semibold text-slate-400 ml-1">days</span>
                 </p>
-                <p className="text-xs text-slate-400">mula sa {stats.resolvedCount} natapos na problema</p>
+                <p className="text-xs text-slate-400">from {stats.resolvedCount} completed problems</p>
               </div>
             </ChartCard>
           </div>
@@ -322,7 +322,7 @@ export default function ProblemManagementPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <div className="relative flex-1 min-w-[240px]">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input className="pl-8" value={q} placeholder="Hanapin sa title, Problem ID, o keywords…"
+                <Input className="pl-8" value={q} placeholder="Search title, Problem ID, or keywords…"
                   onChange={e => setQ(e.target.value)} />
               </div>
               <select className={SEL} value={fDept} onChange={e => setFDept(e.target.value)}>
@@ -387,7 +387,7 @@ export default function ProblemManagementPage() {
                   )}
                   {store.loaded && rows.length === 0 && (
                     <tr><td colSpan={role === "admin" ? 9 : 8} className="px-4 py-10 text-center text-sm text-slate-400 italic">
-                      Walang problemang tumutugma sa filter. I-click ang “Report a Problem” para magdagdag.
+                      No problems match the filter. Click “Report a Problem” to add one.
                     </td></tr>
                   )}
                   {rows.map(p => {
@@ -437,7 +437,7 @@ export default function ProblemManagementPage() {
             </div>
           </div>
           <p className="text-[11px] text-slate-400">
-            🟢 On Track · 🟡 Due Soon · 🔴 Overdue — i-click ang isang row para sa Root Cause Analysis, comments, at timeline.
+            🟢 On Track · 🟡 Due Soon · 🔴 Overdue — click a row for Root Cause Analysis, comments, and timeline.
           </p>
         </div>
       )}
@@ -480,8 +480,8 @@ export default function ProblemManagementPage() {
                 <p className="text-[11px] text-slate-400 font-mono mt-0.5">{confirmDel.code} · {confirmDel.department || "—"}</p>
               </div>
               <p className="text-sm text-slate-600">
-                Mabubura ang problemang ito kasama ang <strong>root cause, solusyon, comments, at buong timeline</strong> nito.
-                <strong className="text-rose-600"> Hindi na ito maibabalik.</strong>
+                This deletes the problem along with its <strong>root cause, solution, comments, and full timeline</strong>.
+                <strong className="text-rose-600"> This cannot be undone.</strong>
               </p>
             </div>
             <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
@@ -521,6 +521,6 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle?: st
     </div>
   )
 }
-const Empty = ({ label = "Wala pang datos." }: { label?: string }) => (
+const Empty = ({ label = "No data yet." }: { label?: string }) => (
   <div className="h-[240px] flex items-center justify-center text-sm text-slate-400 italic">{label}</div>
 )

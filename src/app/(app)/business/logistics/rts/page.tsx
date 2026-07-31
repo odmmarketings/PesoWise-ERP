@@ -273,15 +273,15 @@ export default function RtsItemsPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5">
             {([
               { k: "expected", label: "Expected RTS", value: num(expectedStats.total), sub: `${num(expectedStats.received)} received · ${num(expectedStats.pending)} pending`,
-                color: "bg-indigo-600", icon: Undo2, title: "Lahat ng returns na dineklara ni Pancake sa kasalukuyang date range ng table" },
+                color: "bg-indigo-600", icon: Undo2, title: "All returns Pancake declared inside the table's current date range" },
               { k: "received", label: "Received", value: num(scanStats.received), sub: `scanned · ${statRange.toLowerCase()}`,
-                color: "bg-teal-600", icon: PackageCheck, title: "Na-scan bilang Received sa napiling Scan Summary range" },
-              { k: "claims", label: "Claims", value: num(scanStats.claims), sub: scanStats.claimAmt > 0 ? peso(scanStats.claimAmt) : "walang halaga",
-                color: "bg-purple-600", icon: Receipt, title: "Mga parcel na may claim amount" },
+                color: "bg-teal-600", icon: PackageCheck, title: "Scanned as Received inside the selected Scan Summary range" },
+              { k: "claims", label: "Claims", value: num(scanStats.claims), sub: scanStats.claimAmt > 0 ? peso(scanStats.claimAmt) : "no amount",
+                color: "bg-purple-600", icon: Receipt, title: "Parcels carrying a claim amount" },
               { k: "damage", label: "Damage", value: num(scanStats.damage), sub: "pcs",
-                color: "bg-red-600", icon: AlertTriangle, title: "Bilang ng sirang piraso" },
+                color: "bg-red-600", icon: AlertTriangle, title: "Number of damaged pieces" },
               { k: "loss", label: "Loss", value: num(scanStats.loss), sub: "pcs",
-                color: "bg-amber-600", icon: PackageX, title: "Bilang ng nawawalang piraso" },
+                color: "bg-amber-600", icon: PackageX, title: "Number of missing pieces" },
             ] as const).map(c => (
               <button key={c.k} onClick={() => setStatDetail(c.k)} title={c.title}
                 className={`relative overflow-hidden ${c.color} rounded-xl px-4 py-3 h-[78px] flex items-center justify-between text-left hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-white/60 transition`}>
@@ -306,7 +306,7 @@ export default function RtsItemsPage() {
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {statDetailRows.length === 0 ? (
-                    <p className="py-12 text-center text-slate-400 text-sm">Walang record sa period na ito.</p>
+                    <p className="py-12 text-center text-slate-400 text-sm">No records in this period.</p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
@@ -363,7 +363,7 @@ export default function RtsItemsPage() {
             </select> records
           </label>
           {hasFilters && (
-            <button onClick={clearFilters} title="Burahin lahat ng filter — babalik sa default na buwan"
+            <button onClick={clearFilters} title="Clear every filter — returns to the default month"
               className="h-9 px-3 rounded-lg border border-rose-200 bg-rose-50 text-sm font-medium text-rose-600 hover:bg-rose-100 flex items-center gap-1.5">
               <X className="w-3.5 h-3.5" /> Clear filter{activeFilters > 0 ? ` (${activeFilters})` : ""}
             </button>
@@ -720,7 +720,7 @@ function ClaimsScreen({ rows, onBack, onApply }: {
           if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped++; probs.push(`${tracking} — invalid date "${String(rawDate)}" (use YYYY-MM-DD)`); continue }
           // Amount = the parcel's price from the loaded RTS list.
           const match = rows.find(r => String(r.tracking_no || "").toLowerCase() === tracking.toLowerCase())
-          if (!match) probs.push(`${tracking} — not in the loaded RTS list (claimed without an amount; widen the Order Date range para makuha ang presyo)`)
+          if (!match) probs.push(`${tracking} — not in the loaded RTS list (claimed without an amount; widen the Order Date range to pick up the price)`)
           claims.push({ tracking, amount: Number(match?.final_price || 0), ...(date ? { date } : {}) })
         }
         if (claims.length === 0) { setErr("No claims found — fill the template rows first."); setIssues(probs); setUploading(false); return }
@@ -742,7 +742,7 @@ function ClaimsScreen({ rows, onBack, onApply }: {
             <span className="text-sm text-slate-600 text-right pr-2">Template</span>
             <div>
               <button onClick={downloadClaimsTemplate} className="text-sm text-blue-600 hover:underline text-left w-fit">Click to Download Sample File</button>
-              <p className="text-[11px] text-slate-400 mt-1">Columns: TRACKING NUMBER · DATE OF CLAIM (YYYY-MM-DD). Ang claim amount = presyo ng parcel (auto).</p>
+              <p className="text-[11px] text-slate-400 mt-1">Columns: TRACKING NUMBER · DATE OF CLAIM (YYYY-MM-DD). Claim amount = the parcel's price (automatic).</p>
             </div>
           </div>
           <div className="grid grid-cols-[170px_1fr] items-center gap-3">
@@ -868,7 +868,7 @@ function CameraScanScreen({ rows, rts, onClose }: {
 
     const row = rowsRef.current.find(r => String(r.tracking_no || "").toLowerCase() === code.toLowerCase())
     const m = row ? metaRef.current[String(row.tracking_no)] : undefined
-    if (!row) { beep("error"); showBanner("err", "NOT FOUND", `${code} — wala sa RTS list (check the Order Date range)`); return }
+    if (!row) { beep("error"); showBanner("err", "NOT FOUND", `${code} — not in the RTS list (check the Order Date range)`); return }
 
     if (modeRef.current === "receive") {
       if (m?.received_at) {
@@ -939,8 +939,8 @@ function CameraScanScreen({ rows, rts, onClose }: {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
             {camState === "error" ? (
               <>
-                <p className="text-red-400 text-sm font-semibold">Hindi ma-access ang camera</p>
-                <p className="text-white/50 text-xs">{camErr}. Kailangan ng HTTPS (o localhost) + camera permission. Pwede pa ring mag-type / gumamit ng hardware scanner sa baba.</p>
+                <p className="text-red-400 text-sm font-semibold">Camera unavailable</p>
+                <p className="text-white/50 text-xs">{camErr}. Needs HTTPS (or localhost) + camera permission. You can still type or use the hardware scanner below.</p>
                 <button onClick={startCamera} className="mt-1 h-11 px-5 rounded-xl bg-white/10 text-white text-sm font-bold">Try Again</button>
               </>
             ) : (
@@ -975,7 +975,7 @@ function CameraScanScreen({ rows, rts, onClose }: {
         <div className="flex gap-2">
           <input value={manual} onChange={e => setManual(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && manual.trim()) { handleDecode(manual, true); setManual("") } }}
-            placeholder="No camera? I-type / hardware-scan ang Tracking No."
+            placeholder="No camera? Type or hardware-scan the Tracking No."
             className="flex-1 h-11 rounded-xl border border-slate-300 px-3 text-sm font-mono focus:outline-none focus:border-blue-500" />
           <button onClick={() => { if (manual.trim()) { handleDecode(manual, true); setManual("") } }}
             className="h-11 px-4 rounded-xl bg-blue-600 text-white font-bold text-sm">Go</button>
@@ -1011,16 +1011,16 @@ function CameraScanScreen({ rows, rts, onClose }: {
                 </div>
               ))}
               <input value={checkSheet.note} onChange={e => setCheckSheet(s => s ? { ...s, note: e.target.value } : s)}
-                placeholder="Note (ano ang sira / kulang — optional)"
+                placeholder="Note (what is damaged / missing — optional)"
                 className="w-full h-11 rounded-xl border border-slate-300 px-3 text-sm focus:outline-none focus:border-blue-500" />
               {checkSheet.items.some(i => i.damage > 0 || i.loss > 0) && (
-                <p className="text-xs text-rose-600 font-semibold">⚠ May damage/kulang — awtomatikong mata-tag na FOR CLAIM pag-Confirm.</p>
+                <p className="text-xs text-rose-600 font-semibold">⚠ Damage/shortage noted — tagged FOR CLAIM automatically on Confirm.</p>
               )}
             </div>
             <div className="px-4 pt-2 pb-4 border-t border-slate-100 shrink-0 space-y-2">
               <button onClick={confirmCheck}
                 className="w-full h-14 rounded-2xl bg-emerald-600 active:bg-emerald-700 text-white text-lg font-extrabold tracking-wide shadow-lg">CONFIRM ✓</button>
-              <button onClick={cancelCheck} className="w-full h-10 rounded-xl text-slate-500 text-sm font-semibold">Cancel — huwag i-save</button>
+              <button onClick={cancelCheck} className="w-full h-10 rounded-xl text-slate-500 text-sm font-semibold">Cancel — do not save</button>
             </div>
           </div>
         </div>

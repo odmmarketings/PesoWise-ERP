@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -360,7 +360,7 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
               <option value="">— none —</option>
               {cards.map(c => <option key={c.id} value={c.id}>{cardLabel(c)}</option>)}
             </select>
-            <p className="text-[11px] text-slate-400 mt-1">Saang card naka-register ang ad account na ito (Finance → Cards).</p>
+            <p className="text-[11px] text-slate-400 mt-1">Which card this ad account is registered under (Finance → Cards).</p>
           </FormRow>
           <FormRow label="Status">
             <select className={INP} value={f.status} onChange={e => set("status", e.target.value)}>

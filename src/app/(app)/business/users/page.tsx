@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useEffect } from "react"
 import {
   Users, X, Check, ChevronLeft, ChevronRight, Plus, Image as ImageIcon, Shield, Trash2,
@@ -74,7 +74,7 @@ export default function UserManagementPage() {
       onRemove={screen === "edit" && active ? () => { setScreen("list"); setConfirmDel(active) } : undefined}
       onSave={input => {
         if (screen === "edit" && active) { store.updateUser(active.id, input); flash("User updated successfully.") }
-        else { store.addUser({ ...input, username: "", enabled: false, pending: true, mother: false, allowed: [] }); flash("User added — PENDING pa ito; kailangan niyang mag-request ng access sa login page bago i-enable.") }
+        else { store.addUser({ ...input, username: "", enabled: false, pending: true, mother: false, allowed: [] }); flash("User added — still PENDING; they must request access on the login page before you enable them.") }
         setScreen("list")
       }} /></>
 
@@ -84,7 +84,7 @@ export default function UserManagementPage() {
       onSave={(mother, allowed) => { store.updateUser(active.id, { mother, allowed }); flash(`Role updated for ${active.full_name || active.username}.`); setScreen("list") }} /></>
 
   if (screen === "logo")
-    return <>{toastEl}<LogoScreen onBack={() => setScreen("list")} onSaved={() => { flash("Company logo updated — makikita na ito sa login page."); setScreen("list") }} /></>
+    return <>{toastEl}<LogoScreen onBack={() => setScreen("list")} onSaved={() => { flash("Company logo updated — it now shows on the login page."); setScreen("list") }} /></>
 
   return (
     <div className="space-y-4 relative">
@@ -98,10 +98,10 @@ export default function UserManagementPage() {
               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center shrink-0"><Check className="w-5 h-5 text-blue-600" /></div>
               <h2 className="text-lg font-bold text-slate-900">Enable access?</h2>
             </div>
-            <p className="text-sm text-slate-600">Bibigyan si <strong>{confirmEnable.full_name || confirmEnable.username}</strong> ng access sa PesoWise ERP gamit ang username na <strong>{confirmEnable.username}</strong>.</p>
+            <p className="text-sm text-slate-600">This grants <strong>{confirmEnable.full_name || confirmEnable.username}</strong> access to PesoWise ERP under the username <strong>{confirmEnable.username}</strong>.</p>
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setConfirmEnable(null)} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50">Cancel</button>
-              <button onClick={() => { store.updateUser(confirmEnable.id, { enabled: true, pending: false }); flash(`${confirmEnable.username} enabled — pwede na siyang gumamit ng ERP.`); setConfirmEnable(null) }} className="px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">Enable</button>
+              <button onClick={() => { store.updateUser(confirmEnable.id, { enabled: true, pending: false }); flash(`${confirmEnable.username} enabled — they can use the ERP now.`); setConfirmEnable(null) }} className="px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">Enable</button>
             </div>
           </div>
         </div>
@@ -115,10 +115,10 @@ export default function UserManagementPage() {
               <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0"><Trash2 className="w-5 h-5 text-red-600" /></div>
               <h2 className="text-lg font-bold text-slate-900">Remove user?</h2>
             </div>
-            <p className="text-sm text-slate-600">Ilalagay si <strong>{confirmDel.full_name || confirmDel.username}</strong> sa pending deletion. Permanente na siyang mababawi sa roster pagkalipas ng <strong>3 araw</strong> — pwede pa ring i-undo bago iyon.</p>
+            <p className="text-sm text-slate-600">This puts <strong>{confirmDel.full_name || confirmDel.username}</strong> into pending deletion. They are permanently removed from the roster after <strong>3 days</strong> — you can still undo before then.</p>
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setConfirmDel(null)} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50">Cancel</button>
-              <button onClick={() => { store.updateUser(confirmDel.id, { deleteAt: new Date(Date.now() + DELETE_GRACE_MS).toISOString() }); flash(`${confirmDel.full_name || confirmDel.username} ay ide-delete pagkalipas ng 3 araw — pwede pang i-undo.`); setConfirmDel(null) }} className="px-5 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700">Remove</button>
+              <button onClick={() => { store.updateUser(confirmDel.id, { deleteAt: new Date(Date.now() + DELETE_GRACE_MS).toISOString() }); flash(`${confirmDel.full_name || confirmDel.username} will be deleted in 3 days — you can still undo.`); setConfirmDel(null) }} className="px-5 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700">Remove</button>
             </div>
           </div>
         </div>
@@ -167,7 +167,7 @@ export default function UserManagementPage() {
             <tbody>
               {paginated.length === 0 ? (
                 <tr><td colSpan={6} className="py-12 text-center text-slate-400 text-sm">
-                  {store.users.length === 0 ? <>Walang users pa. I-click ang <strong>Add User</strong> para magdagdag.</> : "No users match the search."}
+                  {store.users.length === 0 ? <>No users yet. Click <strong>Add User</strong> to add one.</> : "No users match the search."}
                 </td></tr>
               ) : paginated.map((u, i) => (
                 <tr key={u.id} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40 ${u.deleteAt ? "opacity-50" : ""}`}>
@@ -184,7 +184,7 @@ export default function UserManagementPage() {
                     {u.deleteAt ? (
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-red-500">Deleting in {daysLeft(u.deleteAt)}d</span>
-                        <button onClick={() => { store.updateUser(u.id, { deleteAt: "" }); flash(`Na-undo ang deletion ni ${u.full_name || u.username}.`) }}
+                        <button onClick={() => { store.updateUser(u.id, { deleteAt: "" }); flash(`Deletion undone for ${u.full_name || u.username}.`) }}
                           className="h-7 px-2.5 rounded-md border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50">Undo</button>
                       </div>
                     ) : (
@@ -197,7 +197,7 @@ export default function UserManagementPage() {
                               className="h-8 px-3 rounded-md bg-teal-500 hover:bg-teal-600 text-white text-xs font-semibold">Change Role</button>
                             <button onClick={() => { if (u.enabled) { store.updateUser(u.id, { enabled: false }); flash(`${u.username} disabled.`) } else { setConfirmEnable(u) } }}
                               type="button" role="switch" aria-checked={u.enabled}
-                              title={u.enabled ? "I-click para i-disable" : "I-click para i-enable"}
+                              title={u.enabled ? "Click to disable" : "Click to enable"}
                               className="flex items-center gap-2">
                               <span className={`text-xs font-semibold w-14 ${u.enabled ? "text-blue-600" : "text-slate-400"}`}>{u.enabled ? "Enabled" : "Disabled"}</span>
                               <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${u.enabled ? "bg-blue-600" : "bg-slate-300"}`}>
@@ -229,7 +229,7 @@ export default function UserManagementPage() {
           </div>
         </div>
 
-        <p className="text-[11px] text-slate-400 mt-3">Ang username / full name / email dito ay dapat tumugma sa PesoWise account ng empleyado — iyon ang basehan ng sidebar permissions pag naka-login sila. Walang record sa roster (o Mother Account) = full access.</p>
+        <p className="text-[11px] text-slate-400 mt-3">The username / full name / email here must match the employee's PesoWise account — that is what drives their sidebar permissions once logged in. No roster record (or Mother Account) = full access.</p>
       </div>
     </div>
   )
@@ -271,7 +271,7 @@ function UserFormScreen({ mode, initial, onBack, onSave, onRemove }: {
         {mode === "edit" && (
           <F l="Username">
             <div className={`${INP} max-w-md flex items-center ${initial?.username ? "text-slate-700" : "text-slate-400 italic"}`}>
-              {initial?.username || "Not yet requested — hihintayin ang Request Access ng employee"}
+              {initial?.username || "Not yet requested — waiting on the employee to Request Access"}
             </div>
           </F>
         )}
@@ -283,7 +283,7 @@ function UserFormScreen({ mode, initial, onBack, onSave, onRemove }: {
           <HALF l="Birthdate"><input type="date" className={INP} value={f.birthdate} onChange={e => set("birthdate", e.target.value)} /></HALF>
           <HALF l="Contact Number"><input className={INP} value={f.contact} onChange={e => set("contact", e.target.value)} /></HALF>
           <HALF l="Personal Email"><input className={INP} value={f.personal_email} onChange={e => set("personal_email", e.target.value)} /></HALF>
-          <HALF l="Company Email"><input className={INP} value={f.email} onChange={e => set("email", e.target.value)} placeholder="ang email ng PesoWise account" /></HALF>
+          <HALF l="Company Email"><input className={INP} value={f.email} onChange={e => set("email", e.target.value)} placeholder="the PesoWise account email" /></HALF>
           <HALF l="Gender">
             <div className="flex items-center gap-4 h-10">
               {(["Male", "Female"] as const).map(g => (
@@ -302,7 +302,7 @@ function UserFormScreen({ mode, initial, onBack, onSave, onRemove }: {
           </HALF>
         </div>
         {mode === "add" && (
-          <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-4">Ang bagong user ay magsisimulang <strong>PENDING at DISABLED</strong> — magre-request siya ng access mula sa login page, tapos ikaw ang mag-e-ENABLE dito.</p>
+          <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-4">A new user starts <strong>PENDING and DISABLED</strong> — they request access from the login page, then you ENABLE them here.</p>
         )}
         {err && <p className="text-sm text-rose-600 mt-3">{err}</p>}
         {/* Save + Cancel — right-aligned (LHIKE 2.2) */}
@@ -401,7 +401,7 @@ function ChangeRoleScreen({ user, onBack, onSave }: {
           <div className="pl-6 mt-1.5">
             <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
               <input type="checkbox" checked={mother} onChange={e => setMother(e.target.checked)} className="accent-blue-600" />
-              Access for Mother Account <span className="text-slate-400">(lahat ng sections at pages)</span>
+              Access for Mother Account <span className="text-slate-400">(every section and page)</span>
             </label>
           </div>
         </div>
@@ -424,7 +424,7 @@ function LogoScreen({ onBack, onSaved }: { onBack: () => void; onSaved: () => vo
   function pick(f: File | null) {
     setErr("")
     if (!f) return
-    if (!/image\/(png|jpe?g)/.test(f.type)) { setErr("JPG / PNG / JPEG lang ang tinatanggap."); return }
+    if (!/image\/(png|jpe?g)/.test(f.type)) { setErr("Only JPG / PNG / JPEG are accepted."); return }
     const img = new Image()
     const url = URL.createObjectURL(f)
     img.onload = () => {
@@ -436,7 +436,7 @@ function LogoScreen({ onBack, onSaved }: { onBack: () => void; onSaved: () => vo
       URL.revokeObjectURL(url)
       setPreview(c.toDataURL("image/png"))
     }
-    img.onerror = () => { URL.revokeObjectURL(url); setErr("Hindi mabasa ang image file.") }
+    img.onerror = () => { URL.revokeObjectURL(url); setErr("Could not read the image file.") }
     img.src = url
   }
   return (
@@ -444,15 +444,15 @@ function LogoScreen({ onBack, onSaved }: { onBack: () => void; onSaved: () => vo
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"><ChevronLeft className="w-4 h-4" /> Back to User Management</button>
       <div className="bg-white rounded-2xl border border-slate-200 p-6 max-w-2xl">
         <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2 pb-4 mb-4 border-b border-slate-100"><ImageIcon className="w-5 h-5" /> EDIT / UPLOAD COMPANY LOGO</h1>
-        <p className="text-sm text-slate-500 mb-4">Ang logo na ito ay makikita sa <strong>login page</strong> ng ERP. Tinatanggap: jpg, png, jpeg.</p>
+        <p className="text-sm text-slate-500 mb-4">This logo appears on the ERP <strong>login page</strong>. Accepted: jpg, png, jpeg.</p>
         <div className="grid sm:grid-cols-2 gap-4 mb-5">
           <div className="rounded-xl border border-slate-200 p-4 text-center">
             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-2">Current Logo</p>
-            {current ? <img src={current} alt="Current logo" className="max-h-28 mx-auto object-contain" /> : <p className="text-sm text-slate-300 py-8">Wala pang logo</p>}
+            {current ? <img src={current} alt="Current logo" className="max-h-28 mx-auto object-contain" /> : <p className="text-sm text-slate-300 py-8">No logo yet</p>}
           </div>
           <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 text-center">
             <p className="text-[10px] uppercase tracking-wider text-blue-500 mb-2">New Logo Preview</p>
-            {preview ? <img src={preview} alt="New logo preview" className="max-h-28 mx-auto object-contain" /> : <p className="text-sm text-slate-300 py-8">Pumili ng file</p>}
+            {preview ? <img src={preview} alt="New logo preview" className="max-h-28 mx-auto object-contain" /> : <p className="text-sm text-slate-300 py-8">Choose a file</p>}
           </div>
         </div>
         <label className="inline-flex items-center gap-2 cursor-pointer">

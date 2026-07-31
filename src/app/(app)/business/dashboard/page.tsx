@@ -456,7 +456,7 @@ export default function BusinessDashboardPage() {
           { label: "ON-DELIVERY", sub: "On-Delivery, Delivering", count: agg.onDelivery, amount: agg.onDeliverySales, color: "bg-orange-500", pct: null, icon: Truck },
           { label: "DELIVERED", sub: null, count: agg.delivered, amount: agg.deliveredSales, color: "bg-purple-500", pct: deliveredPct, icon: Package },
           { label: "FOR RETURN", sub: "Returning — pabalik palang", count: agg.returning, amount: agg.returningSales, color: "bg-orange-400", pct: null, icon: RotateCcw },
-          { label: "RETURNED", sub: "Nakabalik na sa warehouse", count: agg.returned, amount: agg.returnedSales, color: "bg-red-500", pct: null, icon: XCircle },
+          { label: "RETURNED", sub: "Back in the warehouse", count: agg.returned, amount: agg.returnedSales, color: "bg-red-500", pct: null, icon: XCircle },
           { label: "TOTAL RTS", sub: null, count: totalRTS, amount: totalRTSSales, color: "bg-red-600", pct: rtsPct, icon: ArrowDownUp },
         ].map(card => {
           // In-Transit / On-Delivery come from the slower full phase — show a spinner until ready

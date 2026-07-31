@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState, useMemo, useRef, useEffect, Fragment } from "react"
 import { ChevronDown, Check, Search, X, RefreshCw, Activity, ArrowDownUp, BarChart3, CalendarDays } from "lucide-react"
 import { format, eachDayOfInterval, subDays } from "date-fns"
@@ -627,7 +627,7 @@ export default function ROASTrackerPage() {
       {/* No active pages sa system */}
       {allPages.length === 0 && !loading && (
         <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
-          <p className="text-gray-400 text-sm font-medium">Walang active na page — magdagdag sa Pages & Store.</p>
+          <p className="text-gray-400 text-sm font-medium">No active pages — add one in Pages & Store.</p>
         </div>
       )}
 
@@ -651,7 +651,7 @@ export default function ROASTrackerPage() {
                       <th className="px-4 py-2.5 text-right">Sales</th>
                       <th className="px-4 py-2.5 text-right cursor-pointer select-none hover:bg-slate-700"
                         onClick={() => setRoasSort(s => s === "desc" ? "asc" : "desc")}
-                        title="I-click para i-sort (highest ↔ lowest)">
+                        title="Click to sort (highest ↔ lowest)">
                         <span className="inline-flex items-center gap-1">
                           ROAS <ArrowDownUp className="w-3.5 h-3.5 opacity-80" />
                         </span>
@@ -660,7 +660,7 @@ export default function ROASTrackerPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {pageReport.length === 0 && (
-                      <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">Walang page na may ad spend o sales sa range na ito.</td></tr>
+                      <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">No page has ad spend or sales in this range.</td></tr>
                     )}
                     {pageReport.map(({ page, parcels, adspent, vat, sales, roas }, i) => {
                       const clr = colorForPage(page.id, colors)
@@ -668,7 +668,7 @@ export default function ROASTrackerPage() {
                         <tr key={page.id} className={`hover:bg-blue-50/40 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
                           <td className="px-4 py-2.5 border-l-4 whitespace-nowrap" style={{ borderColor: clr }}>
                             <div className="flex items-center gap-2.5">
-                              <label className="relative w-3 h-3 rounded-full flex-shrink-0 cursor-pointer ring-1 ring-black/10" style={{ background: clr }} title="Palitan ang kulay">
+                              <label className="relative w-3 h-3 rounded-full flex-shrink-0 cursor-pointer ring-1 ring-black/10" style={{ background: clr }} title="Change the colouy">
                                 <input type="color" value={clr} onChange={e => setColor(page.id, e.target.value)}
                                   className="absolute inset-0 opacity-0 cursor-pointer" />
                               </label>
@@ -707,7 +707,7 @@ export default function ROASTrackerPage() {
                 </table>
               </div>
               <p className="px-4 py-2 text-[11px] text-slate-400 border-t border-slate-100">
-                ROAS = Sales ÷ Ad Spend · ⬤ swatch para palitan ang kulay · click ROAS header para i-sort · mga may spent/sales lang ang nakalista.
+                ROAS = Sales ÷ Ad Spend · ⬤ swatch changes the colour · click the ROAS header to sort · only pages with spend or sales are listed.
               </p>
               </div>
               <YesterdayCompare today={compare.today} yest={compare.yest} />
@@ -717,7 +717,7 @@ export default function ROASTrackerPage() {
           {tab === "daily" && renderedPages.length === 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
               <p className="text-gray-400 text-sm font-medium">
-                Pumili ng pages sa <strong>Filter Page</strong> at pindutin ang <strong>Submit</strong> para sa per-araw na breakdown.
+                Pick pages under <strong>Filter Page</strong> and press <strong>Submit</strong> for the per-day breakdown.
               </p>
             </div>
           )}

@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -76,17 +76,17 @@ export function ProblemDetailModal({ problem, users, role, editable, onClose, on
 
   async function save(extra: Partial<NewProblemInput> = {}) {
     setSaving(true); setErr("")
-    try { await onSave({ ...d, ...extra }) } catch (e: any) { setErr(e?.message || "Hindi na-save.") }
+    try { await onSave({ ...d, ...extra }) } catch (e: any) { setErr(e?.message || "Could not save.") }
     setSaving(false)
   }
 
   /** Employee → isinusumite para sa approval. Manager/Admin → diretsong isinasara. */
   async function complete() {
-    if (blockers.length) { setErr(`Kailangan muna: ${blockers.join(", ")}.`); return }
+    if (blockers.length) { setErr(`Required first: ${blockers.join(", ")}.`); return }
     if (canApprove) {
       setSaving(true)
       try { await onSave({ ...d, actual_completion_date: todayStr() }); await onApprove() }
-      catch (e: any) { setErr(e?.message || "Hindi na-complete.") }
+      catch (e: any) { setErr(e?.message || "Could not complete.") }
       setSaving(false)
     } else {
       set("status", "Waiting for Approval")
@@ -151,17 +151,17 @@ export function ProblemDetailModal({ problem, users, role, editable, onClose, on
             </div>
 
             <RcaStep step={1} label="Cause" color="#f97316" disabled={ro} value={d.cause}
-              hint="Ano ang agad na naging dahilan?" onChange={v => set("cause", v)} />
+              hint="What was the immediate cause?" onChange={v => set("cause", v)} />
             <RcaStep step={2} label="Root Cause" color="#dc2626" disabled={ro} value={d.root_cause}
-              hint="Bakit ito nangyari — ang tunay na pinag-ugatan (hindi lang sintomas)." onChange={v => set("root_cause", v)} />
+              hint="Why it happened — the true root, not just the symptom." onChange={v => set("root_cause", v)} />
             <RcaStep step={3} label="Proposed Solution" color="#2563eb" disabled={ro} value={d.solution}
-              hint="Ano ang gagawin para maayos ito?" onChange={v => set("solution", v)} />
+              hint="What will be done to fix it?" onChange={v => set("solution", v)} />
             <RcaStep step={4} label="Action Plan" color="#0891b2" disabled={ro} value={d.action_plan}
-              hint="Mga hakbang, sino ang gagawa, at kailan." onChange={v => set("action_plan", v)} />
+              hint="Steps, who does them, and when." onChange={v => set("action_plan", v)} />
             <RcaStep step={5} label="Corrective Action" color="#7c3aed" disabled={ro} value={d.corrective_action}
-              hint="Ang ginawa para maitama ang kasalukuyang isyu." onChange={v => set("corrective_action", v)} />
+              hint="What was done to correct the current issue." onChange={v => set("corrective_action", v)} />
             <RcaStep step={6} label="Preventive Action" color="#059669" disabled={ro} value={d.preventive_action}
-              hint="Para hindi na ito maulit pa." onChange={v => set("preventive_action", v)} />
+              hint="So it does not happen again." onChange={v => set("preventive_action", v)} />
 
             {/* Completion */}
             <div className="rounded-xl border border-slate-200 p-4 space-y-3">
@@ -171,13 +171,13 @@ export function ProblemDetailModal({ problem, users, role, editable, onClose, on
               {blockers.length > 0 && !isClosed(d.status) && (
                 <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>Bago maisara, kailangan muna: <strong>{blockers.join(", ")}</strong>. (Ang Evidence ay opsyonal pero inirerekomenda.)</span>
+                  <span>Before closing, these are required: <strong>{blockers.join(", ")}</strong>. (Evidence is optional but recommended.)</span>
                 </div>
               )}
               <div>
                 <label className="text-sm text-slate-600">Completion Notes</label>
                 <textarea rows={2} className={`${AREA} mt-1`} value={d.completion_notes} disabled={ro}
-                  placeholder="Ano ang naging resulta?" onChange={e => set("completion_notes", e.target.value)} />
+                  placeholder="What was the outcome?" onChange={e => set("completion_notes", e.target.value)} />
               </div>
               <AttachmentBox label="Completion Evidence" files={d.evidence} folder={`${problem.id}/evidence`}
                 disabled={ro} onChange={next => set("evidence", next)} />
@@ -203,7 +203,7 @@ export function ProblemDetailModal({ problem, users, role, editable, onClose, on
 
         {tab === "timeline" && (
           <ul className="space-y-2">
-            {thread.activity.length === 0 && <li className="text-sm text-slate-400 italic">Wala pang naitalang galaw.</li>}
+            {thread.activity.length === 0 && <li className="text-sm text-slate-400 italic">No activity recorded yet.</li>}
             {thread.activity.map(a => (
               <li key={a.id} className="flex items-start gap-3 rounded-lg border border-slate-200 px-3 py-2">
                 <Clock className="w-4 h-4 text-slate-300 mt-0.5 flex-shrink-0" />
@@ -288,7 +288,7 @@ function Comments({ thread, users, problemId }: {
 
   return (
     <div className="space-y-3">
-      {roots.length === 0 && <p className="text-sm text-slate-400 italic">Wala pang usapan dito.</p>}
+      {roots.length === 0 && <p className="text-sm text-slate-400 italic">No discussion here yet.</p>}
       {roots.map(c => (
         <div key={c.id} className="space-y-2">
           <Bubble c={c} />
@@ -306,7 +306,7 @@ function Comments({ thread, users, problemId }: {
             <button onClick={() => setReplyTo(null)} className="text-blue-600 hover:underline ml-1">cancel</button>
           </p>
         )}
-        <textarea rows={3} className={AREA} value={body} placeholder="Magdagdag ng komento…"
+        <textarea rows={3} className={AREA} value={body} placeholder="Add a comment…"
           onChange={e => setBody(e.target.value)} />
         <div className="relative flex items-center gap-2 flex-wrap">
           <button onClick={() => setShowMention(s => !s)}
@@ -321,7 +321,7 @@ function Comments({ thread, users, problemId }: {
                   {u.full_name || u.email}
                 </button>
               ))}
-              {mentionable.length === 0 && <p className="px-3 py-2 text-xs text-slate-400 italic">Walang aktibong user.</p>}
+              {mentionable.length === 0 && <p className="px-3 py-2 text-xs text-slate-400 italic">No active users.</p>}
             </div>
           )}
           {mentions.length > 0 && <span className="text-[11px] text-slate-400">{mentions.length} mention(s)</span>}

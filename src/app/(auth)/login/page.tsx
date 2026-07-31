@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -49,10 +49,10 @@ export default function LoginPage() {
     const email = req.email.trim()
     const username = req.username.trim()
     if (!employeeId || !fullName || !email || !username || !req.password || !req.confirmPassword || !req.question || !req.answer.trim()) {
-      setReqError("Kompletuhin ang lahat ng fields."); return
+      setReqError("Please complete every field."); return
     }
-    if (req.password.length < 8) { setReqError("Password dapat hindi bababa sa 8 characters."); return }
-    if (req.password !== req.confirmPassword) { setReqError("Hindi magkatugma ang Password at Re-type Password."); return }
+    if (req.password.length < 8) { setReqError("Password must be at least 8 characters."); return }
+    if (req.password !== req.confirmPassword) { setReqError("Password and Re-type Password do not match."); return }
     setReqSubmitting(true)
     try {
       const res = await fetch("/api/auth/request-access", {
@@ -61,9 +61,9 @@ export default function LoginPage() {
         body: JSON.stringify({ employeeNo: employeeId, fullName, email, username, password: req.password }),
       })
       const data = await res.json()
-      if (!res.ok) { setReqError(data.error || "May problema sa pag-request — subukan ulit."); return }
+      if (!res.ok) { setReqError(data.error || "Something went wrong with the request — please try again."); return }
       setReqDone(true)
-    } catch { setReqError("May problema sa pag-request — subukan ulit.") } finally { setReqSubmitting(false) }
+    } catch { setReqError("Something went wrong with the request — please try again.") } finally { setReqSubmitting(false) }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -124,7 +124,7 @@ export default function LoginPage() {
       <div className="space-y-4">
         <div>
           <Label htmlFor="employeeId">Employee No.</Label>
-          <Input id="employeeId" placeholder="hal. U-3" className="mt-1" value={req.employeeId} onChange={e => setR("employeeId", e.target.value)} disabled={reqDone} />
+          <Input id="employeeId" placeholder="e.g. U-3" className="mt-1" value={req.employeeId} onChange={e => setR("employeeId", e.target.value)} disabled={reqDone} />
         </div>
         <div>
           <Label htmlFor="fullName">Full Name</Label>
@@ -132,11 +132,11 @@ export default function LoginPage() {
         </div>
         <div>
           <Label htmlFor="reqEmail">Company Email</Label>
-          <Input id="reqEmail" type="email" placeholder="juan@company.com — ito ang gagamitin mong login" className="mt-1" value={req.email} onChange={e => setR("email", e.target.value)} disabled={reqDone} />
+          <Input id="reqEmail" type="email" placeholder="juan@company.com — this is your login" className="mt-1" value={req.email} onChange={e => setR("email", e.target.value)} disabled={reqDone} />
         </div>
         <div>
           <Label htmlFor="reqUsername">Username</Label>
-          <Input id="reqUsername" placeholder="pipiliin mong username" className="mt-1" value={req.username} onChange={e => setR("username", e.target.value)} disabled={reqDone} />
+          <Input id="reqUsername" placeholder="choose a username" className="mt-1" value={req.username} onChange={e => setR("username", e.target.value)} disabled={reqDone} />
         </div>
         <div>
           <Label htmlFor="reqPassword">Password</Label>

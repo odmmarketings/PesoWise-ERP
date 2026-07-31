@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import * as XLSX from "xlsx-js-style"
@@ -79,7 +79,7 @@ function CourierBadge({ courier, tracking }: { courier: string; tracking?: strin
   const l = courierOf(courier, tracking)
   return (
     <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold"
-      style={{ background: `${COURIER_COLOR[l]}1a`, color: COURIER_COLOR[l] }} title={courier || "mula sa tracking prefix"}>
+      style={{ background: `${COURIER_COLOR[l]}1a`, color: COURIER_COLOR[l] }} title={courier || "from tracking prefix"}>
       <span className="w-1.5 h-1.5 rounded-full" style={{ background: COURIER_COLOR[l] }} /> {l}
     </span>
   )
@@ -233,7 +233,7 @@ export default function PpwPage() {
             <ScanBarcode className="w-5 h-5" /> PENDING PRINTED WAYBILL (PPW)
           </h1>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Mga parcel na may nakadikit nang waybill pero hindi pa nakukuha ng courier · {pagesWithCreds.length} page{pagesWithCreds.length === 1 ? "" : "s"}
+            Parcels with a printed waybill that the courier has not collected yet · {pagesWithCreds.length} page{pagesWithCreds.length === 1 ? "" : "s"}
           </p>
         </div>
         <button onClick={() => load(true)} title="Refresh"
@@ -286,15 +286,15 @@ export default function PpwPage() {
           <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex items-center gap-4 flex-wrap">
             <span className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-slate-400" /> Aging</span>
             {[
-              { l: "Ngayon lang", v: ppw.aging.fresh, c: "bg-emerald-50 text-emerald-700" },
-              { l: "1–2 araw", v: ppw.aging.mid, c: "bg-amber-50 text-amber-700" },
-              { l: "3+ araw (stale)", v: ppw.aging.stale, c: "bg-rose-50 text-rose-700" },
+              { l: "Today only", v: ppw.aging.fresh, c: "bg-emerald-50 text-emerald-700" },
+              { l: "1–2 days", v: ppw.aging.mid, c: "bg-amber-50 text-amber-700" },
+              { l: "3+ days (stale)", v: ppw.aging.stale, c: "bg-rose-50 text-rose-700" },
             ].map(x => (
               <span key={x.l} className={`px-3 py-1 rounded-full text-xs font-bold ${x.c}`}>{x.l}: {num(x.v)}</span>
             ))}
             {ppw.aging.stale > 0 && (
               <span className="text-[11px] text-rose-600 flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5" /> May {num(ppw.aging.stale)} parcel na 3+ araw nang naka-waybill pero hindi pa nakukuha.
+                <AlertTriangle className="w-3.5 h-3.5" /> {num(ppw.aging.stale)} parcels have carried a waybill for 3+ days and are still uncollected.
               </span>
             )}
             <div className="ml-auto">
@@ -324,7 +324,7 @@ export default function PpwPage() {
                   {!loading && ppw.count === 0 && (
                     <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400 italic">
                       <CheckCircle2 className="w-5 h-5 text-emerald-500 inline mr-1.5" />
-                      Walang naiwang PPW — nakuha lahat ng courier. 🎉
+                      No PPW left — the courier collected everything. 🎉
                     </td></tr>
                   )}
                   {ppw.list.map(r => (
@@ -357,8 +357,8 @@ export default function PpwPage() {
             </div>
           </div>
           <p className="text-[11px] text-slate-400">
-            PPW = may tracking/waybill na PERO hindi pa umaabot sa Shipped. Snapshot ito ng KASALUKUYAN
-            (hinihila ang huling {PPW_LOOKBACK_DAYS} araw), kaya hindi ito apektado ng date filter ng FP tab.
+            PPW = has a tracking/waybill BUT has not reached Shipped. This is a snapshot of RIGHT NOW
+            (pulls the last {PPW_LOOKBACK_DAYS} days), so the FP tab date filter does not affect it.
           </p>
         </div>
       )}
@@ -369,7 +369,7 @@ export default function PpwPage() {
           <div className="bg-white rounded-xl border border-slate-200 p-3 flex items-center gap-2 flex-wrap">
             <DateRangePicker a={fpFrom} b={fpTo} variant="header"
               onApply={(a, b) => { setFpFrom(a || monthStart()); setFpTo(b || dstr(new Date())) }} placeholder="This month" />
-            <span className="text-xs text-slate-400">{fpFrom} → {fpTo} · base sa petsang naipadala sa courier</span>
+            <span className="text-xs text-slate-400">{fpFrom} → {fpTo} · based on the date handed to the courier</span>
             <div className="ml-auto">
               <Button variant="outline" onClick={exportFp} disabled={fp.count === 0}>
                 <FileSpreadsheet className="w-4 h-4" /> Export
@@ -401,7 +401,7 @@ export default function PpwPage() {
           <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex items-center gap-3 flex-wrap">
             <Search className="w-4 h-4 text-blue-600 flex-shrink-0" />
             <p className="text-sm text-slate-700">
-              <strong>Scan cross-check:</strong> {num(scanCheck.hit)} sa {num(scanCheck.total)} na fulfilled parcel ang may katumbas na Shipped Out scan
+              <strong>Scan cross-check:</strong> {num(scanCheck.hit)} of {num(scanCheck.total)} fulfilled parcels have a matching Shipped Out scan
             </p>
             <div className="flex-1 min-w-[140px] h-2.5 bg-slate-100 rounded-full overflow-hidden">
               <div className="h-full rounded-full" style={{ width: `${Math.min(100, scanCheck.pct)}%`, background: scanCheck.pct >= 90 ? "#10b981" : scanCheck.pct >= 50 ? "#f59e0b" : "#ef4444" }} />
@@ -411,8 +411,8 @@ export default function PpwPage() {
 
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100">
-              <p className="text-sm font-bold text-slate-800">Araw-araw na Fulfilled Parcels</p>
-              <p className="text-[11px] text-slate-400">Ilan ang naipadala kada courier bawat araw</p>
+              <p className="text-sm font-bold text-slate-800">Daily Fulfilled Parcels</p>
+              <p className="text-[11px] text-slate-400">How many were dispatched per courier each day</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] text-sm border-collapse">
@@ -441,7 +441,7 @@ export default function PpwPage() {
                 <tbody className="divide-y divide-slate-100">
                   {loading && <tr><td colSpan={3 + shownCouriers.length * 2} className="p-0"><TableSkeleton rows={5} cols={5} /></td></tr>}
                   {!loading && fp.days.length === 0 && (
-                    <tr><td colSpan={3 + shownCouriers.length * 2} className="px-4 py-10 text-center text-sm text-slate-400 italic">Walang naipadalang parcel sa range na ito.</td></tr>
+                    <tr><td colSpan={3 + shownCouriers.length * 2} className="px-4 py-10 text-center text-sm text-slate-400 italic">No parcels dispatched in this range.</td></tr>
                   )}
                   {fp.days.map((d, i) => (
                     <tr key={d.date} className={`${i % 2 ? "bg-slate-50/60" : "bg-white"} hover:bg-blue-50/40`}>

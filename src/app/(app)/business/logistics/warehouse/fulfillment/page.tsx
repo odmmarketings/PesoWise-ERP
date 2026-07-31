@@ -404,7 +404,7 @@ export default function FulfillmentPage() {
         if (!j.success) throw new Error(j.error || "Failed")
         // Ipakita ang tracking number — iyon ang tunay na patunay na may waybill na.
         // Dating "Success" lang ang nakasulat kahit walang nabuong waybill.
-        results.push({ id: r.id, ok: true, msg: j.tracking ? `OK · ${j.tracking}` : "OK (walang tracking na naibalik)" })
+        results.push({ id: r.id, ok: true, msg: j.tracking ? `OK · ${j.tracking}` : "OK (no tracking returned)" })
       } catch (e: any) { results.push({ id: r.id, ok: false, msg: e?.message || "Failed" }) }
       setSendProg({ total: target.length, done: i + 1, running: i + 1 < target.length, results: [...results] })
     }
@@ -524,7 +524,7 @@ export default function FulfillmentPage() {
           </label>
           <div className="flex items-center gap-2">
             {hasFilters && (
-              <button onClick={clearFilters} title="Burahin lahat ng filter (pati Group)"
+              <button onClick={clearFilters} title="Clear every filter, including Group"
                 className="h-9 px-3 rounded-lg border border-rose-200 bg-rose-50 text-sm font-medium text-rose-600 hover:bg-rose-100 flex items-center gap-1.5">
                 <X className="w-3.5 h-3.5" /> Clear filter{activeFilters > 0 ? ` (${activeFilters})` : ""}
               </button>
@@ -543,22 +543,22 @@ export default function FulfillmentPage() {
         {sel.size > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
             <span className="font-semibold text-blue-700">
-              {nfmt(sel.size)} {sel.size === 1 ? "order" : "orders"} ang napili
+              {nfmt(sel.size)} {sel.size === 1 ? "order" : "orders"} selected
             </span>
             {allFilteredSel ? (
-              <span className="text-blue-600">— lahat ng {nfmt(filtered.length)} sa filter na ito.</span>
+              <span className="text-blue-600">— all {nfmt(filtered.length)} in this filter.</span>
             ) : pageAllSel && filtered.length > paginated.length ? (
               <>
-                <span className="text-slate-500">— itong page lang.</span>
+                <span className="text-slate-500">— this page only.</span>
                 <button onClick={() => setSel(new Set(filtered.map(r => r.id)))}
                   className="font-semibold text-blue-600 underline underline-offset-2 hover:text-blue-800">
-                  Piliin lahat ng {nfmt(filtered.length)}
+                  Select all {nfmt(filtered.length)}
                 </button>
               </>
             ) : null}
             <button onClick={() => setSel(new Set())}
               className="ml-auto text-slate-500 underline underline-offset-2 hover:text-slate-700">
-              Alisin ang pili
+              Clear selection
             </button>
           </div>
         )}
@@ -639,7 +639,7 @@ export default function FulfillmentPage() {
         <div className="flex items-center justify-between flex-wrap gap-2 mt-3 text-sm text-slate-600">
           <span>
             Showing {showFrom} to {showTo} of {nfmt(filtered.length)} entries
-            {sel.size > 0 && <span className="font-semibold text-blue-600"> · {nfmt(sel.size)} napili</span>}
+            {sel.size > 0 && <span className="font-semibold text-blue-600"> · {nfmt(sel.size)} selected</span>}
           </span>
           <div className="flex items-center gap-1">
             <button disabled={pageSafe <= 1} onClick={() => setPage(p => p - 1)} className="w-8 h-8 rounded border border-slate-300 flex items-center justify-center disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
@@ -723,8 +723,8 @@ function GroupPicker({ value, onChange, pages, counts }: {
           <div className="fixed inset-0 z-[45]" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-[46] w-[340px] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
             <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Packaging kada page</span>
-              <span className="text-[11px] text-slate-400">{withWork} sa {items.length} may laman</span>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Packaging per page</span>
+              <span className="text-[11px] text-slate-400">{withWork} of {items.length} have work</span>
             </div>
             <div className="max-h-[340px] overflow-y-auto py-1">
               <button onClick={() => { onChange("ALL"); setOpen(false) }}

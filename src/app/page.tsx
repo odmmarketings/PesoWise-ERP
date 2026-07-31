@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -137,9 +137,9 @@ const plans = [
 ]
 
 const testimonials = [
-  { name: "Marco S.", role: "Freelancer, Cebu", text: "Grabe, dati hindi ko alam saan napupunta pera ko. PesoWise literally changed how I manage my income. Yung AI chat feature — sulit na sulit!" },
-  { name: "Janelle R.", role: "Business Owner, Manila", text: "Yung Business ERP mode is what sold me. Sales tracker + ROAS in one place. Hindi na kailangan ng maraming apps!" },
-  { name: "Carlo M.", role: "OFW, Dubai", text: "Screenshot lang ng bank statement ko tapos updated na agad ang savings tracker. Perfect for tracking remittances." },
+  { name: "Marco S.", role: "Freelancer, Cebu", text: "Before this I had no idea where the money was going. PesoWise changed how I run the numbers day to day." },
+  { name: "Janelle R.", role: "Business Owner, Manila", text: "The ERP is what sold me. Sales tracker and ROAS in one place — no more juggling five apps." },
+  { name: "Carlo M.", role: "OFW, Dubai", text: "One screenshot of the billing page and the ledger is updated. That alone saves me an hour a week." },
 ]
 
 export default function LandingPage() {
@@ -180,11 +180,11 @@ export default function LandingPage() {
             🇵🇭 Built for Filipinos
           </div>
           <h1 className="text-4xl md:text-6xl font-bold leading-tight mb-6">
-            Pamahalaan ang Pera Mo
+            Run Your Business
             <span className="block text-green-400 mt-2">The Smart Way</span>
           </h1>
           <p className="text-xl text-slate-300 max-w-2xl mx-auto mb-10">
-            Buong business ERP sa isang app — sales, logistics, inventory, ad spend, at bookkeeping. Gawa para sa Philippine COD sellers.
+            A complete business ERP in one app — sales, logistics, inventory, ad spend, and bookkeeping. Built for Philippine COD sellers.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Button size="xl" asChild>
@@ -204,7 +204,7 @@ export default function LandingPage() {
       <section id="features" className="py-20 px-4 bg-slate-50">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
-            <h2 className="text-3xl font-bold text-slate-900 mb-3">Everything you need, wala nang iba</h2>
+            <h2 className="text-3xl font-bold text-slate-900 mb-3">Everything you need, nothing you don't</h2>
             <p className="text-slate-500 max-w-xl mx-auto">From daily expense tracking to full business ERP — PesoWise handles it all.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

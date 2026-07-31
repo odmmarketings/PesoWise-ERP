@@ -285,7 +285,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
         </div>
         {showCharts && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
-            <ChartBox title="Inventory Value per Product" subtitle="Top 10 — saan nakatali ang pera">
+            <ChartBox title="Inventory Value per Product" subtitle="Top 10 — where the money is tied up">
               {valueByProduct.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={valueByProduct} layout="vertical" margin={{ left: 8, right: 16 }}>
@@ -298,7 +298,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
                 </ResponsiveContainer>
               )}
             </ChartBox>
-            <ChartBox title="Remaining Qty per Product" subtitle="Top 10 — pisikal na piraso sa warehouse">
+            <ChartBox title="Remaining Qty per Product" subtitle="Top 10 — physical pieces in the warehouse">
               {qtyByProduct.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={qtyByProduct} layout="vertical" margin={{ left: 8, right: 16 }}>
@@ -311,7 +311,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
                 </ResponsiveContainer>
               )}
             </ChartBox>
-            <ChartBox title="Stock Health per Product" subtitle="Natitira vs nailabas vs sira/nawala (top 10 by intake)">
+            <ChartBox title="Stock Health per Product" subtitle="Remaining vs released vs damaged/lost (top 10 by intake)">
               {stockHealth.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={stockHealth}>
@@ -327,7 +327,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
                 </ResponsiveContainer>
               )}
             </ChartBox>
-            <ChartBox title={`Manual Releases Trend (last ${TREND_DAYS} days)`} subtitle="Units na inilabas via Stocks module kada araw">
+            <ChartBox title={`Manual Releases Trend (last ${TREND_DAYS} days)`} subtitle="Units released via the Stocks module each day">
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={recent.trend}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -351,8 +351,8 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
                 </ResponsiveContainer>
               )}
             </ChartBox>
-            <ChartBox title="Damage / Loss Rate" subtitle="% ng pinasok na nasira o nawala — pinakamataas muna">
-              {damageRates.length === 0 ? <Empty label="Walang naitalang damage/loss. 🎉" /> : (
+            <ChartBox title="Damage / Loss Rate" subtitle="% of intake damaged or lost — highest first">
+              {damageRates.length === 0 ? <Empty label="No damage or loss recorded. 🎉" /> : (
                 <div className="space-y-1.5 pt-1">
                   {damageRates.map(({ item, rate, cost }) => (
                     <div key={item.id} className="flex items-center gap-2 text-sm">
@@ -377,10 +377,10 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4 text-amber-500" />
             <p className="text-sm font-bold text-slate-800">Low Stock Alert</p>
-            <span className="text-[11px] text-slate-400">· ubos na o ≤ {LOW_PCT * 100}% na lang ng pinasok</span>
+            <span className="text-[11px] text-slate-400">· out of stock, or ≤ {LOW_PCT * 100}% of intake left</span>
           </div>
           {lowStock.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-slate-400 italic">Walang paubos na stock. 👍</p>
+            <p className="px-4 py-6 text-sm text-slate-400 italic">Nothing running low. 👍</p>
           ) : (
             <table className="w-full text-sm">
               <tbody className="divide-y divide-slate-100">
@@ -412,10 +412,10 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
             <Skull className="w-4 h-4 text-slate-400" />
             <p className="text-sm font-bold text-slate-800">Dead Stock</p>
-            <span className="text-[11px] text-slate-400">· may laman pero walang labas sa huling {TREND_DAYS} araw</span>
+            <span className="text-[11px] text-slate-400">· has stock but no movement in the last {TREND_DAYS} days</span>
           </div>
           {deadStock.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-slate-400 italic">Lahat ng may stock ay gumagalaw. 🎉</p>
+            <p className="px-4 py-6 text-sm text-slate-400 italic">Everything with stock is moving. 🎉</p>
           ) : (
             <table className="w-full text-sm">
               <tbody className="divide-y divide-slate-100">
@@ -443,8 +443,8 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
               <ScanSearch className="w-4 h-4 text-blue-600" /> Stock-Out Audit — Manual vs Pancake POS
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Kinukumpara ang MANUAL na inilabas (Stocks module) laban sa dapat lumabas ayon sa Pancake
-              (lahat ng na-SHIPPED OUT sa range, hinati sa unit-code recipes).
+              Compares what was released MANUALLY (Stocks module) against what should have gone out per Pancake
+              (everything SHIPPED OUT in the range, split by unit-code recipes).
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -458,7 +458,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
 
         {!audit && !auditing && (
           <p className="px-4 py-8 text-sm text-slate-400 italic text-center">
-            Pindutin ang <strong>Run Audit</strong> para i-pull ang shipped-out orders mula sa Pancake at ikumpara sa manual releases.
+            Press <strong>Run Audit</strong> to pull shipped-out orders from Pancake and compare them against manual releases.
           </p>
         )}
 
@@ -480,7 +480,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
 
             {/* Per-product comparison */}
             {audit.rows.length === 0 ? (
-              <p className="text-sm text-slate-400 italic py-4 text-center">Walang stock-out (manual man o Pancake) sa range na ito.</p>
+              <p className="text-sm text-slate-400 italic py-4 text-center">No stock-out (manual or Pancake) in this range.</p>
             ) : (
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <div className="overflow-x-auto">
@@ -528,7 +528,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
             {audit.unmapped.length > 0 && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
                 <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> {audit.unmapped.length} order item name{audit.unmapped.length === 1 ? "" : "s"} ang WALANG katugmang unit code o product item — hindi kasama sa audit:
+                  <AlertTriangle className="w-3.5 h-3.5" /> {audit.unmapped.length} order item name{audit.unmapped.length === 1 ? "" : "s"} have NO matching unit code or product item — hindi kasama sa audit:
                 </p>
                 <p className="text-[11px] text-amber-700 mt-1">
                   {audit.unmapped.slice(0, 10).map(u => `${u.name} (${num(u.qty)})`).join(" · ")}
@@ -538,8 +538,8 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
             )}
 
             <p className="text-[11px] text-slate-400">
-              Paalala: ang “Manual Released” ay galing sa Stocks-module release log — ang mga direktang in-edit sa
-              item form (hindi dumaan sa Stocks Update) ay hindi kasama sa bilang.
+              Note: “Manual Released” comes from the Stocks-module release log — anything edited directly in the
+              item form (not through Stocks Update) is not counted.
             </p>
           </div>
         )}
@@ -557,7 +557,7 @@ function ChartBox({ title, subtitle, children }: { title: string; subtitle?: str
     </div>
   )
 }
-const Empty = ({ label = "Wala pang datos." }: { label?: string }) => (
+const Empty = ({ label = "No data yet." }: { label?: string }) => (
   <div className="h-[220px] flex items-center justify-center text-sm text-slate-400 italic">{label}</div>
 )
 

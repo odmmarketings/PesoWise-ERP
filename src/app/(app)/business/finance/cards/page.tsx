@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -71,10 +71,10 @@ function CardFormModal({ initial, onClose, onSave }: {
 
   async function pickQr(file?: File | null) {
     if (!file) return
-    try { set("qr_data", await fileToDataUrl(file)) } catch { setErr("Hindi mabasa ang QR image — subukan ang ibang file.") }
+    try { set("qr_data", await fileToDataUrl(file)) } catch { setErr("Could not read the QR image — try another file.") }
   }
   function submit() {
-    if (!f.name.trim() || !f.account_number.trim() || !f.provider) { setErr("Kailangan ang Account Name, Account Number, at Card type."); return }
+    if (!f.name.trim() || !f.account_number.trim() || !f.provider) { setErr("Account Name, Account Number, and Card type are required."); return }
     onSave({ ...f, name: f.name.trim(), account_number: f.account_number.trim() })
   }
 
@@ -91,15 +91,15 @@ function CardFormModal({ initial, onClose, onSave }: {
         </div>
         <div>
           <label className="text-sm text-slate-600">Account Name <span className="text-red-500">*</span></label>
-          <Input className="mt-1" value={f.name} placeholder="Pangalan sa card/wallet" onChange={e => set("name", e.target.value)} />
+          <Input className="mt-1" value={f.name} placeholder="Name on the card/wallet" onChange={e => set("name", e.target.value)} />
         </div>
         <div>
           <label className="text-sm text-slate-600">Username</label>
-          <Input className="mt-1" value={f.username} placeholder="Login username ng app/wallet" onChange={e => set("username", e.target.value)} />
+          <Input className="mt-1" value={f.username} placeholder="App/wallet login username" onChange={e => set("username", e.target.value)} />
         </div>
         <div>
           <label className="text-sm text-slate-600">Card Number</label>
-          <Input className="mt-1" value={f.card_number} placeholder="16-digit number sa card" onChange={e => set("card_number", e.target.value)} />
+          <Input className="mt-1" value={f.card_number} placeholder="16-digit number on the card" onChange={e => set("card_number", e.target.value)} />
         </div>
         <div>
           <label className="text-sm text-slate-600">Account Number <span className="text-red-500">*</span></label>
@@ -183,9 +183,9 @@ export default function FinanceCardsPage() {
         )}
 
         {store.cards.length === 0 ? (
-          <p className="text-sm text-slate-400 italic py-10 text-center">Wala pang cards — i-click ang “Add Card” para magdagdag.</p>
+          <p className="text-sm text-slate-400 italic py-10 text-center">No cards yet — click “Add Card” to add one.</p>
         ) : visibleCards.length === 0 ? (
-          <p className="text-sm text-slate-400 italic py-10 text-center">Walang {filter} cards.</p>
+          <p className="text-sm text-slate-400 italic py-10 text-center">No {filter} cards.</p>
         ) : (
           <div className="rounded-xl border border-slate-200 overflow-hidden">
             <div className="overflow-x-auto">
@@ -280,11 +280,11 @@ export default function FinanceCardsPage() {
       {confirmDelete && (
         <Modal title="Delete Card" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
           <div className="px-6 py-5 text-sm text-slate-700">
-            Sigurado ka bang buburahin ang <span className="font-semibold">{confirmDelete.provider} — {confirmDelete.name}</span>?
+            Delete <span className="font-semibold">{confirmDelete.provider} — {confirmDelete.name}</span>?
             {connectedCount(confirmDelete.id) > 0 && (
               <p className="text-xs text-amber-600 mt-2 flex items-start gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                Naka-link pa ito sa {connectedCount(confirmDelete.id)} ad account(s) — mawawalan sila ng card reference.
+                Still linked to {connectedCount(confirmDelete.id)} ad account(s) — they will lose their card reference.
               </p>
             )}
           </div>

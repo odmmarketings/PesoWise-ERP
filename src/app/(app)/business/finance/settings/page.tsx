@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -156,12 +156,12 @@ function BanksTab({ fs }: { fs: FS }) {
       {confirmDelete && (
         <Modal title="Delete Bank" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
           <div className="px-6 py-5 text-sm text-slate-700">
-            Sigurado ka bang buburahin ang <span className="font-semibold">{confirmDelete.name}</span>?
-            <p className="text-xs text-slate-500 mt-2">Mawawala ang bank card nito sa Finance Overview at sa mga dropdown ng lahat ng users; mag-a-adjust din ang Actual Company Fund. Hindi nito babaguhin ang mga dating Book Keeping entries.</p>
+            Delete <span className="font-semibold">{confirmDelete.name}</span>?
+            <p className="text-xs text-slate-500 mt-2">Its bank card disappears from Finance Overview and from every user's dropdowns; it also adjusts the Actual Company Fund. Hindi nito babaguhin ang mga dating Book Keeping entries.</p>
             {linkedAccounts.length > 0 && (
               <p className="text-xs text-amber-600 mt-2 flex items-start gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                Nakatali pa ito sa {linkedAccounts.length} account{linkedAccounts.length > 1 ? "s" : ""} ({linkedAccounts.join(", ")}) — i-reassign mo sila sa Accounts tab pagkatapos.
+                Still tied to {linkedAccounts.length} account{linkedAccounts.length > 1 ? "s" : ""} ({linkedAccounts.join(", ")}) — reassign them under Accounts tab pagkatapos.
               </p>
             )}
           </div>
@@ -213,8 +213,8 @@ function DepartmentsTab({ fs }: { fs: FS }) {
       {confirmDelete && (
         <Modal title="Delete Department" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
           <div className="px-6 py-5 text-sm text-slate-700">
-            Sigurado ka bang buburahin ang <span className="font-semibold">{confirmDelete.name}</span>?
-            <p className="text-xs text-slate-500 mt-2">Mawawala ito sa mga dropdown para sa lahat ng users. Hindi nito babaguhin ang mga dating Book Keeping entries na gumamit nito.</p>
+            Delete <span className="font-semibold">{confirmDelete.name}</span>?
+            <p className="text-xs text-slate-500 mt-2">It disappears from every user's dropdowns. It does not change existing Book Keeping entries na gumamit nito.</p>
           </div>
           <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
@@ -463,8 +463,8 @@ function AccountsTab({ fs }: { fs: FS }) {
       {confirmDelete && (
         <Modal title="Delete Account" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
           <div className="px-6 py-5 text-sm text-slate-700">
-            Sigurado ka bang buburahin ang account na <span className="font-semibold">{confirmDelete.name}</span>?
-            <p className="text-xs text-slate-500 mt-2">Mawawala ang tab nito sa Book Keeping at sa Account dropdown ng lahat ng users. Hindi nito babaguhin ang mga dating Book Keeping entries na naka-post dito.</p>
+            Delete the account <span className="font-semibold">{confirmDelete.name}</span>?
+            <p className="text-xs text-slate-500 mt-2">Its tab disappears from Book Keeping and from every user's Account dropdown. It does not change existina dating Book Keeping entries na naka-post dito.</p>
           </div>
           <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>

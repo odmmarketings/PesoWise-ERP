@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useMemo, useRef, useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,7 +23,7 @@ function daysAgo(n: number) { const d = new Date(); d.setDate(d.getDate() - n); 
 function relTime(iso: string): string {
   const then = new Date(iso).getTime()
   const mins = Math.round((Date.now() - then) / 60000)
-  if (mins < 1) return "kakalang lang"
+  if (mins < 1) return "just now"
   if (mins < 60) return `${mins} min ago`
   const hrs = Math.round(mins / 60)
   if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`
@@ -153,7 +153,7 @@ export default function FbBillingPage() {
               recorded_txn_id: null,
             }
             const saveErr = await billing.saveRecord(rec)
-            if (saveErr) { msgs.push(`${a.name}: hindi ma-save ang record (${saveErr}).`); break }
+            if (saveErr) { msgs.push(`${a.name}: could not save the record (${saveErr}).`); break }
             byKey.set(`${acct}|${date}`, rec)
             added++
           }
@@ -164,8 +164,8 @@ export default function FbBillingPage() {
 
       await billing.refresh()
       msgs.unshift(added > 0 || corrected > 0
-        ? `${added} bagong araw${corrected > 0 ? `, ${corrected} na-update (settling)` : ""} — analytics data.`
-        : "Up to date ang daily analytics.")
+        ? `${added} new day${added === 1 ? "" : "s"}${corrected > 0 ? `, ${corrected} updated (settling)` : ""} — analytics data.`
+        : "Daily analytics is up to date.")
     } finally {
       setNotes(msgs)
       setSyncing(false)
@@ -178,7 +178,7 @@ export default function FbBillingPage() {
     if (autoRan.current || !fs.loaded || !billing.loaded || !paid.loaded || eligible.length === 0) return
     autoRan.current = true
     sync()
-    paid.recoverUnrecorded(dept).then(n => { if (n > 0) setNotes(p => [`${n} Paid charge(s) na-recover sa Book Keeping.`, ...p]) })
+    paid.recoverUnrecorded(dept).then(n => { if (n > 0) setNotes(p => [`${n} Paid charge(s) recovered into Book Keeping.`, ...p]) })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fs.loaded, billing.loaded, paid.loaded, eligible.length])
 
@@ -280,12 +280,12 @@ export default function FbBillingPage() {
 
         <p className="text-xs text-slate-500 mb-3">
           {tab === "paid" ? (
-            <>Ang mga aktwal na <span className="font-semibold">“Paid”</span> charges mula sa Facebook Billing — eksaktong sinisingil sa card.
-              ITO ang naka-post sa Book Keeping (account: “{FB_ADS_ACCOUNT}”), kaya 1:1 ang ledger sa bank statement.
-              I-add manually, mag-send ng screenshot kay Claude, o hintayin ang browser sync.</>
+            <>The actual <span className="font-semibold">“Paid”</span> charges from Facebook Billing — exactly what the card was billed.
+              THIS is what posts to Book Keeping (account: “{FB_ADS_ACCOUNT}”), so the ledger matches the bank statement 1:1.
+              Add one manually, send a screenshot to Claude, or wait for the browser sync.</>
           ) : (
-            <>Daily media cost mula sa Meta + 12% VAT — <span className="font-semibold">pang-analytics lang</span> (ROAS, spend trends).
-              HINDI ito nagpo-post sa Book Keeping; ang Paid Charges tab ang ledger. {eligible.length} ad account{eligible.length === 1 ? "" : "s"} monitored.</>
+            <>Daily media cost from Meta + 12% VAT — <span className="font-semibold">analytics only</span> (ROAS, spend trends).
+              This does NOT post to Book Keeping; the Paid Charges tab is the ledger. {eligible.length} ad account{eligible.length === 1 ? "" : "s"} monitored.</>
           )}
         </p>
 
@@ -309,7 +309,7 @@ export default function FbBillingPage() {
                   <tr><td colSpan={8} className="text-center py-10 text-slate-400">Loading…</td></tr>
                 ) : visiblePaid.length === 0 ? (
                   <tr><td colSpan={8} className="text-center py-10 text-slate-400">
-                    Wala pang Paid charges sa filter na ito — i-click ang “Add Paid Charge”, o mag-send ng billing screenshot kay Claude.
+                    No Paid charges in this filter yet — click “Add Paid Charge”, or send a billing screenshot to Claude.
                   </td></tr>
                 ) : visiblePaid.map(c => {
                   const card = cardById[c.matched_card_id]
@@ -322,7 +322,7 @@ export default function FbBillingPage() {
                         {card ? (
                           <span className="inline-flex items-center gap-1.5 text-slate-700"><CreditCard className="w-3.5 h-3.5 text-blue-500" /> {card.provider} — {card.name}</span>
                         ) : c.card_last4 ? (
-                          <span className="inline-flex items-center gap-1.5 text-amber-600" title="Walang tumugmang card sa registry"><AlertTriangle className="w-3.5 h-3.5" /> Unmatched (*{c.card_last4})</span>
+                          <span className="inline-flex items-center gap-1.5 text-amber-600" title="No matching card in the registry"><AlertTriangle className="w-3.5 h-3.5" /> Unmatched (*{c.card_last4})</span>
                         ) : "—"}
                       </td>
                       <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{c.bank || "—"}</td>
@@ -364,7 +364,7 @@ export default function FbBillingPage() {
                 {!billing.loaded ? (
                   <tr><td colSpan={9} className="text-center py-10 text-slate-400">Loading…</td></tr>
                 ) : visibleDaily.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-10 text-slate-400">Walang records sa filter na ito.</td></tr>
+                  <tr><td colSpan={9} className="text-center py-10 text-slate-400">No records in this filter.</td></tr>
                 ) : visibleDaily.map(r => {
                   const card = cardById[r.matched_card_id]
                   return (
@@ -410,8 +410,8 @@ export default function FbBillingPage() {
           onSave={async input => {
             const res = await paid.addCharge({ ...input, department: dept, source: "manual" })
             setShowAdd(false)
-            setNotes(res === "added" ? ["Paid charge na-record sa Book Keeping."]
-              : res === "duplicate" ? ["Duplicate — naka-record na ang charge na ito (hindi dinoble)."]
+            setNotes(res === "added" ? ["Paid charge recorded in Book Keeping."]
+              : res === "duplicate" ? ["Duplicate — this charge is already recorded (not double-posted)."]
                 : [`Error: ${res}`])
           }} />
       )}
@@ -424,8 +424,8 @@ export default function FbBillingPage() {
               <button onClick={() => setConfirmDelete(null)} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
             </div>
             <div className="px-6 py-5 text-sm text-slate-700">
-              Buburahin ang <span className="font-semibold">{peso(confirmDelete.amount)}</span> ({confirmDelete.billing_account}, {confirmDelete.paid_date})
-              — pati ang naka-link na Book Keeping entry nito.
+              This deletes <span className="font-semibold">{peso(confirmDelete.amount)}</span> ({confirmDelete.billing_account}, {confirmDelete.paid_date})
+              — along with its linked Book Keeping entry.
             </div>
             <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
@@ -456,8 +456,8 @@ function AddPaidChargeModal({ cards, accountNames, bankFor, onClose, onSave }: {
 
   function submit() {
     const amount = parseFloat(f.amount)
-    if (!f.paid_date || !(amount > 0) || !f.billing_account.trim()) { setErr("Kailangan ang Paid date, Amount, at Billing Account."); return }
-    if (!f.card_id) { setErr("Piliin ang card na sininingil — ito ang magdidikta ng bank sa Book Keeping."); return }
+    if (!f.paid_date || !(amount > 0) || !f.billing_account.trim()) { setErr("Paid date, Amount, and Billing Account are required."); return }
+    if (!f.card_id) { setErr("Select the card that was billed — it decides the bank in Book Keeping."); return }
     onSave({
       paid_date: f.paid_date, amount, billing_account: f.billing_account.trim(),
       card_last4: last4, payment_method: last4 ? `Visa ···· ${last4}` : (card?.provider || ""),
@@ -486,7 +486,7 @@ function AddPaidChargeModal({ cards, accountNames, bankFor, onClose, onSave }: {
           </div>
           <div>
             <label className="text-sm text-slate-600">Billing Account <span className="text-red-500">*</span></label>
-            <Input list="paid-accounts" className="mt-1" placeholder="hal. Cystcare-Bukol" value={f.billing_account} onChange={e => set("billing_account", e.target.value)} />
+            <Input list="paid-accounts" className="mt-1" placeholder="e.g. Cystcare-Bukol" value={f.billing_account} onChange={e => set("billing_account", e.target.value)} />
             <datalist id="paid-accounts">{accountNames.map(n => <option key={n} value={n} />)}</datalist>
           </div>
           <div>
@@ -495,12 +495,12 @@ function AddPaidChargeModal({ cards, accountNames, bankFor, onClose, onSave }: {
               <option value="">-- SELECT CARD --</option>
               {cards.map(c => <option key={c.id} value={c.id}>{cardLabel(c)}</option>)}
             </select>
-            {card && <p className="text-xs text-slate-500 mt-1">Bank sa Book Keeping: <span className="font-semibold">{bank || "walang tumugmang bank — i-check ang Settings → Banks"}</span></p>}
+            {card && <p className="text-xs text-slate-500 mt-1">Bank in Book Keeping: <span className="font-semibold">{bank || "no matching bank — check thg Settings → Banks"}</span></p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm text-slate-600">Reference no. (optional)</label>
-              <Input className="mt-1" placeholder="Transaction ID sa FB" value={f.reference_no} onChange={e => set("reference_no", e.target.value)} />
+              <Input className="mt-1" placeholder="FB transaction ID" value={f.reference_no} onChange={e => set("reference_no", e.target.value)} />
             </div>
             <div>
               <label className="text-sm text-slate-600">Notes</label>

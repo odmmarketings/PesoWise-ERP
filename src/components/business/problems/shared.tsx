@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { X, Paperclip, Loader2, Trash2, FileText, ImageIcon, Film, Sheet } from "lucide-react"
 import { useRef, useState } from "react"
 import { uploadProblemFile, type Attachment } from "@/lib/problems-store"
@@ -66,7 +66,7 @@ export function AttachmentBox({ files, folder, onChange, disabled, label = "Atta
     const added: Attachment[] = []
     for (const f of Array.from(list)) {
       try { added.push(await uploadProblemFile(f, folder)) }
-      catch (e: any) { setErr(e?.message || "Hindi na-upload ang file.") }
+      catch (e: any) { setErr(e?.message || "File upload failed.") }
     }
     if (added.length) onChange([...files, ...added])
     setBusy(false)
@@ -89,7 +89,7 @@ export function AttachmentBox({ files, folder, onChange, disabled, label = "Atta
         accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" />
       {err && <p className="text-xs text-red-600 mt-1">{err}</p>}
       {files.length === 0 ? (
-        <p className="text-xs text-slate-400 italic mt-1.5">Wala pang naka-attach.</p>
+        <p className="text-xs text-slate-400 italic mt-1.5">Nothing attached yet.</p>
       ) : (
         <ul className="mt-1.5 space-y-1">
           {files.map((f, i) => {

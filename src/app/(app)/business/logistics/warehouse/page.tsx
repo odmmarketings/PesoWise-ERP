@@ -329,7 +329,7 @@ export default function WarehouseDashboardPage() {
 
       {/* Pipeline — kulay ng Pancake status */}
       <div>
-        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Order Pipeline · sa loob ng napiling range</p>
+        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Order Pipeline · within the selected range</p>
         {loading && rows.length === 0 ? (
           <StatCardsSkeleton count={6} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5" />
         ) : (
@@ -373,13 +373,13 @@ export default function WarehouseDashboardPage() {
       <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex items-center gap-3 flex-wrap">
         <ScanBarcode className="w-4 h-4 text-blue-600 flex-shrink-0" />
         <p className="text-sm text-slate-700">
-          <strong>Scan coverage:</strong> {num(coverage.hit)} sa {num(coverage.total)} na umalis na parcel ang dumaan sa Shipped Out scanner
+          <strong>Scan coverage:</strong> {num(coverage.hit)} of {num(coverage.total)} dispatched parcels went through the Shipped Out scanner
         </p>
         <div className="flex-1 min-w-[140px] h-2.5 bg-slate-100 rounded-full overflow-hidden">
           <div className="h-full rounded-full" style={{ width: `${Math.min(100, coverage.pct)}%`, background: coverage.pct >= 90 ? "#10b981" : coverage.pct >= 50 ? "#f59e0b" : "#ef4444" }} />
         </div>
         <span className={`text-sm font-bold tabular-nums ${coverage.pct >= 90 ? "text-emerald-600" : coverage.pct >= 50 ? "text-amber-600" : "text-rose-600"}`}>{coverage.pct.toFixed(0)}%</span>
-        <span className="text-[11px] text-slate-400">· {num(scansInRange.length)} scan{scansInRange.length === 1 ? "" : "s"} sa range</span>
+        <span className="text-[11px] text-slate-400">· {num(scansInRange.length)} scan{scansInRange.length === 1 ? "" : "s"} in range</span>
       </div>
 
       {/* ── SUMMARY MATRIX ── */}
@@ -387,7 +387,7 @@ export default function WarehouseDashboardPage() {
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
           <div>
             <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><ClipboardList className="w-4 h-4 text-blue-600" /> Pipeline Summary per Page</p>
-            <p className="text-[11px] text-slate-400 mt-0.5">Bilang ng order kada status · {win.from} → {win.to} · hindi kasama ang Delivered / Cancelled (labas na sa pipeline)</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Order count per status · {win.from} → {win.to} · excludes Delivered / Cancelled (already out of the pipeline)</p>
           </div>
           <Button variant="outline" onClick={exportSummary} disabled={summary.grand === 0} className="h-8 text-xs">
             <FileSpreadsheet className="w-3.5 h-3.5" /> Export
@@ -396,7 +396,7 @@ export default function WarehouseDashboardPage() {
         {loading && rows.length === 0 ? (
           <TableSkeleton rows={6} cols={7} />
         ) : summary.cols.length === 0 ? (
-          <p className="px-4 py-8 text-sm text-slate-400 italic text-center">Walang order sa pipeline para sa range na ito.</p>
+          <p className="px-4 py-8 text-sm text-slate-400 italic text-center">No orders in the pipeline for this range.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
@@ -455,7 +455,7 @@ export default function WarehouseDashboardPage() {
         </div>
         {showCharts && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
-            <ChartBox title="Orders by Status" subtitle="Saan nakabara ang pipeline">
+            <ChartBox title="Orders by Status" subtitle="Where the pipeline is backing up">
               {byStatus.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height={270}>
                   <BarChart data={byStatus} layout="vertical" margin={{ left: 8, right: 16 }}>
@@ -471,7 +471,7 @@ export default function WarehouseDashboardPage() {
               )}
             </ChartBox>
 
-            <ChartBox title="Pipeline per Page" subtitle="Top 8 — bisuwal na bersyon ng summary sa itaas">
+            <ChartBox title="Pipeline per Page" subtitle="Top 8 — visual version of the summary above">
               {pipelineByPage.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height={270}>
                   <BarChart data={pipelineByPage}>
@@ -489,7 +489,7 @@ export default function WarehouseDashboardPage() {
               )}
             </ChartBox>
 
-            <ChartBox title="Shipped Out Scans (last 14 days)" subtitle="Bilang ng parcels na na-scan palabas kada araw">
+            <ChartBox title="Shipped Out Scans (last 14 days)" subtitle="Parcels scanned out per day">
               <ResponsiveContainer width="100%" height={250}>
                 <LineChart data={scanTrend}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -524,10 +524,10 @@ export default function WarehouseDashboardPage() {
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
             <Users className="w-4 h-4 text-blue-600" />
             <p className="text-sm font-bold text-slate-800">Packer Leaderboard</p>
-            <span className="text-[11px] text-slate-400">· packages packed sa range</span>
+            <span className="text-[11px] text-slate-400">· packages packed in range</span>
           </div>
           {packers.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-slate-400 italic">Walang packed-date annotations sa range — i-assign ang packer + packed date sa Fulfillment.</p>
+            <p className="px-4 py-6 text-sm text-slate-400 italic">No packed-date annotations in range — assign a packer + packed date in Fulfillment.</p>
           ) : (
             <table className="w-full text-sm">
               <tbody className="divide-y divide-slate-100">
@@ -550,10 +550,10 @@ export default function WarehouseDashboardPage() {
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4 text-amber-500" />
             <p className="text-sm font-bold text-slate-800">Fulfillment Backlog</p>
-            <span className="text-[11px] text-slate-400">· hindi pa nakakalabas ng bodega, pinakamatanda muna</span>
+            <span className="text-[11px] text-slate-400">· still in the warehouse, oldest first</span>
           </div>
           {backlog.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-slate-400 italic flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Walang backlog — lahat ng orders ay gumagalaw. 🎉</p>
+            <p className="px-4 py-6 text-sm text-slate-400 italic flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> No backlog — every order is moving. 🎉</p>
           ) : (
             <table className="w-full text-sm">
               <tbody className="divide-y divide-slate-100">
@@ -593,6 +593,6 @@ function ChartBox({ title, subtitle, children }: { title: string; subtitle?: str
     </div>
   )
 }
-const Empty = ({ label = "Wala pang datos." }: { label?: string }) => (
+const Empty = ({ label = "No data yet." }: { label?: string }) => (
   <div className="h-[230px] flex items-center justify-center text-sm text-slate-400 italic">{label}</div>
 )

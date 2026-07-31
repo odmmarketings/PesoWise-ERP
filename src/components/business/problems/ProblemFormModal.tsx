@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -44,9 +44,9 @@ export function ProblemFormModal({ initial, departments, users, onClose, onSave 
     [users])
 
   async function submit() {
-    if (!f.title.trim()) { setErr("Kailangan ang Problem Title."); return }
-    if (!f.department) { setErr("Pumili ng Department."); return }
-    if (!f.owner_email) { setErr("Pumili ng Assigned User (Owner)."); return }
+    if (!f.title.trim()) { setErr("Problem Title is required."); return }
+    if (!f.department) { setErr("Select a Department."); return }
+    if (!f.owner_email) { setErr("Select an Assigned User (Owner)."); return }
     setSaving(true)
     try {
       const owner = assignable.find(u => u.email === f.owner_email)
@@ -65,7 +65,7 @@ export function ProblemFormModal({ initial, departments, users, onClose, onSave 
       })
       onClose()
     } catch (e: any) {
-      setErr(e?.message || "Hindi na-save.")
+      setErr(e?.message || "Could not save.")
       setSaving(false)
     }
   }
@@ -78,7 +78,7 @@ export function ProblemFormModal({ initial, departments, users, onClose, onSave 
   return (
     <Modal
       title={initial ? `Edit ${initial.code}` : "Report a Problem"}
-      subtitle={initial ? initial.title : "Bawat problema ay may may-ari, deadline, at katayuan."}
+      subtitle={initial ? initial.title : "Every problem has an owner, a deadline, and a status."}
       icon={ClipboardList} onClose={onClose}
       footer={
         <div className="flex items-center gap-3">
@@ -95,12 +95,12 @@ export function ProblemFormModal({ initial, departments, users, onClose, onSave 
         )}
 
         <Field label="Problem Title" required>
-          <Input value={f.title} placeholder="Maikling pamagat ng isyu" onChange={e => set("title", e.target.value)} />
+          <Input value={f.title} placeholder="Short title for the issue" onChange={e => set("title", e.target.value)} />
         </Field>
 
         <Field label="Detailed Description">
           <textarea rows={4} className={AREA} value={f.description}
-            placeholder="Ano ang nangyari? Kailan nagsimula? Sino/ano ang apektado?"
+            placeholder="What happened? When did it start? Who or what is affected?"
             onChange={e => set("description", e.target.value)} />
         </Field>
 
@@ -119,7 +119,7 @@ export function ProblemFormModal({ initial, departments, users, onClose, onSave 
           </Field>
         </div>
 
-        <Field label="Supporting Users" hint="Opsyonal — makakakita at makakapag-update din sila ng problemang ito.">
+        <Field label="Supporting Users" hint="Optional — they can also view and update this problem.">
           <div className="rounded-lg border border-slate-200 max-h-32 overflow-auto divide-y divide-slate-100">
             {assignable.filter(u => u.email !== f.owner_email).map(u => (
               <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-slate-50 cursor-pointer">
@@ -128,13 +128,13 @@ export function ProblemFormModal({ initial, departments, users, onClose, onSave 
                 {u.position && <span className="text-xs text-slate-400">· {u.position}</span>}
               </label>
             ))}
-            {assignable.length === 0 && <p className="px-3 py-2 text-xs text-slate-400 italic">Walang aktibong user sa roster.</p>}
+            {assignable.length === 0 && <p className="px-3 py-2 text-xs text-slate-400 italic">No active users in the roster.</p>}
           </div>
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Reported By">
-            <Input value={f.reported_by} placeholder="Sino ang nag-report" onChange={e => set("reported_by", e.target.value)} />
+            <Input value={f.reported_by} placeholder="Who reported it" onChange={e => set("reported_by", e.target.value)} />
           </Field>
           <Field label="Date Reported">
             <input type="date" className={INPUT} value={f.date_reported} onChange={e => set("date_reported", e.target.value)} />

@@ -82,7 +82,7 @@ function CourierBadge({ courier, tracking }: { courier: string; tracking?: strin
   const st = COURIER_STYLE[l]
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.bg} ${st.text}`}
-      title={courier || "mula sa tracking prefix"}>
+      title={courier || "from tracking prefix"}>
       <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.dot }} />
       {l}
     </span>
@@ -188,7 +188,7 @@ export default function ShippedOutPage() {
     const row = byTracking.get(key)
     if (!row) {
       beep("error")
-      showBanner({ kind: "err", title: "NOT FOUND", sub: `${code} — wala sa loaded orders (i-check ang Order Date range sa taas)` })
+      showBanner({ kind: "err", title: "NOT FOUND", sub: `${code} — not in the loaded orders (check the Order Date range above)` })
       return
     }
 
@@ -218,7 +218,7 @@ export default function ShippedOutPage() {
     })
     if (res === "duplicate") {
       setBusy(false); beep("error")
-      showBanner({ kind: "err", title: "ALREADY SCANNED", sub: `${code} — naitala na (ibang device/tab).` })
+      showBanner({ kind: "err", title: "ALREADY SCANNED", sub: `${code} — already recorded (another device/tab).` })
       return
     }
     if (res !== "added") {
@@ -238,10 +238,10 @@ export default function ShippedOutPage() {
     setManual("")
     if (items.length === 0) {
       beep("warn")
-      showBanner({ kind: "warn", title: "SCANNED — WALANG NA-LESS", sub: `${code} — walang unit code/product na tumugma sa "${row.order_item}". Naitala pa rin ang scan.` })
+      showBanner({ kind: "warn", title: "SCANNED — NOTHING DEDUCTED", sub: `${code} — no unit code/product matched "${row.order_item}". The scan was still recorded.` })
     } else {
       beep("ok")
-      showBanner({ kind: "ok", title: "SHIPPED OUT ✓", sub: `${code} · ${row.customer_name || ""} — nabawas: ${items.map(i => `${num(i.deducted)}× ${i.name}`).join(", ")}${unmapped.length ? ` · walang match: ${unmapped.join(", ")}` : ""}` })
+      showBanner({ kind: "ok", title: "SHIPPED OUT ✓", sub: `${code} · ${row.customer_name || ""} — deducted: ${items.map(i => `${num(i.deducted)}× ${i.name}`).join(", ")}${unmapped.length ? ` · no match: ${unmapped.join(", ")}` : ""}` })
     }
     inputRef.current?.focus()
   }
@@ -268,7 +268,7 @@ export default function ShippedOutPage() {
   }), [repScans])
 
   function exportReport() {
-    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Less sa Inventory (units)", "Amount", "Scanned By"]
+    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Deducted from Inventory (units)", "Amount", "Scanned By"]
     const data = [headers, ...repScans.map(s => [
       fmtDT(s.created_at), s.tracking_no, courierLabel(s.courier, s.tracking_no), s.page_name, s.customer, s.order_item,
       s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.deducted_total, s.amount, s.scanned_by,
@@ -327,7 +327,7 @@ export default function ShippedOutPage() {
               <input ref={inputRef} autoFocus value={manual} spellCheck={false}
                 onChange={e => setManual(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && manual.trim()) handleScan(manual) }}
-                placeholder="I-type, i-hardware-scan, o buksan ang camera"
+                placeholder="Type, hardware-scan, or open the camera"
                 className="h-11 rounded-lg border border-slate-300 px-3 text-sm font-mono focus:outline-none focus:border-blue-500" />
             </div>
             <div className="flex items-center gap-2 pt-4 flex-wrap">
@@ -340,8 +340,8 @@ export default function ShippedOutPage() {
               </Button>
             </div>
             <p className="text-[11px] text-slate-400 mt-4">
-              {loading ? "Loading orders mula sa Pancake…" : `${num(rows.length)} order${rows.length === 1 ? "" : "s"} ang naka-load (${win.from} → ${win.to}) mula sa ${pagesWithCreds.length} page${pagesWithCreds.length === 1 ? "" : "s"}.`}
-              {" "}Kapag na-scan, awtomatikong mababawas ang inventory via unit-code recipe at maitatala sa release history.
+              {loading ? "Loading orders from Pancake…" : `${num(rows.length)} order${rows.length === 1 ? "" : "s"} loaded (${win.from} → ${win.to}) mula sa ${pagesWithCreds.length} page${pagesWithCreds.length === 1 ? "" : "s"}.`}
+              {" "}On scan, inventory is deducted automatically via the unit-code recipe and written to release history.
             </p>
           </div>
 
@@ -359,7 +359,7 @@ export default function ShippedOutPage() {
               </div>
             </div>
             <div className="max-h-[380px] overflow-auto divide-y divide-slate-100">
-              {todayScans.length === 0 && <p className="px-4 py-6 text-sm text-slate-400 italic text-center">Wala pang na-scan ngayong araw.</p>}
+              {todayScans.length === 0 && <p className="px-4 py-6 text-sm text-slate-400 italic text-center">Nothing scanned yet today.</p>}
               {todayScans.map(s => (
                 <div key={s.id} className="px-4 py-2 flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
@@ -450,7 +450,7 @@ export default function ShippedOutPage() {
                     <th className="px-4 py-3 text-left">Customer</th>
                     <th className="px-4 py-3 text-left">Order</th>
                     <th className="px-4 py-3 text-left">Item Name</th>
-                    <th className="px-4 py-3 text-right">Less sa Inventory</th>
+                    <th className="px-4 py-3 text-right">Deducted from Inventory</th>
                     <th className="px-4 py-3 text-right">Amount</th>
                     <th className="px-4 py-3 text-left">Scanned By</th>
                   </tr>
@@ -458,7 +458,7 @@ export default function ShippedOutPage() {
                 <tbody className="divide-y divide-slate-100">
                   {!store.loaded && <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400 italic">Loading…</td></tr>}
                   {store.loaded && repScans.length === 0 && (
-                    <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400 italic">Walang na-scan sa range na ito.</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400 italic">Nothing scanned in this range.</td></tr>
                   )}
                   {repScans.map(s => (
                     <tr key={s.id} className="hover:bg-slate-50/70">
@@ -482,7 +482,7 @@ export default function ShippedOutPage() {
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
                         {s.deducted_total > 0
                           ? <span className="font-semibold text-slate-800 tabular-nums">{num(s.deducted_total)} unit{s.deducted_total === 1 ? "" : "s"}</span>
-                          : <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700">walang match</span>}
+                          : <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700">no match</span>}
                       </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums font-semibold text-slate-800">
                         {s.amount > 0 ? peso(s.amount) : <span className="text-slate-300">—</span>}
@@ -582,8 +582,8 @@ function CameraScanOverlay({ onDecode, onClose }: { onDecode: (code: string) => 
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
             {state === "error" ? (
               <>
-                <p className="text-red-400 text-sm font-semibold">Hindi ma-access ang camera</p>
-                <p className="text-white/50 text-xs">{err}. Kailangan ng HTTPS + camera permission. Pwede pa ring mag-type / hardware scanner.</p>
+                <p className="text-red-400 text-sm font-semibold">Camera unavailable</p>
+                <p className="text-white/50 text-xs">{err}. Needs HTTPS + camera permission. You can still type or use a hardware scanner.</p>
                 <button onClick={start} className="mt-1 h-11 px-5 rounded-xl bg-white/10 text-white text-sm font-bold">Try Again</button>
               </>
             ) : (
@@ -595,7 +595,7 @@ function CameraScanOverlay({ onDecode, onClose }: { onDecode: (code: string) => 
           </div>
         )}
       </div>
-      <p className="text-center text-white/40 text-xs py-3 shrink-0">Itutok lang sa waybill barcode — awtomatikong mag-be-beep at magbabawas sa inventory.</p>
+      <p className="text-center text-white/40 text-xs py-3 shrink-0">Point at the waybill barcode — it beeps and deducts inventory automatically.</p>
     </div>
   )
 }

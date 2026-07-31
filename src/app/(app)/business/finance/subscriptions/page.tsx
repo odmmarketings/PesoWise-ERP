@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -50,7 +50,7 @@ function SubFormModal({ initial, defaultAccount, onClose, onSave }: {
 
   function submit() {
     const amount = Number(f.amount)
-    if (!f.name.trim() || !amount || amount <= 0 || !f.account) { setErr("Kailangan ang Name, Amount (PHP), at Account."); return }
+    if (!f.name.trim() || !amount || amount <= 0 || !f.account) { setErr("Name, Amount (PHP), and Account are required."); return }
     onSave({
       name: f.name, amount, billing_day: Number(f.billing_day) || 1, cycle: f.cycle,
       billing_month: f.cycle === "yearly" ? Number(f.billing_month) || 1 : null,
@@ -130,7 +130,7 @@ function SubFormModal({ initial, defaultAccount, onClose, onSave }: {
         </div>
         <div>
           <label className="text-sm text-slate-600">Notes</label>
-          <Input className="mt-1" value={f.notes} placeholder="Optional (hal. plan, seats)" onChange={e => set("notes", e.target.value)} />
+          <Input className="mt-1" value={f.notes} placeholder="Optional (e.g. plan, seats)" onChange={e => set("notes", e.target.value)} />
         </div>
       </div>
       <div className="flex items-center gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50">
@@ -171,7 +171,7 @@ export default function SubscriptionsPage() {
     setCollecting(true)
     const r = await store.collectDue()
     setCollecting(false)
-    setToast(r.posted > 0 ? `Posted ${r.posted} subscription${r.posted === 1 ? "" : "s"} (${peso(r.total)}) sa Book Keeping.` : "Walang due na subscription ngayon.")
+    setToast(r.posted > 0 ? `Posted ${r.posted} subscription${r.posted === 1 ? "" : "s"} (${peso(r.total)}) to Book Keeping.` : "No subscriptions duen ngayon.")
     setTimeout(() => setToast(""), 4000)
   }
 
@@ -211,7 +211,7 @@ export default function SubscriptionsPage() {
         {!store.loaded ? (
           <p className="text-sm text-slate-400 italic py-10 text-center">Loading…</p>
         ) : store.subs.length === 0 ? (
-          <p className="text-sm text-slate-400 italic py-10 text-center">Wala pang subscriptions — i-click ang “Add Subscription” para magdagdag ng AI tools / SaaS mo.</p>
+          <p className="text-sm text-slate-400 italic py-10 text-center">No subscriptions yet — click “Add Subscription” to add AI tools / SaaS mo.</p>
         ) : (
           <div className="rounded-xl border border-slate-200 overflow-hidden">
             <div className="overflow-x-auto">
@@ -277,7 +277,7 @@ export default function SubscriptionsPage() {
 
         <p className="text-[11px] text-slate-400 mt-3 flex items-start gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-          Auto-posted sa Book Keeping ({defaultAccount}) tuwing billing day via daily scheduled task — exact PHP amount, dedup per cycle (isang beses kada buwan/taon). Mananatiling OPEX sa Income Statement.
+          Auto-posted to Book Keeping ({defaultAccount}) on the billing day via a daily scheduled task — exact PHP amount, deduped per cycle (once a month/taon). Mananatiling OPEX sa Income Statement.
         </p>
       </div>
 
@@ -287,7 +287,7 @@ export default function SubscriptionsPage() {
       {confirmDelete && (
         <Modal title="Delete Subscription" icon={AlertTriangle} onClose={() => setConfirmDelete(null)}>
           <div className="px-6 py-5 text-sm text-slate-700">
-            Sigurado ka bang buburahin ang <span className="font-semibold">{confirmDelete.name}</span>? Hindi na ito mako-collect sa susunod na billing. (Ang naunang na-post na Book Keeping entries ay mananatili.)
+            Delete <span className="font-semibold">{confirmDelete.name}</span>? It will not be collected on the next billing. (Book Keeping entries already posted stay.)
           </div>
           <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>

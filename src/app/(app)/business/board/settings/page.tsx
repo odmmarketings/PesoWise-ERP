@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -51,14 +51,14 @@ export default function BoardSettingsPage() {
           </h1>
           {!admin && (
             <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1 flex items-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5" /> Administrator lang ang makakapagbago dito
+              <AlertTriangle className="w-3.5 h-3.5" /> Only an Administrator can change this
             </span>
           )}
         </div>
 
         {admin && (
           <div className="flex items-center gap-2 mb-4">
-            <Input value={newName} placeholder="Magdagdag ng department (hal. Quality Assurance)"
+            <Input value={newName} placeholder="Add a department (e.g. Quality Assurance)"
               onChange={e => setNewName(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") add() }} className="max-w-md" />
             <Button onClick={add} disabled={!newName.trim()}><Plus className="w-4 h-4" /> Add</Button>
@@ -80,7 +80,7 @@ export default function BoardSettingsPage() {
               <tbody className="divide-y divide-slate-100">
                 {!deps.loaded && <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 italic">Loading…</td></tr>}
                 {deps.loaded && deps.departments.length === 0 && (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 italic">Wala pang department.</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 italic">No departments yet.</td></tr>
                 )}
                 {deps.departments.map(d => (
                   <tr key={d.id} className={`hover:bg-slate-50/70 ${d.status === "inactive" ? "opacity-55" : ""}`}>
@@ -100,7 +100,7 @@ export default function BoardSettingsPage() {
                     </td>
                     <td className="px-4 py-3">
                       {d.manager_emails.length === 0 ? (
-                        <span className="text-xs text-slate-400 italic">Walang naka-assign</span>
+                        <span className="text-xs text-slate-400 italic">None assigned</span>
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {d.manager_emails.map(m => (
@@ -146,10 +146,10 @@ export default function BoardSettingsPage() {
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500 space-y-1">
-          <p className="font-semibold text-slate-700 text-sm mb-1">Mga tungkulin</p>
-          <p><strong>Administrator</strong> (Mother Account) — buong akses: lahat ng problema, department, at approval.</p>
-          <p><strong>Manager</strong> — nakikita ang buong department na hawak niya, nakakapag-assign, nakakapag-edit, at nakakapag-aprub ng completion.</p>
-          <p><strong>Employee</strong> — nakikita ang mga problemang naka-assign sa kanya, nakakapag-update ng progreso, nakakapag-upload ng evidence, at nakakapag-comment.</p>
+          <p className="font-semibold text-slate-700 text-sm mb-1">Roles</p>
+          <p><strong>Administrator</strong> (Mother Account) — full access: every problem, department, and approval.</p>
+          <p><strong>Manager</strong> — sees the whole department they own, and can assign, edit, and approve completion.</p>
+          <p><strong>Employee</strong> — sees problems assigned to them, and can update progress, upload evidence, and comment.</p>
         </div>
       </div>
 
@@ -158,7 +158,7 @@ export default function BoardSettingsPage() {
           onClose={() => setManagerFor(null)}
           footer={<Button variant="outline" onClick={() => setManagerFor(null)}>Done</Button>}>
           <div className="px-6 py-4">
-            <p className="text-xs text-slate-500 mb-2">Ang mga napiling user ay magiging Manager ng department na ito.</p>
+            <p className="text-xs text-slate-500 mb-2">The selected users become Managers of this department.</p>
             <div className="rounded-lg border border-slate-200 max-h-72 overflow-auto divide-y divide-slate-100">
               {active.map(u => {
                 const on = managerFor.manager_emails.includes(u.email)
@@ -176,7 +176,7 @@ export default function BoardSettingsPage() {
                   </label>
                 )
               })}
-              {active.length === 0 && <p className="px-3 py-3 text-xs text-slate-400 italic">Walang aktibong user sa roster.</p>}
+              {active.length === 0 && <p className="px-3 py-3 text-xs text-slate-400 italic">No active users in the roster.</p>}
             </div>
           </div>
         </Modal>
@@ -192,12 +192,12 @@ export default function BoardSettingsPage() {
             </div>
           }>
           <div className="px-6 py-5 text-sm text-slate-700">
-            Buburahin ang <strong>{confirmDel.name}</strong>.
+            This deletes <strong>{confirmDel.name}</strong>.
             {(counts[confirmDel.name] || 0) > 0 && (
               <p className="text-xs text-amber-700 mt-2 flex items-start gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                May {counts[confirmDel.name]} problemang naka-tag dito — mananatili sila pero mawawalan ng department sa mga filter.
-                Mas ligtas ang “Disable” kung gusto mo lang itago.
+                {counts[confirmDel.name]} problems are tagged to it — they stay, but lose their department in filters.
+                Use “Disable” instead if you only want to hide it.
               </p>
             )}
           </div>

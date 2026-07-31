@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { Package, Truck, Warehouse, Wallet, TrendingUp, RefreshCw, FileText } from "lucide-react"
 import { format, startOfMonth } from "date-fns"
@@ -237,7 +237,7 @@ export default function IncomeStatementPage() {
             <SRow deduct label="Shipping Fee (J&T + SPX)" value={peso(shippingFee)} />
             <SRow tone="gross" label="GROSS PROFIT" value={peso(grossProfit)} />
             <SRow tone="opex" label="OPEX" value={peso(opexTotal)} />
-            <SRow label="↳ kasama na ang VAT (12% of Ad Spend)" value={peso(vatAds)} />
+            <SRow label="↳ includes VAT (12% of Ad Spend)" value={peso(vatAds)} />
             <SRow tone="pl" label="PROFIT & LOSS" value={peso(profitLoss)} />
           </div>
 
