@@ -131,10 +131,11 @@ export const businessNav: NavSection[] = [
     ],
   },
   {
+    // Dating dead links (/business/hr, /business/hr/payroll — 404). Ang HR ay
+    // buo nang mode na may sariling sidebar; dito lang ang pinto papunta roon.
     section: "HR",
     items: [
-      { href: "/business/hr", icon: UserCheck, label: "HR Management" },
-      { href: "/business/hr/payroll", icon: DollarSign, label: "Payroll" },
+      { href: "/hr/dashboard", icon: UserCheck, label: "HR Mode (HRIS)" },
     ],
   },
   {
@@ -288,10 +289,8 @@ export function Sidebar({ plan, userName, onLogout }: SidebarProps) {
 
       {/* Bottom */}
       <div className="border-t border-slate-800 p-3 space-y-1">
-        <Link href="/settings" className="flex items-center gap-3 px-3 py-2 text-sm rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors">
-          <Settings className="w-4 h-4" />
-          Settings
-        </Link>
+        {/* Tinanggal ang dating /settings link — 404 iyon (walang ganoong page;
+            bawat module ay may sariling Settings sa loob ng section nito). */}
         <button
           onClick={onLogout}
           className="w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg hover:bg-slate-800 text-slate-400 hover:text-red-400 transition-colors"
