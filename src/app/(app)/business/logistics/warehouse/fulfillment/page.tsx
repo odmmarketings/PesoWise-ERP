@@ -405,7 +405,9 @@ export default function FulfillmentPage() {
           body: JSON.stringify({ api_key: pg.api_key, shop_id: pg.pancake_page_id || pg.shop_id, order_id: r.id, partner_id: courier.partner_id, options: opts }),
         }).then(rr => rr.json())
         if (!j.success) throw new Error(j.error || "Failed")
-        results.push({ id: r.id, ok: true, msg: "Success" })
+        // Ipakita ang tracking number — iyon ang tunay na patunay na may waybill na.
+        // Dating "Success" lang ang nakasulat kahit walang nabuong waybill.
+        results.push({ id: r.id, ok: true, msg: j.tracking ? `OK · ${j.tracking}` : "OK (walang tracking na naibalik)" })
       } catch (e: any) { results.push({ id: r.id, ok: false, msg: e?.message || "Failed" }) }
       setSendProg({ total: target.length, done: i + 1, running: i + 1 < target.length, results: [...results] })
     }
