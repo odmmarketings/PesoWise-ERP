@@ -61,7 +61,8 @@ export default function RtsItemsPage() {
   const [rows, setRows] = useState<RtsRow[]>([])
   const [loading, setLoading] = useState(false)
   const [loadErr, setLoadErr] = useState("")
-  const [perPage, setPerPage] = useState(10)
+  // 100 ang default — pinakamaliit sa dropdown, kapareho ng Fulfillment.
+  const [perPage, setPerPage] = useState(100)
   const [page, setPage] = useState(1)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState("")
@@ -358,7 +359,7 @@ export default function RtsItemsPage() {
         <div className="flex items-center justify-between flex-wrap gap-2 mt-4">
           <label className="flex items-center gap-2 text-sm text-slate-500">
             <select className="h-9 rounded-lg border border-slate-300 px-2 text-sm bg-white" value={perPage} onChange={e => { setPerPage(parseInt(e.target.value)); setPage(1) }}>
-              {[10, 25, 50, 100, 250, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
+              {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
             </select> records
           </label>
           {hasFilters && (
