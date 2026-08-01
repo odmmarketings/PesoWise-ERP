@@ -200,25 +200,6 @@ this request was **recorded off the POS**, not guessed — hook `XMLHttpRequest`
   `partner.extend_code` (= the tracking number). If both are missing the route returns a failure
   with the tracking blank, so a silent non-booking can never read as success again.
 
-## HR Mode (PesoWise HR) + ODM DTR
-
-Two extra "modes" beside Business, both under `(app)` and gated by the same auth:
-- **HR Mode** (`/hr/*`) — Mother Account only. Entered from the Topbar switcher or the business
-  sidebar's HR section. Own dark sidebar (`HrSidebar`). Pages: `/hr/dashboard` (LHIKE HRIS
-  replica — stat cards + Holidays/Events/Birthdays/Newly Hired tabs + Today's Holiday banner),
-  `/hr/201-file` (employee master, the source of every HR number), `/hr/holiday`, `/hr/events`.
-- **ODM DTR** (`/dtr`) — employee self-view with its OWN full-bleed layout (no ERP sidebar/topbar;
-  see `inDtr` in `(app)/layout.tsx`). Matches the login to the 201 File via `company_email`
-  (fallback `personal_email`). Time-tracking/payslip intentionally absent — no punch data source.
-
-**Where HR data lives (read `src/lib/hr-store.ts` before touching):** JSON documents in the
-existing `problem-files` storage bucket at `hr/{business_id}/{employees|holidays|events}.json` —
-built on a night when nothing could run DDL. The bucket is public-read (paths are UUID-guarded),
-so the model deliberately has NO compensation fields. Writes are remove-then-upload (the bucket
-has no UPDATE policy). `supabase/migrations/0017_hr.sql` is the real-tables migration, marked NOT
-yet run; when it runs, `hr-store.ts` is the single file to rewire (and salary fields become safe
-to add).
-
 ## Finance modules
 
 All built to LHIKE ERP user manuals + reference screenshots. Each is a Supabase-backed store (localStorage = read cache) + page following the same conventions (records selector, per-column filter row, full-page screens via early-return, status colored text/badges, `xlsx-js-style` for real `.xlsx`).

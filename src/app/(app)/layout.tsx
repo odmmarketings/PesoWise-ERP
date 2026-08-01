@@ -3,7 +3,6 @@ import { useState, useEffect } from "react"
 import { RefreshCw } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
 import { Sidebar } from "@/components/layout/Sidebar"
-import { HrSidebar } from "@/components/layout/HrSidebar"
 import { Topbar } from "@/components/layout/Topbar"
 import { UpgradeModal } from "@/components/modals/UpgradeModal"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
@@ -13,12 +12,6 @@ import type { Plan } from "@/lib/types"
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const pathname = usePathname()
-  // Tatlong "mode" ang app: Business (default), HR (/hr — HrSidebar), at ODM DTR
-  // (/dtr — SARILI niyang buong layout, walang ERP sidebar/topbar, gaya ng LHIKE
-  // DTR na hiwalay na app ang dating).
-  const inHr = pathname.startsWith("/hr")
-  const inDtr = pathname.startsWith("/dtr")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [user, setUser] = useState<{
@@ -103,23 +96,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-[47] lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
-      {!inDtr && (
-        <div className={`fixed lg:static inset-y-0 left-0 z-[48] transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
-          {inHr
-            ? <HrSidebar userName={user.name} onLogout={handleLogout} />
-            : <Sidebar plan={user.plan} userName={user.name} onLogout={handleLogout} />}
-        </div>
-      )}
+      <div className={`fixed lg:static inset-y-0 left-0 z-[48] transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+        <Sidebar plan={user.plan} userName={user.name} onLogout={handleLogout} />
+      </div>
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {!inDtr && (
-          <Topbar
-            plan={user.plan}
-            trialEndsAt={user.trial_ends_at}
-            onToggleSidebar={() => setSidebarOpen(s => !s)}
-            onUpgrade={() => setShowUpgrade(true)}
-          />
-        )}
-        <main className={inDtr ? "flex-1 overflow-y-auto" : "flex-1 overflow-y-auto px-6 pt-4 pb-6"}>
+        <Topbar
+          plan={user.plan}
+          trialEndsAt={user.trial_ends_at}
+          onToggleSidebar={() => setSidebarOpen(s => !s)}
+          onUpgrade={() => setShowUpgrade(true)}
+        />
+        <main className="flex-1 overflow-y-auto px-6 pt-4 pb-6">
           {authReady ? (
             <PagesProvider>{children}</PagesProvider>
           ) : (
