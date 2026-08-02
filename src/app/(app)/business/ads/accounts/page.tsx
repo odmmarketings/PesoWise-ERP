@@ -33,6 +33,9 @@ const PLATFORM_BADGE: Record<string, string> = {
 }
 const fmtDate = (iso: string) => { try { return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) } catch { return "—" } }
 
+// Sentinel para sa owner filter — accounts na walang naka-assign na owner.
+const NO_OWNER = "__none__"
+
 function FormRow({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[160px_1fr] items-start gap-3 py-2.5 border-b border-slate-100 last:border-0">
@@ -93,17 +96,36 @@ export default function AdAccountsPage() {
   // Active / Archives view + filters (Pages & Store style)
   const [archivedView, setArchivedView] = useState(false)
   const [qName, setQName] = useState("")
-  const [qOwner, setQOwner] = useState("")
+  const [fOwner, setFOwner] = useState("All")
   const [fStatus, setFStatus] = useState("All")
   const [fPlatform, setFPlatform] = useState("All")
   const inView = useMemo(() => fb.accounts.filter(a => !!a.archived === archivedView), [fb.accounts, archivedView])
   const filtered = useMemo(() => inView.filter(a => {
     if (qName && !a.name.toLowerCase().includes(qName.toLowerCase())) return false
-    if (qOwner && !a.owner.toLowerCase().includes(qOwner.toLowerCase())) return false
+    if (fOwner !== "All" && (a.owner?.trim() || NO_OWNER) !== fOwner) return false
     if (fStatus !== "All" && a.status !== fStatus) return false
     if (fPlatform !== "All" && a.platform !== fPlatform) return false
     return true
-  }), [inView, qName, qOwner, fStatus, fPlatform])
+  }), [inView, qName, fOwner, fStatus, fPlatform])
+
+  // Owner choices come from the accounts actually in view (Active vs Archives), so every
+  // option returns rows — and owners with an ad account but no registered page still appear.
+  const ownerOptions = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const a of inView) {
+      const key = a.owner?.trim() || NO_OWNER
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    const named = [...counts.entries()].filter(([o]) => o !== NO_OWNER).sort((x, y) => x[0].localeCompare(y[0]))
+    const unassigned = counts.get(NO_OWNER)
+    return unassigned ? [...named, [NO_OWNER, unassigned] as [string, number]] : named
+  }, [inView])
+
+  // Toggling Active ↔ Archives can drop the selected owner; reset so the table never
+  // empties out with no visible reason.
+  useEffect(() => {
+    if (fOwner !== "All" && !ownerOptions.some(([o]) => o === fOwner)) setFOwner("All")
+  }, [ownerOptions, fOwner])
 
   // Owner options = Pages & Store owners only (people who actually registered pages).
   const owners = useMemo(() => Array.from(new Set(pages.map((p: any) => p.owner).filter(Boolean))).sort(), [pages])
@@ -127,7 +149,11 @@ export default function AdAccountsPage() {
       <div className="flex items-center justify-between flex-wrap gap-2 pb-4 mb-1 border-b border-slate-100">
         <div>
           <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Link2 className="w-5 h-5" /> AD ACCOUNTS</h1>
-          <p className="text-xs text-slate-400 mt-0.5">{inView.length} record{inView.length === 1 ? "" : "s"}</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {filtered.length === inView.length
+              ? `${inView.length} record${inView.length === 1 ? "" : "s"}`
+              : `${filtered.length} of ${inView.length} records`}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {/* Single toggle between Active list and Archives */}
@@ -192,10 +218,12 @@ export default function AdAccountsPage() {
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <Input className="pl-9" placeholder="Search name..." value={qName} onChange={e => setQName(e.target.value)} />
           </div>
-          <div className="relative flex-1 min-w-[160px]">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <Input className="pl-9" placeholder="Search owner..." value={qOwner} onChange={e => setQOwner(e.target.value)} />
-          </div>
+          <select className="h-10 rounded-lg border border-slate-200 px-3 text-sm bg-white min-w-[150px]" value={fOwner} onChange={e => setFOwner(e.target.value)}>
+            <option value="All">All Owners</option>
+            {ownerOptions.map(([o, n]) => (
+              <option key={o} value={o}>{o === NO_OWNER ? "— No owner —" : o} ({n})</option>
+            ))}
+          </select>
           <select className="h-10 rounded-lg border border-slate-200 px-3 text-sm bg-white" value={fStatus} onChange={e => setFStatus(e.target.value)}>
             <option value="All">All Status</option>{FB_STATUSES.map(s => <option key={s}>{s}</option>)}
           </select>
@@ -218,7 +246,11 @@ export default function AdAccountsPage() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-12 text-slate-400 text-sm">No ad accounts. Click <strong>Register Ad Account</strong> to add one.</td></tr>
+                <tr><td colSpan={9} className="text-center py-12 text-slate-400 text-sm">
+                  {inView.length === 0
+                    ? <>No ad accounts. Click <strong>Register Ad Account</strong> to add one.</>
+                    : <>No ad accounts match the current filters.</>}
+                </td></tr>
               ) : filtered.map((a, i) => (
                 <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3 text-slate-400">{i + 1}</td>
