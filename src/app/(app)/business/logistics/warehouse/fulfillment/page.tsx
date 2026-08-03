@@ -404,7 +404,12 @@ export default function FulfillmentPage() {
         if (!j.success) throw new Error(j.error || "Failed")
         // Ipakita ang tracking number — iyon ang tunay na patunay na may waybill na.
         // Dating "Success" lang ang nakasulat kahit walang nabuong waybill.
-        results.push({ id: r.id, ok: true, msg: j.tracking ? `OK · ${j.tracking}` : "OK (no tracking returned)" })
+        results.push({
+          id: r.id, ok: true,
+          msg: j.status_updated === false
+            ? `OK · ${j.tracking} · ⚠ status hindi na-update`
+            : `OK · ${j.tracking}`,
+        })
       } catch (e: any) { results.push({ id: r.id, ok: false, msg: e?.message || "Failed" }) }
       setSendProg({ total: target.length, done: i + 1, running: i + 1 < target.length, results: [...results] })
     }
@@ -665,7 +670,12 @@ export default function FulfillmentPage() {
       )}
       {sendProg && sendTo && (
         <SendProgressModal courier={COURIERS.find(c => c.key === sendTo)!} prog={sendProg}
-          onBack={() => { setSendProg(null); setSendTo(null); setSel(new Set()); load(true) }} />
+          onBack={() => {
+            // Panatilihing naka-check ang mga bigo (hal. ODZ sa SPX) para isang click
+            // lang ang resend sa J&T — hindi na hahanapin at pipiliin ulit isa-isa.
+            const failed = sendProg.results.filter(r => !r.ok).map(r => r.id)
+            setSendProg(null); setSendTo(null); setSel(new Set(failed)); load(true)
+          }} />
       )}
 
       {/* ── Tools → Update Parcel Status (selected rows) ── */}
@@ -1024,7 +1034,8 @@ function SendProgressModal({ courier, prog, onBack }: {
           {list.length === 0 ? (
             <p className="text-sm text-slate-400 py-6 text-center">{prog.running ? "Sending…" : "No entries."}</p>
           ) : list.map(r => (
-            <p key={r.id} className={`text-sm py-0.5 ${r.ok ? "text-emerald-600" : "text-red-600"}`}># {r.id} : {r.ok ? "Success" : r.msg}</p>
+            // Kahit ang matagumpay ay may waybill na nakasulat — iyon ang katibayan.
+            <p key={r.id} className={`text-sm py-0.5 ${r.ok ? "text-emerald-600" : "text-red-600"}`}># {r.id} : {r.msg || (r.ok ? "Success" : "Failed")}</p>
           ))}
         </div>
         <div className="px-5 py-4 border-t border-slate-200">

@@ -29,6 +29,39 @@ import { NextRequest, NextResponse } from "next/server"
 const BASE = "https://pos.pages.fm/api/v1"
 const SPX = 125
 const JNT = 10
+const STATUS_WAITING_PICKUP = 9   // "Waiting for Pick Up" — 8 ang Packaging
+
+// Out-of-delivery-zone at kauri nitong pagtanggi. Iba-iba ang salita ng SPX/J&T
+// kaya pattern, hindi eksaktong string, ang hinahanap.
+const ODZ_RE = /out\s*of\s*(the\s*)?(delivery\s*)?(zone|range|coverage|service|area)|delivery\s*zone|\bodz\b|not\s*(covered|serviceable|deliverable|supported)|no\s*coverage|unserviceable|outside\s*(the\s*)?(delivery|service|coverage)/i
+
+/** Hinuhukay ang pinakamalapit na error text saanman ito itago ng Pancake/courier. */
+function firstMessage(v: any, depth = 0): string {
+  if (v == null || depth > 6) return ""
+  if (Array.isArray(v)) {
+    for (const x of v) { const m = firstMessage(x, depth + 1); if (m) return m }
+    return ""
+  }
+  if (typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) {
+      if (typeof x === "string" && x.trim() && /error|message|reason|detail/i.test(k)) return x.trim()
+    }
+    for (const x of Object.values(v)) { const m = firstMessage(x, depth + 1); if (m) return m }
+  }
+  return ""
+}
+
+/** PUT {status:N} — ito ang live-verified na paraan (kapareho ng /orders/update-status). */
+async function setStatus(shopId: string, apiKey: string, orderId: string, status: number) {
+  const res = await fetch(
+    `${BASE}/shops/${encodeURIComponent(shopId)}/orders/${encodeURIComponent(orderId)}?api_key=${encodeURIComponent(apiKey)}`,
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }), cache: "no-store" }
+  )
+  const raw = await res.text().catch(() => "")
+  let json: any = null; try { json = JSON.parse(raw) } catch {}
+  const ok = res.ok && json?.success !== false
+  return { ok, detail: ok ? "" : String(json?.message || raw || `HTTP ${res.status}`).slice(0, 200) }
+}
 
 /** Mga field na nagti-trigger ng aktwal na booking, kada courier. */
 function courierFields(partnerId: number, o: { is_free_shipping?: boolean; is_dropoff?: boolean; note?: string }) {
@@ -109,8 +142,17 @@ export async function POST(req: NextRequest) {
   // Kaya id + partner + status + courier flags lang ang ipinapadala. Kung
   // merge pala ito, gagana; kung palit, agad nating makikita sa diff sa ibaba
   // bago pa madamay ang iba.
+  //
+  // ⚠ HINDI DITO INIAAKYAT ANG STATUS — SADYA RIN.
+  // Dati `status: 9` ("Waiting for Pick Up") ang kasama sa PAREHONG request na
+  // nagbo-book. Dumadaan ang status kahit tinanggihan ng SPX ang address (out of
+  // delivery zone) — kaya "success" ang lumalabas at nagiging Waiting for Pick Up
+  // ang order na wala man lang waybill. Ang isinusulat ngayon ay ang KASALUKUYANG
+  // status ng order (para hindi mabura ang field sa replace-style na endpoint),
+  // at 9 lang kapag may napatunayang waybill — sa hiwalay nang request sa ibaba.
   const form = new URLSearchParams()
-  flatten({ id: before.id, partner: { partner_id: Number(partner_id) }, status: 9 }, "orders[0]", form)
+  const keepStatus = typeof before.status === "number" ? before.status : undefined
+  flatten({ id: before.id, partner: { partner_id: Number(partner_id) }, status: keepStatus }, "orders[0]", form)
   for (const [k, v] of Object.entries(flags)) form.append(`orders[0][${k}]`, v)
 
   if (dry_run) {
@@ -135,9 +177,21 @@ export async function POST(req: NextRequest) {
     }
 
     const after = await getOrder(shop_id, api_key, order_id)
-    const pt = after?.partner || {}
+    // Kung hindi mabasa ang order pagkatapos, WALANG masasabi — huwag mag-akalang
+    // nabura ang datos (dating false alarm) at huwag ding galawin ang status.
+    if (!after) {
+      return NextResponse.json({
+        success: false, booked: false,
+        error: `Naipadala ang update pero hindi na-verify — hindi makuha ulit ang order ${order_id} sa Pancake. Tingnan sa POS kung may waybill bago i-resend.`,
+      }, { status: 502 })
+    }
+
+    const pt = after.partner || {}
+    // Waybill LANG ang katibayan ng booking. Dating tinatanggap ang `service_partner`,
+    // pero iyon ay ang pangalan ng courier na TAYO mismo ang sumulat sa `partner_id` —
+    // kaya "booked" ang ODZ na order kahit walang nabuong waybill.
     const tracking = String(pt.extend_code || pt.tracking_id || "")
-    const booked = !!pt.service_partner || !!tracking
+    const booked = !!tracking
 
     // ── May nabura ba? Mahalagang malaman AGAD, hindi sa warehouse pa. ──
     const wiped: string[] = []
@@ -153,13 +207,29 @@ export async function POST(req: NextRequest) {
       }, { status: 500 })
     }
 
+    // ── WALANG WAYBILL = HINDI NA-BOOK. Naiwan ang status kung nasaan ito (Packaging),
+    // kaya kitang-kita sa Fulfillment kung alin ang kailangang i-resend sa ibang courier.
     if (!booked) {
+      const courierName = Number(partner_id) === SPX ? "SPX" : "J&T"
+      const haystack = `${raw} ${JSON.stringify(pt)} ${String(after.status_name || "")}`
+      const detail = firstMessage(json) || firstMessage(pt)
+      const odz = ODZ_RE.test(haystack) || (!!detail && ODZ_RE.test(detail))
       return NextResponse.json({
-        success: false, booked: false,
-        error: `Tinanggap ng Pancake ang update pero walang waybill na nabuo. Tingnan ang order sa POS.`,
+        success: false, booked: false, odz, reason: detail || "",
+        error: odz
+          ? `OUT OF DELIVERY ZONE — hindi kaya ng ${courierName} ang address na ito${detail ? `: ${detail.slice(0, 160)}` : ""}. Naiwang Packaging ang status; i-resend sa J&T.`
+          : `Tinanggihan ng ${courierName} — walang nabuong waybill${detail ? `: ${detail.slice(0, 160)}` : " (posibleng out of delivery zone o invalid na address)"}. Naiwang Packaging ang status; tingnan ang order sa POS.`,
       }, { status: 502 })
     }
-    return NextResponse.json({ success: true, booked: true, tracking, status_name: String(after?.status_name || "") })
+
+    // May waybill na — ngayon lang tama ang "Waiting for Pick Up".
+    const st = await setStatus(shop_id, api_key, order_id, STATUS_WAITING_PICKUP)
+    return NextResponse.json({
+      success: true, booked: true, tracking,
+      status_updated: st.ok,
+      status_name: st.ok ? "Waiting for Pick Up" : String(after.status_name || ""),
+      ...(st.ok ? {} : { warning: `Na-book (${tracking}) pero hindi na-update ang status sa Waiting for Pick Up — ${st.detail}` }),
+    })
   } catch (err: any) {
     return NextResponse.json({ success: false, error: "Failed to send to courier — " + (err?.message || "network error") }, { status: 500 })
   }

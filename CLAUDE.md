@@ -189,16 +189,35 @@ this request was **recorded off the POS**, not guessed — hook `XMLHttpRequest`
     `allow_mutual_check_spx`, `allow_try_on_spx`, `pickup_time_spx[0]` (unix ts) + `[1]` (range id)
   - J&T (partner 10): `is_send_to_jnt_phi`, `payment_jnt_phi: "PP_PM"`, `is_drop_off_jnt_phi`,
     `signpart_jnt_phi`, `insurance_services_jnt_phi`
-- **Payload is deliberately minimal** (id + partner + status 9 + courier flags). The POS sends ~294
+- **Payload is deliberately minimal** (id + partner + the order's *current* status + courier flags). The POS sends ~294
   fields because it holds the whole order client-side; the public API returns only ~106 and leaves
   some blank (`shipping_address`). Echoing that thin copy back would wipe data **if** the endpoint
   replaces rather than merges. It merges — confirmed on a live order — but the route still
   snapshots before/after and aborts loudly if any of `customer_name` / `shipping_address` /
   `order_item` / `final_price` / `contact_no` / `items` goes from filled to empty.
-- **Booked is verified, not assumed.** After the write the order is re-read: a real booking has
-  `partner.service_partner` (deliver_info / parcel_info / fulfillment_info) and
-  `partner.extend_code` (= the tracking number). If both are missing the route returns a failure
-  with the tracking blank, so a silent non-booking can never read as success again.
+- **Booked is verified, not assumed — and the waybill is the ONLY proof.** After the write the order
+  is re-read and `partner.extend_code` / `tracking_id` (= the tracking number) must be non-empty.
+  `partner.service_partner` is **not** acceptable evidence: it is populated from the `partner_id` *we
+  ourselves* wrote, so treating it as proof made every rejected order read as booked. If the order
+  can't be re-read at all the route says "not verified" rather than guessing (it used to raise a
+  false data-loss alarm in that case).
+- **The status is advanced in a SEPARATE request, only after a waybill exists.** This is the
+  out-of-delivery-zone fix (user, Aug 3 2026): SPX accepts the update, returns success, and creates
+  **no waybill** when the address is outside its zone. Because `status: 9` used to ride along in the
+  same booking request, the order flipped to Waiting for Pick Up anyway — a parcel the warehouse
+  could never ship. Now the booking request writes back the order's *existing* status (present so a
+  replace-style endpoint can't null the field, but never advanced), and `PUT {status: 9}` runs only
+  after a tracking number is confirmed. A rejected order therefore **stays in Packaging** and stays
+  in the Fulfillment queue.
+- **ODZ is named when it can be.** On a no-waybill result the route scans the response and the
+  `partner` object for the rejection text (`ODZ_RE` — "out of delivery zone/range/coverage/area",
+  "not serviceable", …) and reports `odz: true` plus the courier's own wording. When the wording is
+  unrecognised it still fails, just with the generic "rejected, no waybill created" message —
+  **the pass/fail decision never depends on matching the text**, only on the waybill.
+  ⚠ The exact ODZ response body has **not** been captured off a live rejection yet. If you want the
+  message to quote SPX verbatim, record one the same way the payload was recorded.
+- **Failed orders stay checked** when you close the progress modal, so an SPX-ODZ batch can be
+  re-sent to J&T in one click instead of being hunted down row by row.
 
 ## Finance modules
 
