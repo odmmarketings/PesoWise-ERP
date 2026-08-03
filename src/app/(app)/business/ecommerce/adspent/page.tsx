@@ -6,6 +6,7 @@ import {
 } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
+import { useFBAccounts, actId, type FBAccount } from "@/lib/fb-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
@@ -38,6 +39,50 @@ async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<v
   await Promise.all(workers)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Ad spend per day, straight from the Meta Marketing API.
+//
+// BAKIT NANDITO ITO NGAYON: ang page na ito ay NAGBABASA lang dati ng
+// `adspent_entries`, at ang ROAS Tracker LANG ang sumusulat doon (kapag may
+// nag-Submit para sa isang range). Kaya kung walang nagbukas ng ROAS Tracker
+// para sa Hunyo, blangko ang Total Ad Spent ng Hunyo at 0 ang ROAS — mukhang
+// mali ang report gayong wala lang talagang naka-sync. Kinukuha na nito ngayon
+// ang spend para sa sarili niyang range, kaya kahit anong buwan ay tama agad.
+//
+// Ang ad account ay nakakabit sa page sa pamamagitan ng `page_name` — kapareho
+// ng ROAS Tracker, para pareho ang kinalalabasan ng dalawang page.
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchAdspentFromFB(
+  pages: { id: string; name: string }[],
+  accounts: FBAccount[],
+  fromStr: string,
+  toStr: string,
+) {
+  const entries: { pageId: string; date: string; value: number }[] = []
+  const failed: string[] = []
+  await mapLimit(pages, 3, async pg => {
+    const accts = accounts.filter(a => !a.archived && a.token && a.ad_account_id && a.page_name === pg.name)
+    if (accts.length === 0) return
+    const byDate: Record<string, number> = {}
+    for (const a of accts) {
+      try {
+        const j = await fetch(
+          `/api/fb/insights?token=${encodeURIComponent(a.token)}`
+          + `&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${fromStr}&to=${toStr}`
+        ).then(r => r.json())
+        if (j.success) for (const [d, v] of Object.entries(j.byDate || {})) byDate[d] = (byDate[d] || 0) + Number(v)
+        else failed.push(`${a.name || a.ad_account_id}: ${String(j.error || "Meta refused the request").slice(0, 120)}`)
+      } catch (e: any) {
+        failed.push(`${a.name || a.ad_account_id}: ${e?.message || "network error"}`)
+      }
+    }
+    // Ang mga araw LANG na may isinagot ang Meta ang isinusulat — kaya hindi
+    // nabubura ng blangkong sagot ang dating naitala.
+    for (const [d, v] of Object.entries(byDate)) entries.push({ pageId: pg.id, date: d, value: v })
+  })
+  return { entries, failed }
+}
+
 // Shown wherever ad-spend-derived data isn't available from the API yet
 const TO_FOLLOW = <span className="text-gray-400 italic font-normal">To Follow</span>
 function roasColor(roas: number) {
@@ -54,6 +99,8 @@ const ADSPENT_TTL = 5 * 60_000
 export default function AdspentROASSummaryPage() {
   const allPages = useActivePages()
   const adspentStore = useAdspent()
+  const fb = useFBAccounts()
+  const [spendWarnings, setSpendWarnings] = useState<string[]>([])
   const [dateA, setDateA] = useState(defaultDateA())
   const [dateB, setDateB] = useState(defaultDateB())
   const [filterOwner, setFilterOwner] = useState("All")
@@ -76,6 +123,17 @@ export default function AdspentROASSummaryPage() {
     [allPages, filterOwner])
   const pageIdsKey = pagesWithCreds.map(p => p.id).join(",")
 
+  // Ang spend ay naiuugnay sa page sa pamamagitan ng `page_name`. Ang ad account na
+  // walang tugmang page ay HINDI nabibilang kahit saan — kaya kulang ang Total Ad
+  // Spent at mataas nang mali ang ROAS. Ito ang pinakamadalas na dahilan ng
+  // "kulang ang adspent", at dating tahimik lang.
+  const unmappedAccounts = useMemo(() => {
+    const names = new Set(allPages.map(p => p.name))
+    return fb.accounts
+      .filter(a => !a.archived && a.token && a.ad_account_id && (!a.page_name || !names.has(a.page_name)))
+      .map(a => a.name || actId(a.ad_account_id))
+  }, [fb.accounts, allPages])
+
   async function handleSummary(force = false) {
     if (pagesWithCreds.length === 0) return
 
@@ -93,22 +151,32 @@ export default function AdspentROASSummaryPage() {
 
     setLoading(true)
     setErrors([])
+    setSpendWarnings([])
     const merged: Record<string, { orders: number; amount: number }> = {}
     const errs: string[] = []
 
-    await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async page => {
-      const pageId = page.pancake_page_id || page.shop_id
-      try {
-        const data = await fetchPageByDate(page.api_key, pageId, fromStr, toStr)
-        for (const [d, v] of Object.entries(data)) {
-          if (!merged[d]) merged[d] = { orders: 0, amount: 0 }
-          merged[d].orders += v.orders
-          merged[d].amount += v.amount
+    // Sales (Pancake) at ad spend (Meta) — sabay, dalawang magkaibang API naman.
+    const [, spend] = await Promise.all([
+      mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async page => {
+        const pageId = page.pancake_page_id || page.shop_id
+        try {
+          const data = await fetchPageByDate(page.api_key, pageId, fromStr, toStr)
+          for (const [d, v] of Object.entries(data)) {
+            if (!merged[d]) merged[d] = { orders: 0, amount: 0 }
+            merged[d].orders += v.orders
+            merged[d].amount += v.amount
+          }
+        } catch (e: any) {
+          errs.push(`${page.name}: ${e?.message || "Failed to fetch"}`)
         }
-      } catch (e: any) {
-        errs.push(`${page.name}: ${e?.message || "Failed to fetch"}`)
-      }
-    })
+      }),
+      fetchAdspentFromFB(pagesWithCreds, fb.accounts, fromStr, toStr),
+    ])
+
+    if (spend.entries.length) await adspentStore.setMany(spend.entries)
+    // Ang palyadong ad account ay nagpapababa ng Total Ad Spent at nagpapataas ng
+    // ROAS — kaya sabihin, hindi itago sa likod ng magandang numero.
+    setSpendWarnings(spend.failed)
 
     setRealData(merged)
     setErrors(errs)
@@ -217,19 +285,40 @@ export default function AdspentROASSummaryPage() {
                 />
               ))}
             </div>
-            <p className="text-sm text-slate-500 font-medium">Fetching orders from Pancake POS...</p>
+            <p className="text-sm text-slate-500 font-medium">Fetching orders from Pancake POS + ad spend from Meta...</p>
           </div>
         </div>
       )}
 
-      {/* API errors */}
+      {/* API errors — Pancake side. Kulang ang Sales kapag may nito, kaya hindi
+          dapat basahin ang totals bilang buo. */}
       {errors.length > 0 && (
         <div className="space-y-2">
+          <p className="text-xs font-semibold text-red-700">
+            Sales for {errors.length} page{errors.length === 1 ? "" : "s"} failed to load — the totals below are incomplete.
+          </p>
           {errors.map((msg, i) => (
             <div key={i} className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
               {msg}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Ad-spend gaps — bawat isa dito ay nagpapababa ng Total Ad Spent at
+          nagpapataas nang mali sa ROAS. */}
+      {(spendWarnings.length > 0 || unmappedAccounts.length > 0) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 space-y-1.5">
+          <p className="font-semibold">Ad Spent may be understated — ROAS reads higher than it really is.</p>
+          {unmappedAccounts.length > 0 && (
+            <p>
+              <strong>{unmappedAccounts.length} ad account{unmappedAccounts.length === 1 ? "" : "s"} not mapped to a page</strong>, so
+              their spend is counted nowhere: {unmappedAccounts.slice(0, 6).join(", ")}
+              {unmappedAccounts.length > 6 ? `, +${unmappedAccounts.length - 6} more` : ""}.
+              {" "}Set <strong>Mapped Page</strong> on each in Ads → Ad Accounts.
+            </p>
+          )}
+          {spendWarnings.map((msg, i) => <p key={i}>Meta refused <strong>{msg}</strong></p>)}
         </div>
       )}
 
