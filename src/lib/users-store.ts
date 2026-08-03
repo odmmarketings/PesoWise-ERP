@@ -1,5 +1,5 @@
 "use client"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { currentUserName } from "@/lib/current-user"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { getBusinessId } from "@/lib/business"
@@ -157,6 +157,25 @@ export function useErpUsers() {
     if (!error) await refresh()
   }
   return { users, loading, addUser, updateUser, removeUser, refresh }
+}
+
+// ── Warehouse staff — sino ang pwedeng maging packer (Fulfillment → Assign Packer) ──
+// FREE TEXT ang Position field sa Users, kaya pattern ang tugma at hindi eksaktong
+// string: "Warehouse Staff", "warehouse staff", "Warehouse Supervisor", "Staff
+// (Warehouse)" — warehouse tao pa rin lahat, at hindi mahuhuli ng exact match ang
+// dobleng espasyo o ibang casing. Hindi kasama ang Resigned/Inactive/Terminated at
+// ang naka-schedule na burahin — hindi na sila dapat mapagkakatiwalaan ng parcel.
+export const WAREHOUSE_POSITION_RE = /warehouse/i
+export function isWarehouseStaff(u: ErpUser): boolean {
+  return WAREHOUSE_POSITION_RE.test(u.position || "") && u.status === "Active" && !u.deleteAt
+}
+/** Mga pangalan ng warehouse staff, sorted — pinagkukunan ng Assign Packer dropdown. */
+export function useWarehouseStaff(): { names: string[]; loading: boolean } {
+  const { users, loading } = useErpUsers()
+  const names = useMemo(() => Array.from(new Set(
+    users.filter(isWarehouseStaff).map(u => (u.full_name || "").trim() || (u.username || "").trim()).filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b)), [users])
+  return { names, loading }
 }
 
 // ── Access check (sidebar enforcement) — matched by username / full name / email vs the

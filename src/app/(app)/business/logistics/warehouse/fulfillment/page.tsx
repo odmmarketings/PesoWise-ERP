@@ -10,7 +10,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems } from "@/lib/product-items-store"
 import { currentUserName } from "@/lib/current-user"
-import { MEMBERS } from "@/lib/finance-settings-store"
+import { useWarehouseStaff } from "@/lib/users-store"
 import { fetchFulfillmentMeta, upsertFulfillmentMeta, cacheFulfillmentMeta } from "@/lib/fulfillment-meta-store"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
@@ -788,15 +788,16 @@ function GroupPicker({ value, onChange, pages, counts }: {
   )
 }
 
-// LHIKE-style Assigned Packer modal: "Assigned To" = a searchable dropdown of ERP accounts
-// (Finance Settings MEMBERS + the logged-in user, until the full Users module exists).
+// LHIKE-style Assigned Packer modal: "Assigned To" = a searchable dropdown of the
+// WAREHOUSE STAFF sa Users roster (Position contains "warehouse", employment Active).
 // Isahan (row action) at maramihan (selection bar) — pareho lang ang form, kaya isa lang.
 function AssignModal({ rows, initial, onClose, onSave }: { rows: FfRow[]; initial: string; onClose: () => void; onSave: (packer: string) => void }) {
   const [packer, setPacker] = useState(initial)
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
-  const me = currentUserName()
-  const accounts = useMemo(() => Array.from(new Set([...(me ? [me] : []), ...MEMBERS])).sort(), [me])
+  // Warehouse staff LANG ang pwedeng packer — galing sa Users roster (Position),
+  // hindi sa dating hardcoded na MEMBERS ng Finance Settings.
+  const { names: accounts, loading } = useWarehouseStaff()
   const filteredAccts = accounts.filter(a => a.toLowerCase().includes(q.toLowerCase()))
   const bulk = rows.length > 1
   return (
@@ -806,17 +807,9 @@ function AssignModal({ rows, initial, onClose, onSave }: { rows: FfRow[]; initia
           <h2 className="text-lg font-bold text-slate-900">Assigned Packer{bulk ? ` — ${rows.length.toLocaleString("en-PH")} orders` : ""}</h2>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100"><X className="w-5 h-5" /></button>
         </div>
-        {bulk ? (
-          // Ipakita kung SINO talaga ang maaapektuhan — mabigat ang 500 order sa isang click.
-          <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 max-h-28 overflow-auto scrollbar-dark">
-            {rows.slice(0, 40).map(r => (
-              <p key={r.id} className="text-[11px] text-slate-500 truncate">{r.customer_name || r.id} · {r.order_item}</p>
-            ))}
-            {rows.length > 40 && <p className="text-[11px] font-semibold text-slate-400 pt-0.5">+{rows.length - 40} pa</p>}
-          </div>
-        ) : (
-          <p className="text-xs text-slate-400 mb-3 truncate">{rows[0].customer_name} · {rows[0].order_item}</p>
-        )}
+        {/* Sa maramihan, ang bilang sa pamagat na ang sapat — nasa selection bar na
+            ang listahan. Isang order lang ang nagpapakita ng linya para malinaw kung alin. */}
+        {!bulk && <p className="text-xs text-slate-400 mb-3 truncate">{rows[0].customer_name} · {rows[0].order_item}</p>}
         <div className="grid grid-cols-[110px_1fr] items-center gap-3">
           <span className="text-sm text-slate-600 text-right">Assigned To:</span>
           <div className="relative">
@@ -835,7 +828,16 @@ function AssignModal({ rows, initial, onClose, onSave }: { rows: FfRow[]; initia
                     <button key={a} type="button" onMouseDown={() => { setPacker(a); setOpen(false) }}
                       className={`w-full text-left px-3 py-2 text-sm ${a === packer ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-blue-50"}`}>{a}</button>
                   ))}
-                  {filteredAccts.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">No match</div>}
+                  {/* Free text ang Position, kaya ang walang laman ay karaniwang typo o
+                      hindi pa nasagutang field — sabihin kung saan ito inaayos. */}
+                  {filteredAccts.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-slate-400">
+                      {loading ? "Loading…"
+                        : accounts.length === 0
+                          ? <>No warehouse staff yet. Set a user&apos;s <strong>Position</strong> to <strong>Warehouse Staff</strong> in Business → Users.</>
+                          : "No match"}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
