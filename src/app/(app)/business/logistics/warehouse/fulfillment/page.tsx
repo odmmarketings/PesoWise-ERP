@@ -153,6 +153,16 @@ export default function FulfillmentPage() {
     saveMeta({ ...meta, [id]: entry })
     upsertFulfillmentMeta({ [id]: entry })
   }
+  // Maramihan sa ISANG sulat. Huwag i-loop ang patchMeta: pare-pareho ang `meta`
+  // na nababasa ng bawat tawag (closure), kaya ang huling id lang ang mananatili.
+  const patchMetaMany = (ids: string[], patch: FfMeta) => {
+    if (ids.length === 0) return
+    const s = stamp()
+    const changed: Record<string, FfMeta> = {}
+    for (const id of ids) changed[id] = { ...(meta[id] || {}), ...patch, ...s }
+    saveMeta({ ...meta, ...changed })
+    upsertFulfillmentMeta(changed)   // nagba-batch na ito ng 200 kada upsert
+  }
 
   const [visible, setVisible] = useState<Set<string>>(new Set(DEFAULT_ON))
   const [draft, setDraft] = useState<Record<string, { a: string; b: string }>>({})   // filter row inputs (a = value/from, b = to)
@@ -167,7 +177,8 @@ export default function FulfillmentPage() {
 
   const [toolsOpen, setToolsOpen] = useState(false)
   const [viewRow, setViewRow] = useState<FfRow | null>(null)
-  const [assignRow, setAssignRow] = useState<FfRow | null>(null)
+  // Isang modal ang gumagana sa isahan (row action) at maramihan (selection bar).
+  const [assignRows, setAssignRows] = useState<FfRow[] | null>(null)
   const [statusOpen, setStatusOpen] = useState(false)
   const [cogOpen, setCogOpen] = useState(false)
   // Send orders to courier (Pancake-style): menu → settings modal → progress screen.
@@ -561,6 +572,11 @@ export default function FulfillmentPage() {
                 </button>
               </>
             ) : null}
+            {/* Bulk assign — nandito para sunod-sunod agad: check all → assign packer. */}
+            <button onClick={() => setAssignRows(selRows)}
+              className="h-7 px-2.5 rounded-md bg-emerald-600 text-white text-xs font-semibold flex items-center gap-1.5 hover:bg-emerald-700">
+              <User className="w-3.5 h-3.5" /> Assign packer
+            </button>
             <button onClick={() => setSel(new Set())}
               className="ml-auto text-slate-500 underline underline-offset-2 hover:text-slate-700">
               Clear selection
@@ -631,7 +647,7 @@ export default function FulfillmentPage() {
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
                       <button onClick={() => setViewRow(r)} className="w-8 h-8 rounded border border-slate-300 flex items-center justify-center text-slate-500 hover:text-blue-600 hover:border-blue-400" title="View order info"><Search className="w-4 h-4" /></button>
-                      <button onClick={() => setAssignRow(r)} className="w-8 h-8 rounded border border-slate-300 flex items-center justify-center text-slate-500 hover:text-emerald-600 hover:border-emerald-400" title="Assign packer"><User className="w-4 h-4" /></button>
+                      <button onClick={() => setAssignRows([r])} className="w-8 h-8 rounded border border-slate-300 flex items-center justify-center text-slate-500 hover:text-emerald-600 hover:border-emerald-400" title="Assign packer"><User className="w-4 h-4" /></button>
                     </div>
                   </td>
                 </tr>
@@ -657,10 +673,22 @@ export default function FulfillmentPage() {
         <p className="mt-2 text-sm"><strong className="text-slate-800">Total Price</strong> : {totalPrice.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>
       </div>
 
-      {/* ── Assign packer ── */}
-      {assignRow && (
-        <AssignModal row={assignRow} meta={metaOf(assignRow)} onClose={() => setAssignRow(null)}
-          onSave={m => { patchMeta(assignRow.id, m); setAssignRow(null); flash("Packer assignment saved.") }} />
+      {/* ── Assign packer (isahan mula sa row action, maramihan mula sa selection bar) ── */}
+      {assignRows && assignRows.length > 0 && (
+        <AssignModal rows={assignRows} onClose={() => setAssignRows(null)}
+          // Pre-fill lang kapag PAREHO ang packer ng lahat ng napili — kung hali-halo,
+          // blangko, para hindi mapagkamalang iyon na ang laman ng buong batch.
+          initial={(() => {
+            const first = metaOf(assignRows[0]).packer || ""
+            return assignRows.every(r => (metaOf(r).packer || "") === first) ? first : ""
+          })()}
+          onSave={packer => {
+            const ids = assignRows.map(r => r.id)
+            patchMetaMany(ids, { packer })
+            setAssignRows(null)
+            const who = packer || "Unassigned"
+            flash(ids.length === 1 ? `Packer set to ${who}.` : `${ids.length} orders assigned to ${who}.`)
+          }} />
       )}
 
       {/* ── Send orders to courier: Pancake-style settings modal → animated progress screen ── */}
@@ -762,21 +790,33 @@ function GroupPicker({ value, onChange, pages, counts }: {
 
 // LHIKE-style Assigned Packer modal: "Assigned To" = a searchable dropdown of ERP accounts
 // (Finance Settings MEMBERS + the logged-in user, until the full Users module exists).
-function AssignModal({ row, meta, onClose, onSave }: { row: FfRow; meta: FfMeta; onClose: () => void; onSave: (m: FfMeta) => void }) {
-  const [packer, setPacker] = useState(meta.packer || "")
+// Isahan (row action) at maramihan (selection bar) — pareho lang ang form, kaya isa lang.
+function AssignModal({ rows, initial, onClose, onSave }: { rows: FfRow[]; initial: string; onClose: () => void; onSave: (packer: string) => void }) {
+  const [packer, setPacker] = useState(initial)
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
   const me = currentUserName()
   const accounts = useMemo(() => Array.from(new Set([...(me ? [me] : []), ...MEMBERS])).sort(), [me])
   const filteredAccts = accounts.filter(a => a.toLowerCase().includes(q.toLowerCase()))
+  const bulk = rows.length > 1
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-5 overflow-visible" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
-          <h2 className="text-lg font-bold text-slate-900">Assigned Packer</h2>
+          <h2 className="text-lg font-bold text-slate-900">Assigned Packer{bulk ? ` — ${rows.length.toLocaleString("en-PH")} orders` : ""}</h2>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100"><X className="w-5 h-5" /></button>
         </div>
-        <p className="text-xs text-slate-400 mb-3 truncate">{row.customer_name} · {row.order_item}</p>
+        {bulk ? (
+          // Ipakita kung SINO talaga ang maaapektuhan — mabigat ang 500 order sa isang click.
+          <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 max-h-28 overflow-auto scrollbar-dark">
+            {rows.slice(0, 40).map(r => (
+              <p key={r.id} className="text-[11px] text-slate-500 truncate">{r.customer_name || r.id} · {r.order_item}</p>
+            ))}
+            {rows.length > 40 && <p className="text-[11px] font-semibold text-slate-400 pt-0.5">+{rows.length - 40} pa</p>}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-400 mb-3 truncate">{rows[0].customer_name} · {rows[0].order_item}</p>
+        )}
         <div className="grid grid-cols-[110px_1fr] items-center gap-3">
           <span className="text-sm text-slate-600 text-right">Assigned To:</span>
           <div className="relative">
@@ -803,7 +843,9 @@ function AssignModal({ row, meta, onClose, onSave }: { row: FfRow; meta: FfMeta;
         </div>
         <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-slate-100">
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50">Cancel</button>
-          <button onClick={() => onSave({ packer })} className="px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">Save</button>
+          <button onClick={() => onSave(packer)} className="px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">
+            {bulk ? `Assign to ${rows.length.toLocaleString("en-PH")} orders` : "Save"}
+          </button>
         </div>
       </div>
     </div>
