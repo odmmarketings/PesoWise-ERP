@@ -80,6 +80,42 @@ const ROW_FIELDS = [
   "note",                                 // order note → Remarks (Fulfillment View Order)
 ]
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SCALE GUARD — 100× na halaga mula sa Pancake
+//
+// ANG NAPATUNAYAN (Ago 4 2026, Velora Care shop 1943085268): mula ~8PM Ago 3,
+// ang mga order na na-import ay nagbabalik ng `cod`/`total_price`/item
+// `retail_price` na 100× ng TOTOONG presyo — habang TAMA ang ipinapakita ng
+// Pancake POS UI (₱499). Halimbawa: order 7587616424174 → API 49900, POS ₱499.
+// Ang mga order bago ang oras na iyon ay 499 sa API (tugma). Kaya nagbago ang
+// paraan ng pag-imbak, HINDI ang presyo — at ang POS ang tama.
+//
+// BAKIT SA PAGBASA AT HINDI SA PAGSULAT: ang pag-edit ng presyo sa Pancake ay
+// mapanganib (mababago ang totoong halagang isinisingil) at binabawi rin ng
+// sync. Dito lang sa pagbasa ginagawa ang pagtutuwid — walang isinusulat.
+//
+// KUNG BAKIT ITEM PRICE ANG BASEHAN, HINDI ANG TOTAL: ang tunay na malaking
+// order (30 × ₱499 = ₱14,970) ay may item price na 499 pa rin, kaya hindi ito
+// mahahawakan. 100× lang ang UNIT price kapag sira — iyon ang matibay na tanda.
+// Ang /100 ay dapat ding makatwirang presyo (₱50–₱5,000) para sa tindahang ito.
+// ─────────────────────────────────────────────────────────────────────────────
+const SCALE = 100
+function unitLooksScaled(unitPrice: number): boolean {
+  return unitPrice >= 10000 && unitPrice % SCALE === 0
+    && unitPrice / SCALE >= 50 && unitPrice / SCALE <= 5000
+}
+/** May 100×-na-unit-price ba ang order? Kapag oo, hatiin ang LAHAT ng pera nito. */
+function orderIsScaled(o: any): boolean {
+  const items: any[] = Array.isArray(o?.items) ? o.items : []
+  if (items.length === 0) return false
+  const units = items
+    .map(it => Number(it?.variation_info?.retail_price ?? it?.retail_price ?? 0))
+    .filter(p => p > 0)
+  // Lahat ng unit price ay dapat mukhang scaled — kung hali-halo, huwag hulaan.
+  return units.length > 0 && units.every(unitLooksScaled)
+}
+const descale = (v: any, scaled: boolean) => scaled ? Number(v ?? 0) / SCALE : Number(v ?? 0)
+
 // Courier `partner.partner_status` → readable Parcel Status label (verified courier sub-statuses).
 const PARTNER_STATUS_LABEL: Record<string, string> = {
   on_the_way: "In-Transit",
@@ -130,7 +166,9 @@ function mapOrderRow(o: any) {
   // Shipped Out = time the order was sent to the courier. `time_send_partner` is the authoritative
   // response field (verified in spec); fall back to courier pickup / partner timestamps.
   const shippedOut = String(o?.time_send_partner || partner?.picked_up_at || o?.partner_inserted_at || partner?.inserted_at || "")
-  const cod = Number(o?.cod ?? 0)
+  // 100×-na-halaga mula sa Pancake → itutuwid sa pagbasa (tingnan ang SCALE guard).
+  const scaled = orderIsScaled(o)
+  const cod = descale(o?.cod, scaled)
 
   // Parcel Update = most recent parcel/courier status-change timestamp. Take the latest of the
   // dedicated `last_update_status_at`, any courier `partner.extend_update[].update_at`, falling
@@ -197,9 +235,11 @@ function mapOrderRow(o: any) {
     order_item: orderItem,
     quantity: totalQty,
     parcel_qty: distinctProducts || "",   // # of different products in the order
-    price_initial: Number(o?.total_price ?? 0),
-    shipping_fee: Number(o?.partner_fee ?? o?.shipping_fee ?? 0),
-    final_price: cod || Number(o?.total_price ?? 0),
+    price_initial: descale(o?.total_price, scaled),
+    shipping_fee: descale(o?.partner_fee ?? o?.shipping_fee, scaled),
+    final_price: cod || descale(o?.total_price, scaled),
+    // Nakikita sa Sales Tracker kung aling row ang itinuwid (para hindi tahimik).
+    amount_rescaled: scaled,
     tracking_no: partner?.extend_code || partner?.tracking_id || "",
     // Courier name only (trimmed) — never a raw numeric partner_id, so the filter dropdown stays
     // clean and its options match the table values exactly.
@@ -251,6 +291,10 @@ async function fetchStatusAgg(
   }
   return {
     count: Number(json?.total_entries ?? 0),
+    // ⚠ Server-side na buong-suma ito ng Pancake, kaya HINDI maaaring ituwid ng
+    // SCALE guard (kailangan ng per-order na item price para malaman kung 100×).
+    // Kapag may 100×-na-order sa loob ng saklaw, mataas ang bilang na ito.
+    // Ang phase=full (byDate) ay TAMA — doon dumadaan ang ROAS Summary.
     sales: Number(json?.aggs?.cod?.value ?? 0),
   }
 }
@@ -452,7 +496,7 @@ export async function GET(req: NextRequest) {
       let onDeliveryCount = 0, onDeliverySales = 0
       for (const o of allOrders) {
         const ps = o.partner?.partner_status
-        const cod = Number(o.cod ?? 0)
+        const cod = descale(o.cod, orderIsScaled(o))
         if (ps === "on_the_way") { inTransitCount++; inTransitSales += cod }
         else if (ps === "out_for_delivery") { onDeliveryCount++; onDeliverySales += cod }
       }
@@ -499,7 +543,8 @@ export async function GET(req: NextRequest) {
         }
 
         const statusNum = typeof order.status === "number" ? order.status : -1
-        const cod = Number(order.cod ?? 0)
+        // Parehong scale guard ng mapOrderRow — kung hindi, magkaiba ang table at report.
+        const cod = descale(order.cod, orderIsScaled(order))
         const isCanceled = statusNum === 6
 
         // ── BAKIT HINDI KASAMA ANG KANSELADO SA `sales` ──────────────────────
@@ -527,7 +572,7 @@ export async function GET(req: NextRequest) {
         else if (statusNum === 4) byDate[date].returning += 1
         else if (statusNum === 5) byDate[date].returned += 1
         if (ps === "on_the_way") byDate[date].inTransit += 1
-        else if (ps === "out_for_delivery") { byDate[date].onDelivery += 1; byDate[date].onDeliveryAmount += Number(order.cod ?? 0) }
+        else if (ps === "out_for_delivery") { byDate[date].onDelivery += 1; byDate[date].onDeliveryAmount += cod }
       }
 
       response.byDate = byDate
