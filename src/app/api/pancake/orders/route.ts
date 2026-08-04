@@ -462,6 +462,9 @@ export async function GET(req: NextRequest) {
         orders: number; sales: number; shipped: number
         inTransit: number; onDelivery: number; onDeliveryAmount: number
         returning: number; returned: number; delivered: number
+        // Ang kanselado ay itinatabi, hindi binubura — para makita pa rin kung
+        // gaano karami ang nawawala, at para may pagpipilian sa hinaharap.
+        canceled: number; canceledSales: number; grossSales: number; grossOrders: number
       }> = {}
 
       // Pick the order timestamp matching the selected basis so the per-day breakdown
@@ -488,15 +491,36 @@ export async function GET(req: NextRequest) {
         const date = `${phtDate.getUTCFullYear()}-${String(phtDate.getUTCMonth() + 1).padStart(2, "0")}-${String(phtDate.getUTCDate()).padStart(2, "0")}`
 
         if (!byDate[date]) {
-          byDate[date] = { orders: 0, sales: 0, shipped: 0, inTransit: 0, onDelivery: 0, onDeliveryAmount: 0, returning: 0, returned: 0, delivered: 0 }
+          byDate[date] = {
+            orders: 0, sales: 0, shipped: 0, inTransit: 0, onDelivery: 0, onDeliveryAmount: 0,
+            returning: 0, returned: 0, delivered: 0,
+            canceled: 0, canceledSales: 0, grossSales: 0, grossOrders: 0,
+          }
         }
 
-        byDate[date].orders += 1
-        // Use `cod` to match Pancake's aggs.cod.value (the dashboard's Total Sales basis),
-        // so per-day ROAS sales reconcile exactly with the dashboard totals.
-        byDate[date].sales += Number(order.cod ?? 0)
-
         const statusNum = typeof order.status === "number" ? order.status : -1
+        const cod = Number(order.cod ?? 0)
+        const isCanceled = statusNum === 6
+
+        // ── BAKIT HINDI KASAMA ANG KANSELADO SA `sales` ──────────────────────
+        // Dating ang LAHAT ng order ay binibilang, para tumugma sa `aggs.cod.value`
+        // ng Pancake dashboard. Pero ang kanselado ay HINDI kita — wala nang
+        // kinokolekta doon. Sa buong Ene–Ago 2026, ₱2.15M (11.4%) ng "sales" ay
+        // kanselado, kaya palaging mataas nang mali ang ROAS. Isang kanseladong
+        // order lang na may maling presyo (₱49,900) ang nagpalabas ng ROAS 59
+        // sa Velora Care nitong Ago 4 2026 — doon ito nahuli.
+        // Nananatili ang `grossSales`/`canceledSales` para hindi mawala ang datos
+        // at para may maihambing pa rin sa Pancake dashboard.
+        byDate[date].grossOrders += 1
+        byDate[date].grossSales += cod
+        if (isCanceled) {
+          byDate[date].canceled += 1
+          byDate[date].canceledSales += cod
+        } else {
+          byDate[date].orders += 1
+          byDate[date].sales += cod
+        }
+
         const ps = order.partner?.partner_status
         if (statusNum === 2) byDate[date].shipped += 1
         else if (statusNum === 3) byDate[date].delivered += 1

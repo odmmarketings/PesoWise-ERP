@@ -24,9 +24,16 @@ async function fetchPageByDate(apiKey: string, pageId: string, from: string, to:
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&phase=full`
   )
-  const byDate = (json.byDate ?? {}) as Record<string, { orders: number; sales: number }>
-  const out: Record<string, { orders: number; amount: number }> = {}
-  for (const [d, v] of Object.entries(byDate)) out[d] = { orders: v.orders, amount: v.sales }
+  const byDate = (json.byDate ?? {}) as Record<string, {
+    orders: number; sales: number; canceled?: number; canceledSales?: number
+  }>
+  // `sales` ay wala nang kanselado (tingnan ang orders/route.ts). Isinasama ang
+  // kanseladong halaga para maipakita kung magkano ang hindi binilang — ang
+  // tahimik na pagbawas ay kasing-panganib ng mismong bug.
+  const out: Record<string, { orders: number; amount: number; canceled: number; canceledAmount: number }> = {}
+  for (const [d, v] of Object.entries(byDate)) {
+    out[d] = { orders: v.orders, amount: v.sales, canceled: v.canceled ?? 0, canceledAmount: v.canceledSales ?? 0 }
+  }
   return out
 }
 
@@ -93,7 +100,8 @@ function roasColor(roas: number) {
 const VAT_RATE = 0.12   // 12% VAT on Ad Spend
 
 // Module-level cache (survives navigation away/back) keyed by pages+range.
-const ADSPENT_CACHE = new Map<string, { ts: number; data: Record<string, { orders: number; amount: number }>; from: Date; to: Date }>()
+type DayAgg = { orders: number; amount: number; canceled: number; canceledAmount: number }
+const ADSPENT_CACHE = new Map<string, { ts: number; data: Record<string, DayAgg>; from: Date; to: Date }>()
 const ADSPENT_TTL = 5 * 60_000
 
 export default function AdspentROASSummaryPage() {
@@ -105,7 +113,7 @@ export default function AdspentROASSummaryPage() {
   const [dateB, setDateB] = useState(defaultDateB())
   const [filterOwner, setFilterOwner] = useState("All")
   const [loading, setLoading] = useState(false)
-  const [realData, setRealData] = useState<Record<string, { orders: number; amount: number }>>({})
+  const [realData, setRealData] = useState<Record<string, DayAgg>>({})
   const [errors, setErrors] = useState<string[]>([])
   // The range whose data is currently displayed = the LAST range fetched (via Summary or the
   // initial auto-load). Decoupled from the live date picker, so changing the picker doesn't
@@ -152,7 +160,7 @@ export default function AdspentROASSummaryPage() {
     setLoading(true)
     setErrors([])
     setSpendWarnings([])
-    const merged: Record<string, { orders: number; amount: number }> = {}
+    const merged: Record<string, DayAgg> = {}
     const errs: string[] = []
 
     // Sales (Pancake) at ad spend (Meta) — sabay, dalawang magkaibang API naman.
@@ -162,9 +170,11 @@ export default function AdspentROASSummaryPage() {
         try {
           const data = await fetchPageByDate(page.api_key, pageId, fromStr, toStr)
           for (const [d, v] of Object.entries(data)) {
-            if (!merged[d]) merged[d] = { orders: 0, amount: 0 }
+            if (!merged[d]) merged[d] = { orders: 0, amount: 0, canceled: 0, canceledAmount: 0 }
             merged[d].orders += v.orders
             merged[d].amount += v.amount
+            merged[d].canceled += v.canceled
+            merged[d].canceledAmount += v.canceledAmount
           }
         } catch (e: any) {
           errs.push(`${page.name}: ${e?.message || "Failed to fetch"}`)
@@ -220,6 +230,16 @@ export default function AdspentROASSummaryPage() {
     vat: acc.vat + r.vat,
   }), { orders: 0, amount: 0, adspent: 0, vat: 0 }), [rows])
   const totalRoas = totals.amount > 0 && totals.adspent > 0 ? totals.amount / (totals.adspent + totals.vat) : 0
+
+  // Ilan/magkano ang kanseladong hindi kasama sa Sales — ipinapakita para hindi
+  // kailanman tahimik ang pagbawas (at para may maihambing sa Pancake dashboard).
+  const canceledTotals = useMemo(() => {
+    if (!appliedRange) return { orders: 0, amount: 0 }
+    return eachDayOfInterval({ start: appliedRange.from, end: appliedRange.to }).reduce((acc, date) => {
+      const d = realData[format(date, "yyyy-MM-dd")]
+      return { orders: acc.orders + (d?.canceled ?? 0), amount: acc.amount + (d?.canceledAmount ?? 0) }
+    }, { orders: 0, amount: 0 })
+  }, [appliedRange, realData])
 
   const n = rows.length || 1
 
@@ -302,6 +322,17 @@ export default function AdspentROASSummaryPage() {
               {msg}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Kanseladong orders — hindi kasama sa Sales/ROAS. Sinasabi kung magkano,
+          para malinaw ang pagkakaiba kapag inihambing sa Pancake dashboard (na
+          isinasama ang kanselado sa Total Sales nito). */}
+      {canceledTotals.orders > 0 && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-600">
+          <strong>{canceledTotals.orders.toLocaleString("en-PH")} cancelled order{canceledTotals.orders === 1 ? "" : "s"}</strong>
+          {" "}worth <strong>{fmt2(canceledTotals.amount)}</strong> are excluded from Sales and ROAS — cancelled orders collect nothing.
+          {" "}Pancake&apos;s own dashboard counts them, so its Total Sales will read higher by this amount.
         </div>
       )}
 
