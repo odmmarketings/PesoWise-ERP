@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="none"/>
+  <rect x="0" y="0" width="512" height="512" rx="112.64" fill="#16a34a"/>
+  <text x="50%" y="50%" dy="0.35em" text-anchor="middle"
+        font-family="Geist, Inter, Segoe UI, Arial, sans-serif" font-weight="700"
+        font-size="317.44" fill="#ffffff">P</text>
+</svg>

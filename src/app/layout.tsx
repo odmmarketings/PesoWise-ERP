@@ -1,4 +1,4 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Geist } from "next/font/google"
 import Script from "next/script"
 import "./globals.css"
@@ -14,7 +14,20 @@ export const metadata: Metadata = {
     description: "Sales, logistics, inventory, and ad spend in one ERP for Filipino sellers",
     type: "website",
   },
+  // Kinukuha ng Chrome/Edge ang mga ito para sa "Install app" (desktop + mobile).
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: { capable: true, title: "PesoWise", statusBarStyle: "default" },
 }
+
+// Kulay ng title bar ng installed app at ng mobile browser chrome.
+export const viewport: Viewport = { themeColor: "#16a34a" }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID

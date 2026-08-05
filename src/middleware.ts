@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
-const PUBLIC_PATHS = ["/", "/login", "/register", "/forgot-password"]
+// Ang manifest at mga icon ay dapat mabasa ng browser BAGO mag-login — kung
+// hindi, ang /manifest.webmanifest ay nire-redirect sa /login, HTML ang sagot,
+// at hindi lumalabas ang "Install app" sa Chrome/Edge (nahuli Ago 5 2026).
+const PUBLIC_PATHS = [
+  "/", "/login", "/register", "/forgot-password",
+  "/manifest.webmanifest", "/icon.svg", "/apple-icon.png",
+]
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -34,5 +40,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.png|.*\\.jpg|.*\\.svg).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.png|.*\\.jpg|.*\\.svg|.*\\.webmanifest).*)"],
 }
