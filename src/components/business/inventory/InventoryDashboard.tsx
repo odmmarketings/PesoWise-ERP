@@ -265,10 +265,10 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
         {cards.map(c => (
-          <div key={c.label} className={`relative overflow-hidden ${c.color} rounded-xl px-4 py-3 h-[78px] flex items-center justify-between`}>
+          <div key={c.label} className={`relative overflow-hidden ${c.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 h-[70px] sm:h-[78px] flex items-center justify-between`}>
             <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.12] text-white" />
             <div className="text-right ml-auto z-10 min-w-0">
-              <p className="text-xl font-bold text-white leading-none tabular-nums truncate">{c.value}</p>
+              <p className="text-base sm:text-xl font-bold text-white leading-none tabular-nums truncate">{c.value}</p>
               <p className="text-[10px] text-white/75 font-semibold mt-1 tracking-wider uppercase leading-tight">{c.label}</p>
             </div>
           </div>
@@ -374,7 +374,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
       {/* Low stock + dead stock */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
             <AlertTriangle className="w-4 h-4 text-amber-500" />
             <p className="text-sm font-bold text-slate-800">Low Stock Alert</p>
             <span className="text-[11px] text-slate-400">· out of stock, or ≤ {LOW_PCT * 100}% of intake left</span>
@@ -409,7 +409,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-1.5">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
             <Skull className="w-4 h-4 text-slate-400" />
             <p className="text-sm font-bold text-slate-800">Dead Stock</p>
             <span className="text-[11px] text-slate-400">· has stock but no movement in the last {TREND_DAYS} days</span>

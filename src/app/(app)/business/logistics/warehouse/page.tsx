@@ -335,11 +335,11 @@ export default function WarehouseDashboardPage() {
         ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
           {pipelineCards.map(c => (
-            <div key={c.key} className="relative overflow-hidden rounded-xl px-4 py-3 h-[78px] flex items-center justify-between"
+            <div key={c.key} className="relative overflow-hidden rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 h-[70px] sm:h-[78px] flex items-center justify-between"
               style={{ background: STATUS_COLOR[c.key] }}>
               <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.18] text-white" />
               <div className="text-right ml-auto z-10 min-w-0">
-                <p className="text-2xl font-bold text-white leading-none tabular-nums">{num(count[c.key] || 0)}</p>
+                <p className="text-lg sm:text-2xl font-bold text-white leading-none tabular-nums">{num(count[c.key] || 0)}</p>
                 <p className="text-[10px] text-white/85 font-semibold mt-1 tracking-wider uppercase leading-tight">
                   {c.label} <span className="text-white/70 normal-case tracking-normal">({peso(amount[c.key] || 0)})</span>
                 </p>
@@ -356,10 +356,10 @@ export default function WarehouseDashboardPage() {
       ) : (
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
         {opsCards.map(c => (
-          <div key={c.label} className={`relative overflow-hidden ${c.color} rounded-xl px-4 py-3 h-[78px] flex items-center justify-between`}>
+          <div key={c.label} className={`relative overflow-hidden ${c.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 h-[70px] sm:h-[78px] flex items-center justify-between`}>
             <c.icon strokeWidth={1} className="absolute -left-2 w-16 h-16 opacity-[0.12] text-white" />
             <div className="text-right ml-auto z-10 min-w-0">
-              <p className="text-xl font-bold text-white leading-none tabular-nums truncate">{c.value}</p>
+              <p className="text-base sm:text-xl font-bold text-white leading-none tabular-nums truncate">{c.value}</p>
               <p className="text-[10px] text-white/75 font-semibold mt-1 tracking-wider uppercase leading-tight">
                 {c.label} <span className="text-white/60 normal-case tracking-normal">({peso(c.amt)})</span>
               </p>

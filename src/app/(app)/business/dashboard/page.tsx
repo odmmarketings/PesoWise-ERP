@@ -394,14 +394,15 @@ export default function BusinessDashboardPage() {
         </div>
       )}
 
-      {/* TODAY'S SALES */}
-      <div className="grid grid-cols-3 gap-2.5">
-        <div className="relative overflow-hidden bg-slate-800 rounded-xl px-4 py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[78px]">
+      {/* TODAY'S SALES — isang card lang ito, kaya buong lapad sa cellphone at
+          1/3 lang sa desktop (para tumugma sa hanay sa ilalim). */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        <div className="relative overflow-hidden bg-slate-800 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]">
           <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
             <ShoppingBag strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
           </div>
           <div className="text-right ml-auto z-10">
-            <p className="text-2xl font-bold text-white leading-none">{fmtPeso(agg.todaySales)}</p>
+            <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(agg.todaySales)}</p>
             <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">TODAY&apos;S SALES ({agg.todayOrders})</p>
           </div>
         </div>
@@ -413,8 +414,10 @@ export default function BusinessDashboardPage() {
         <p className="text-xs text-slate-500 font-medium mt-2">{asOfLabel}</p>
       </div>
 
-      {/* Total Sales / Fulfilled / Unfulfilled */}
-      <div className="grid grid-cols-3 gap-2.5">
+      {/* Total Sales / Fulfilled / Unfulfilled — 2 kada hanay sa cellphone,
+          kapareho ng Warehouse dashboard (hindi 3: hindi kasya ang halaga sa
+          ~110px na kolum sa 375px na screen). */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
         {[
           { label: "TOTAL SALES", count: agg.totalOrders, amount: agg.totalSales, color: "bg-blue-500", icon: TrendingUp },
           { label: "FULFILLED", count: agg.fulfilled, amount: agg.fulfilledSales, color: "bg-emerald-500", icon: Package },
@@ -422,12 +425,12 @@ export default function BusinessDashboardPage() {
         ].map(card => (
           <div key={card.label}
             onClick={card.label === "TOTAL SALES" ? () => setSalesModalOpen(true) : undefined}
-            className={`relative overflow-hidden ${card.color} rounded-xl px-4 py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[78px]`}>
+            className={`relative overflow-hidden ${card.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]`}>
             <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
               <card.icon strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
             </div>
             <div className="text-right ml-auto z-10">
-              <p className="text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>
+              <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>
               <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">{card.label} ({card.count})</p>
             </div>
           </div>
@@ -437,8 +440,11 @@ export default function BusinessDashboardPage() {
       {/* Divider + Parcel filter */}
       <div>
         <hr className="border-slate-200" />
-        <div className="flex justify-end mt-3">
-          <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white text-xs">
+        {/* Sa cellphone, ang hanay ng filter ay pwedeng lumampas sa lapad —
+            pinapayagan ang pahalang na scroll sa loob nito imbes na sirain
+            ang buong layout. */}
+        <div className="flex sm:justify-end mt-3 -mx-1 px-1 overflow-x-auto scrollbar-dark">
+          <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white text-xs shrink-0">
             {PARCEL_FILTERS.map(f => (
               <FilterButton key={f} label={f} active={parcelFilter === f} onClick={() => setParcelFilter(f)} />
             ))}
@@ -446,8 +452,8 @@ export default function BusinessDashboardPage() {
         </div>
       </div>
 
-      {/* Parcel Status 3x3 */}
-      <div className="grid grid-cols-3 gap-2.5">
+      {/* Parcel Status — 3×3 sa desktop, 2 kada hanay sa cellphone */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
         {[
           { label: "SHIPPED OUT", sub: "Shippedout, Pick-Up", count: agg.shipped, amount: agg.shippedSales, color: "bg-teal-500", pct: null, icon: Truck },
           { label: "ODZ / INCOMPLETE", sub: null, count: 0, amount: 0, color: "bg-slate-500", pct: null, icon: AlertCircle },
@@ -464,14 +470,14 @@ export default function BusinessDashboardPage() {
           const pending = isDetail && loadingDetails
           return (
           <div key={card.label}
-            className={`relative overflow-hidden ${card.color} rounded-xl px-4 py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[78px]`}>
+            className={`relative overflow-hidden ${card.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]`}>
             <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
               <card.icon strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
             </div>
             <div className="text-right ml-auto z-10">
               {pending
                 ? <RefreshCw className="w-5 h-5 text-white/80 animate-spin ml-auto" />
-                : <p className="text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>}
+                : <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>}
               <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">
                 {card.label} ({pending ? "…" : card.count}){card.pct ? <span className="ml-1 font-bold">{card.pct}</span> : null}
               </p>

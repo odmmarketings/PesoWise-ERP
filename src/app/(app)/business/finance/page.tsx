@@ -246,15 +246,16 @@ export default function BusinessFinancePage() {
         <hr className="border-slate-200" />
       </div>
 
-      <div className="grid grid-cols-3 gap-2.5">
+      {/* 2 kada hanay sa cellphone — hindi kasya ang halaga sa 3 kolum sa 375px */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
         {financeCards.map(card => (
           <div key={card.label} title={card.tip}
-            className={`relative overflow-hidden ${card.color} rounded-xl px-4 py-3 cursor-default hover:opacity-95 transition-opacity flex items-center justify-between h-[78px]`}>
+            className={`relative overflow-hidden ${card.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-default hover:opacity-95 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]`}>
             <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
               <card.icon strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
             </div>
             <div className="text-right ml-auto z-10">
-              <p className="text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>
+              <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>
               <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">{card.label}</p>
             </div>
           </div>
@@ -272,7 +273,7 @@ export default function BusinessFinancePage() {
         {banks.length === 0 ? (
           <p className="text-sm text-slate-400 italic">No active banks. Add banks in <span className="font-medium">Finance → Settings → Banks</span>.</p>
         ) : (
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {banks.map(bank => (
               <BankCard key={bank.name} bank={bank} dateLabel={dateRangeLabel} />
             ))}
@@ -280,13 +281,15 @@ export default function BusinessFinancePage() {
         )}
       </div>
 
-      <div className="relative overflow-hidden bg-slate-800 rounded-2xl p-5 flex items-center justify-between">
+      {/* Sa cellphone, pumapatong ang label at halaga — kaya nagsasalansan
+          (label sa itaas, halaga sa ibaba) sa maliit na screen. */}
+      <div className="relative overflow-hidden bg-slate-800 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <CardDecoration icon={Wallet} className="-left-3 -top-3" />
         <div className="z-10">
           <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Actual Company Fund</p>
           <p className="text-xs text-slate-500 mt-1">{banks.length} bank{banks.length === 1 ? "" : "s"} combined · inflow − outflow</p>
         </div>
-        <p className={`text-3xl font-bold z-10 ${totalFund < 0 ? "text-red-400" : "text-white"}`}>
+        <p className={`text-2xl sm:text-3xl font-bold z-10 ${totalFund < 0 ? "text-red-400" : "text-white"}`}>
           {totalFund < 0 ? "-" : ""}{fmtPeso(Math.abs(totalFund))}
         </p>
       </div>

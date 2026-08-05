@@ -51,16 +51,17 @@ export default function AdsOverviewPage() {
       </div>
       <p className="text-sm text-slate-500">All-platform ad spend ({format(new Date(from), "MMM dd")} – {format(new Date(to), "MMM dd")}).</p>
 
-      <div className="rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 text-white p-6 flex items-center justify-between">
-        <span className="text-sm font-semibold uppercase tracking-wider opacity-80">Total Ad Spend<br />(all platforms)</span>
-        <span className="text-3xl font-extrabold tabular-nums">{peso(grand)}</span>
+      {/* Nagsasalansan sa cellphone — pumapatong ang label at halaga kapag magkatabi */}
+      <div className="rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 text-white p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <span className="text-sm font-semibold uppercase tracking-wider opacity-80">Total Ad Spend<br className="hidden sm:block" /> (all platforms)</span>
+        <span className="text-2xl sm:text-3xl font-extrabold tabular-nums">{peso(grand)}</span>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {platforms.map(p => (
-          <div key={p.name} className={`relative overflow-hidden rounded-2xl p-4 text-white bg-gradient-to-br ${p.accent}`}>
+          <div key={p.name} className={`relative overflow-hidden rounded-2xl p-3.5 sm:p-4 text-white bg-gradient-to-br ${p.accent}`}>
             <div className="text-[11px] uppercase tracking-wider opacity-90 flex items-center gap-1.5">{p.name} {!p.live && <span className="text-[9px] bg-white/20 px-1.5 py-0.5 rounded">soon</span>}</div>
-            <div className="text-2xl font-bold mt-1 tabular-nums">{peso(p.spend)}</div>
+            <div className="text-xl sm:text-2xl font-bold mt-1 tabular-nums">{peso(p.spend)}</div>
             <div className="text-xs opacity-80 mt-0.5">{grand > 0 ? ((p.spend / grand) * 100).toFixed(1) : "0"}% of total</div>
           </div>
         ))}
