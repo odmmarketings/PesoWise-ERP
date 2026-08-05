@@ -201,7 +201,30 @@ function dateList(from, to) {
 const reportDates = dateList(reportFrom, reportTo)
 
 // ── Pancake POS: per-page byDate {orders, sales} (replicates api/pancake/orders) ─
+// ⚠ SINASALAMIN LANG NITO ANG api/pancake/orders — kaya kapag may inaayos doon,
+// dalhin rin DITO. Nakalimutan ito noong Ago 4–5 2026: naidagdag ang SCALE guard
+// at ang pag-alis ng kanselado sa route, pero nanatiling mali ang report na ito
+// (Velora Care: ₱149,700 dapat ₱1,497).
 const PANCAKE_BASE = "https://pos.pages.fm/api/v1"
+
+// SCALE guard — kapareho ng api/pancake/orders. Mula ~8PM Ago 3 2026, ang mga
+// order ng Velora shop ay 100× ang halaga sa API habang tama sa POS UI. Ang
+// UNIT price ang basehan, hindi ang total: ang tunay na 30 × ₱499 = ₱14,970 ay
+// may unit price na 499 pa rin kaya hindi ito nahahawakan.
+const SCALE = 100
+function unitLooksScaled(unitPrice) {
+  return unitPrice >= 10000 && unitPrice % SCALE === 0
+    && unitPrice / SCALE >= 50 && unitPrice / SCALE <= 5000
+}
+function orderIsScaled(o) {
+  const items = Array.isArray(o?.items) ? o.items : []
+  if (items.length === 0) return false
+  const units = items
+    .map(it => Number(it?.variation_info?.retail_price ?? it?.retail_price ?? 0))
+    .filter(p => p > 0)
+  return units.length > 0 && units.every(unitLooksScaled)
+}
+const descale = (v, scaled) => scaled ? Number(v ?? 0) / SCALE : Number(v ?? 0)
 function toUnix(dateStr, endOfDay = false) {
   const [y, m, d] = dateStr.split("-").map(Number)
   const utcMs = Date.UTC(y, m - 1, d, 0, 0, 0) - PH_OFFSET
@@ -237,7 +260,9 @@ async function pancakeByDate(shopId, apiKey, from, to) {
     u.searchParams.set("endDateTime", String(endTs))
     u.searchParams.set("updateStatus", "inserted_at")            // basis = sales_order
     u.searchParams.set("option_sort", "inserted_at_asc")
-    for (const f of ["id", "cod", "inserted_at", "created_at"]) u.searchParams.append("fields[]", f)
+    // `items` ay kailangan ng SCALE guard (unit price ang basehan), `status` ng
+    // pag-alis ng kanselado — pareho sa api/pancake/orders.
+    for (const f of ["id", "cod", "inserted_at", "created_at", "items", "status"]) u.searchParams.append("fields[]", f)
     return u.toString()
   }
   const fetchPage = async (n) => {
@@ -264,7 +289,9 @@ async function pancakeByDate(shopId, apiKey, from, to) {
     const utcMs = new Date(raw.includes("Z") ? raw : raw + "Z").getTime()
     if (isNaN(utcMs)) continue
     const date = phDateStr(utcMs)
-    const cod = Number(o.cod ?? 0)
+    // Kanselado = walang nakolekta, hindi benta (kapareho ng api/pancake/orders).
+    if (Number(o.status) === 6) continue
+    const cod = descale(o.cod, orderIsScaled(o))
     if (!full[date]) full[date] = { orders: 0, sales: 0 }
     full[date].orders += 1; full[date].sales += cod
     const phd = new Date(utcMs + PH_OFFSET)
