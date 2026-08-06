@@ -16,11 +16,28 @@ type CacheEntry = { ts: number; data: any }
 const CACHE = new Map<string, CacheEntry>()
 const CACHE_TTL_MS = 5 * 60_000
 
-async function fbGet(path: string) {
-  const res = await fetch(`${BASE}/${path}`, { cache: "no-store" })
-  const json = await res.json().catch(() => ({}))
-  if (!res.ok || json.error) throw new Error(json?.error?.message || `Graph API error (${res.status})`)
-  return json
+// Kaparehong dahilan ng timeout sa Pancake route: kapag walang hangganan ang isang
+// request, ang isang naka-stall na tawag ay kinakain ang buong budget ng client at
+// nagiging "timeout" ang buong page. Sumusuko agad at sumusubok muli.
+const REQ_TIMEOUT_MS = 12_000
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+async function fbGet(path: string, retries = 2): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    let res: Response
+    try {
+      res = await fetch(`${BASE}/${path}`, { cache: "no-store", signal: AbortSignal.timeout(REQ_TIMEOUT_MS) })
+    } catch (e: any) {
+      if (attempt < retries) { await sleep(350 * (attempt + 1)); continue }
+      throw new Error(e?.name === "TimeoutError" ? `Graph API timeout after ${REQ_TIMEOUT_MS / 1000}s` : "Graph API network error")
+    }
+    if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+      await sleep(450 * (attempt + 1)); continue
+    }
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok || json.error) throw new Error(json?.error?.message || `Graph API error (${res.status})`)
+    return json
+  }
 }
 
 // Pull metrics from the actions / action_values / purchase_roas arrays. We use the OMNI

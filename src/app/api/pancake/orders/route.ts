@@ -21,8 +21,19 @@ function toUnix(dateStr: string, endOfDay = false): number {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+// ── PER-REQUEST TIMEOUT ──────────────────────────────────────────────────────
+// Pabago-bago ang Pancake: NASUKAT (Ago 6 2026) na ang PAREHONG request ay
+// tumatagal ng 0.3s at 12.0s (Optilux, 27 orders), at 0.8s at 28.6s (CystCare).
+// Walang kinalaman ang laki — random stall lang. Walang timeout dati kada
+// request, kaya isang naka-stall na sub-page ay kinakain ang BUONG 60s na budget
+// ng client at "timeout — hindi sumagot ang Pancake sa loob ng 60s" ang lumalabas
+// para sa isang page (Lumyra, nakita sa production). Ang pag-abandona at
+// pag-retry ay halos laging mabilis magtagumpay — kaya hindi paghihintay ang
+// tamang sagot kundi pagsuko agad at muling pagsubok.
+const REQ_TIMEOUT_MS = 12_000
+
 // Fetch JSON from Pancake with retry/backoff on transient failures.
-// 429 / 5xx / network → retry up to `retries` with backoff (genuinely transient).
+// 429 / 5xx / network / timeout → retry up to `retries` with backoff (genuinely transient).
 // 403 → retry only ONCE with a short delay: it's usually a real bad/invalid key (which never
 //   recovers), so we fail FAST so dead-key pages don't stall the UI by ~2s; the single quick
 //   retry still covers the rarer case where Pancake throttles with a 403.
@@ -30,10 +41,11 @@ async function fetchPancakeJSON(url: string, retries = 2): Promise<{ ok: boolean
   for (let attempt = 0; ; attempt++) {
     let res: Response
     try {
-      res = await fetch(url, { cache: "no-store" })
+      res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(REQ_TIMEOUT_MS) })
     } catch {
+      // Kasama na rito ang TimeoutError — sinusubukan ulit, hindi hinihintay.
       if (attempt < retries) { await sleep(350 * (attempt + 1)); continue }
-      return { ok: false, status: 0, json: null }  // network failure
+      return { ok: false, status: 0, json: null }  // network failure / timeout
     }
     if ((res.status === 429 || res.status >= 500) && attempt < retries) {
       await sleep(450 * (attempt + 1)); continue

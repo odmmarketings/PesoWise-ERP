@@ -237,10 +237,14 @@ function toPHDate(raw) {
   return phDateStr(utcMs)
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+// Kaparehong per-request timeout ng api/pancake/orders: nasukat na tumatagal ang
+// PAREHONG request ng 0.3s at 12.0s. Kung walang hangganan, isang naka-stall na
+// request ay nagpapatigil sa buong scheduled report.
+const REQ_TIMEOUT_MS = 12_000
 async function fetchJSON(url, retries = 2) {
   for (let a = 0; ; a++) {
     let res
-    try { res = await fetch(url, { cache: "no-store" }) }
+    try { res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(REQ_TIMEOUT_MS) }) }
     catch { if (a < retries) { await sleep(350 * (a + 1)); continue } return { ok: false, status: 0, json: null } }
     if ((res.status === 429 || res.status >= 500) && a < retries) { await sleep(450 * (a + 1)); continue }
     if (res.status === 403 && a < 1) { await sleep(300); continue }

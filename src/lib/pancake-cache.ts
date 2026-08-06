@@ -52,22 +52,31 @@ export async function cachedJson(url: string, opts?: { force?: boolean; ttl?: nu
   }
 
   const p = (async () => {
-    let res: Response
-    try {
-      res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeout) })
-    } catch (e: any) {
-      // Sinasalo ang abort para maging malinaw na mensahe imbes na "signal is aborted".
-      if (e?.name === "TimeoutError" || e?.name === "AbortError") {
-        throw new Error(`timeout — hindi sumagot ang Pancake sa loob ng ${Math.round(timeout / 1000)}s`)
+    // ISANG MULING PAGSUBOK KAPAG NAG-TIMEOUT. Pabago-bago ang Pancake — nasukat na
+    // ang parehong request sa 0.3s at 12.0s. Dati, ang isang malas na page ay
+    // nagpapakita ng "Sales for 1 page failed to load" at kulang na totals para sa
+    // BUONG report. Halos laging tumatagumpay ang pangalawang subok.
+    let lastTimeout: Error | null = null
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let res: Response
+      try {
+        res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeout) })
+      } catch (e: any) {
+        // Sinasalo ang abort para maging malinaw na mensahe imbes na "signal is aborted".
+        if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+          lastTimeout = new Error(`timeout — hindi sumagot ang Pancake sa loob ng ${Math.round(timeout / 1000)}s`)
+          continue   // subukan muli; ang stall ay pansamantala
+        }
+        throw e
       }
-      throw e
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json || json.success === false) {
+        throw new Error(json?.error || `HTTP ${res.status}`)
+      }
+      CACHE.set(key, { ts: Date.now(), data: json })
+      return json
     }
-    const json = await res.json().catch(() => null)
-    if (!res.ok || !json || json.success === false) {
-      throw new Error(json?.error || `HTTP ${res.status}`)
-    }
-    CACHE.set(key, { ts: Date.now(), data: json })
-    return json
+    throw lastTimeout ?? new Error("timeout")
   })()
 
   INFLIGHT.set(key, p)
