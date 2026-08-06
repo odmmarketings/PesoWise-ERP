@@ -10,6 +10,17 @@ import { PagesProvider } from "@/lib/pages-store"
 import { syncRosterFromSupabase } from "@/lib/users-store"
 import type { Plan } from "@/lib/types"
 
+// Kaparehong hugis ng cookie na itinatakda ng /api/auth/login, para pareho ang
+// nababasa ng middleware saan man ito manggaling.
+const COOKIE_DAYS = { access: 7, refresh: 30 }
+function writeSessionCookies(accessToken: string, refreshToken: string) {
+  const secure = location.protocol === "https:" ? "; Secure" : ""
+  document.cookie = `sb-access-token=${accessToken}; Max-Age=${COOKIE_DAYS.access * 86400}; Path=/; SameSite=Lax${secure}`
+  if (refreshToken) {
+    document.cookie = `sb-refresh-token=${refreshToken}; Max-Age=${COOKIE_DAYS.refresh * 86400}; Path=/; SameSite=Lax${secure}`
+  }
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -40,6 +51,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       }
 
       if (!session) { router.push("/login"); return }
+
+      // ── PANATILIHING SARIWA ANG COOKIE ────────────────────────────────────
+      // Ang middleware ay ang cookie ang tinitingnan, pero 7 araw lang ang
+      // `maxAge` nito at HINDI ito naa-update. Ang Supabase client naman ay
+      // kusang nag-re-refresh ng access token (30 araw ang refresh token) —
+      // nasa localStorage lang, hindi sa cookie. Kaya eksaktong 7 araw
+      // pagkatapos mag-login, patay ang cookie habang buhay pa ang session:
+      // mukhang naka-login pa ang UI (localStorage ang pinagkukunan ng pangalan)
+      // pero bumabagsak ang LAHAT ng API call. Iyon ang production error noong
+      // Ago 6 2026. Isinusulat ngayon ang sariwang token sa bawat pag-load.
+      writeSessionCookies(session.access_token, session.refresh_token)
 
       const { data: profile } = await supabase
         .from("users")
@@ -74,6 +96,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       syncRosterFromSupabase()
     }
     loadUser()
+
+    // Habang bukas ang app, kusang nag-re-refresh ng token ang Supabase. Dapat
+    // sumunod ang cookie — kung hindi, luluma ito habang tumatakbo ang session
+    // at babagsak ang mga API call kahit hindi umaalis ang user sa page.
+    const supabase = createSupabaseBrowserClient()
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.access_token && (event === "TOKEN_REFRESHED" || event === "SIGNED_IN")) {
+        writeSessionCookies(session.access_token, session.refresh_token || "")
+      }
+      if (event === "SIGNED_OUT") {
+        document.cookie = "sb-access-token=; Max-Age=0; path=/"
+        document.cookie = "sb-refresh-token=; Max-Age=0; path=/"
+      }
+    })
+    return () => sub.subscription.unsubscribe()
   }, [router])
 
   async function handleLogout() {

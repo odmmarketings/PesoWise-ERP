@@ -25,6 +25,24 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get("sb-access-token")?.value
 
   if (!token) {
+    // ── HUWAG SUMAGOT NG HTML SA ISANG API CALL ──────────────────────────────
+    // Dating ang lahat ay nire-redirect sa /login. Para sa `fetch()` ng app,
+    // tahimik na sinusundan ang redirect at HTML ang natatanggap — kaya ang
+    // nakikita ng user ay `Unexpected token '<', "<!DOCTYPE"... is not valid
+    // JSON` sa BAWAT page, imbes na "expired ang session mo". Nangyari ito sa
+    // production noong Ago 6 2026 (Page ROAS Tracker: pula ang lahat ng page).
+    // Ang JSON 401 ay naipapakita nang tama ng mga page — ginagamit na nila ang
+    // `json.error` — at kaya ring hulihin ng client para magpa-login muli.
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        {
+          success: false,
+          errorCode: "SESSION_EXPIRED",
+          error: "Session expired — please sign in again.",
+        },
+        { status: 401 }
+      )
+    }
     return NextResponse.redirect(new URL("/login", request.url))
   }
 
