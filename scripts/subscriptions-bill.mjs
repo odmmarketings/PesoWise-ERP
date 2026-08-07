@@ -3,6 +3,11 @@
 // nagpo-post ng isang Book Keeping debit sa "Subscriptions" account (exact PHP), tapos ini-stamp
 // ang last_billed_period para hindi madoble kada cycle. Ginagamit ng daily scheduled task.
 //
+// FIXED lang ang kinokolekta nito — ang may alam na cycle (weekly/monthly/quarterly/semiannual/
+// yearly), billing day, at eksaktong halaga. Ang VARIABLE (auto top-up, walang fixed na petsa, o
+// nag-iibang halaga) ay nilalaktawan at inililista sa output: manu-mano itong nilo-log sa UI
+// ("Log charge") dahil walang mahuhulaang petsa o halaga na ligtas ipasok sa ledger.
+//
 //   node scripts/subscriptions-bill.mjs                 # collect due today
 //   node scripts/subscriptions-bill.mjs --dry-run       # list due, WALANG post/write
 //   node scripts/subscriptions-bill.mjs --date=2026-08-05  # test a specific PH date
@@ -38,16 +43,45 @@ if (dateArg && /^\d{4}-\d{2}-\d{2}$/.test(dateArg)) { [y, m, d] = dateArg.split(
 else { const ph = new Date(Date.now() + 8 * 3600 * 1000); y = ph.getUTCFullYear(); m = ph.getUTCMonth() + 1; d = ph.getUTCDate() }
 const dateStr = `${y}-${pad(m)}-${pad(d)}`
 
-function periodOf(sub) { return sub.cycle === "yearly" ? String(y) : `${y}-${pad(m)}` }
+// ⚠ Salamin ito ng isDue/periodOf/isVariable sa src/lib/subscriptions-store.ts — kapag binago
+// ang alinman doon, sabayan dito, kung hindi ay maghihiwalay ang UI at ang daily script.
+const DAY_MS = 86400000
+const utc = (yy, mm, dd) => Date.UTC(yy, mm - 1, dd)
+const isoOf = ts => { const t = new Date(ts); return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}` }
+const dowOf = (yy, mm, dd) => new Date(utc(yy, mm, dd)).getUTCDay() + 1        // 1=Sunday … 7=Saturday
+const weekKey = (yy, mm, dd) => "W" + isoOf(utc(yy, mm, dd) - (dowOf(yy, mm, dd) - 1) * DAY_MS)
+const cycleMonths = c => (c === "quarterly" ? 3 : c === "semiannual" ? 6 : c === "yearly" ? 12 : 1)
+
+function periodStart(sub) {
+  const n = cycleMonths(sub.cycle)
+  if (n === 1) return { py: y, pm: m }
+  const anchor = Math.min(12, Math.max(1, sub.billing_month || 1)) - 1
+  const startAbs = anchor + Math.floor((y * 12 + (m - 1) - anchor) / n) * n
+  return { py: Math.floor(startAbs / 12), pm: (startAbs % 12) + 1 }
+}
+
+// Auto top-up (walang mahuhulaang petsa), walang fixed na billing day, o nag-iibang halaga.
+// Hindi kailanman auto-posted — sa UI ito manu-manong nilo-log ("Log charge").
+function isVariable(sub) {
+  return sub.cycle === "topup" || !Number(sub.billing_day) || !(Number(sub.amount) > 0)
+}
+
+function periodOf(sub) {
+  if (sub.cycle === "weekly") return weekKey(y, m, d)
+  if (sub.cycle === "topup") return dateStr
+  const { py, pm } = periodStart(sub)
+  return sub.cycle === "yearly" ? String(py) : `${py}-${pad(pm)}`   // 'YYYY' pa rin ang yearly (lumang rows)
+}
+
 function isDue(sub) {
   if (sub.status !== "active") return false
-  if (sub.cycle === "yearly") {
-    if (sub.last_billed_period === String(y)) return false
-    const bm = sub.billing_month || 1
-    return m > bm || (m === bm && d >= Math.min(sub.billing_day, daysInMonth(y, bm)))
-  }
-  if (sub.last_billed_period === `${y}-${pad(m)}`) return false
-  return d >= Math.min(sub.billing_day, daysInMonth(y, m))
+  if (isVariable(sub)) return false
+  if (sub.last_billed_period === periodOf(sub)) return false
+  if (sub.cycle === "weekly") return dowOf(y, m, d) >= sub.billing_day
+  const { py, pm } = periodStart(sub)
+  const bd = Math.min(sub.billing_day, daysInMonth(py, pm))
+  const absNow = y * 12 + (m - 1), absStart = py * 12 + (pm - 1)
+  return absNow > absStart || (absNow === absStart && d >= bd)
 }
 
 async function main() {
@@ -71,7 +105,10 @@ async function main() {
   if (error) throw error
 
   const due = (subs || []).filter(isDue)
+  // Sinasabi kung ilan ang nilaktawan — hindi tahimik na binabawasan ang saklaw.
+  const variable = (subs || []).filter(s => s.status === "active" && isVariable(s))
   console.log(`Subscriptions — ${dateStr} (PH) · ${subs?.length || 0} total · ${due.length} due${DRY ? " · DRY RUN" : ""}`)
+  if (variable.length) console.log(`  (${variable.length} variable — manual log sa UI: ${variable.map(s => s.name).join(", ")})`)
   let posted = 0, total = 0
   for (const sub of due) {
     if (DRY) { console.log(`  • DUE ${sub.name} — ${peso(sub.amount)} → ${sub.account} / ${sub.bank || "no bank"}`); continue }
