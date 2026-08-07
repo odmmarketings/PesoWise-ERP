@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 import { useProductItems, itemRemaining, ITEM_STATUSES, type ProductItem, type NewItemInput, type ItemStatus } from "@/lib/product-items-store"
 import { useSuppliers } from "@/lib/supplier-store"
+import { Confidential, ConfidentialToggle } from "@/components/business/Confidential"
 import { InventoryDashboard } from "@/components/business/inventory/InventoryDashboard"
 
 const INP = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400"
@@ -128,6 +129,8 @@ export default function ProductItemsPage() {
   const [confirmDel, setConfirmDel] = useState<ProductItem | null>(null)      // soft delete
   const [confirmPurge, setConfirmPurge] = useState<ProductItem | null>(null)  // permanent delete (deleted view)
   const [toolsOpen, setToolsOpen] = useState(false)
+  // Kompidensyal ang supplier store name — nakatago ang default sa bawat pagbukas.
+  const [showSuppliers, setShowSuppliers] = useState(false)
   const [toast, setToast] = useState("")
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(""), 3500) }
 
@@ -202,6 +205,7 @@ export default function ProductItemsPage() {
         </div>
         {tab === "list" && (
         <div className="flex items-center gap-2">
+          <ConfidentialToggle shown={showSuppliers} onToggle={() => setShowSuppliers(v => !v)} label="suppliers" />
           <div className="relative">
             <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => setToolsOpen(o => !o)}><Wrench className="w-4 h-4" /> Tools</Button>
             {toolsOpen && (
@@ -308,7 +312,8 @@ export default function ProductItemsPage() {
                   <td className="px-4 py-3 tabular-nums text-slate-700">{fmtNum(i.damage)}</td>
                   <td className="px-4 py-3 tabular-nums text-slate-700">{fmtNum(i.loss)}</td>
                   <td className={`px-4 py-3 tabular-nums font-semibold ${itemRemaining(i) <= 0 ? "text-rose-600" : "text-slate-800"}`}>{fmtNum(itemRemaining(i))}</td>
-                  <td className="px-4 py-3 text-slate-600 max-w-[180px] truncate">{i.supplier || "—"}</td>
+                  {/* Kompidensyal — nakatago hangga't hindi pinipindot ang mata. */}
+                  <td className="px-4 py-3 max-w-[180px]"><Confidential value={i.supplier} forceShow={showSuppliers} className="text-slate-600" /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 text-slate-400">
                       {view === "deleted" ? (
@@ -552,7 +557,7 @@ function ViewScreen({ item, onBack, onEdit }: { item: ProductItem; onBack: () =>
         <F l="Name" v={item.name} /><F l="SKU Code" v={item.sku} />
         <F l="Description" v={item.description} /><F l="COG" v={fmtNum(item.cog)} />
         <F l="Color" v={item.color} /><F l="Size" v={item.size} /><F l="Type" v={item.type} />
-        <F l="Supplier Store Name" v={item.supplier} />
+        <F l="Supplier Store Name" v={<Confidential value={item.supplier} className="text-slate-800" />} />
         <F l="Goods" v={fmtNum(item.goods)} /><F l="Damage" v={fmtNum(item.damage)} /><F l="Loss" v={fmtNum(item.loss)} />
         <F l="Remaining" v={<strong className={itemRemaining(item) <= 0 ? "text-rose-600" : ""}>{fmtNum(itemRemaining(item))}</strong>} />
         <F l="Status" v={<span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${item.status === "Active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{item.status}</span>} />

@@ -6,6 +6,7 @@ import {
   Factory, Plus, Search, Pencil, X, ChevronLeft, ChevronRight, Check, Settings, Archive, ArchiveRestore, FolderOpen, List, Trash2,
 } from "lucide-react"
 import { useSuppliers, SUPPLIER_STATUSES, type Supplier, type NewSupplierInput, type SupplierStatus } from "@/lib/supplier-store"
+import { Confidential, ConfidentialToggle } from "@/components/business/Confidential"
 
 const INP = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400"
 const FINP = "w-full h-8 rounded-lg border border-slate-200 px-2 text-xs bg-white focus:outline-none focus:border-blue-400"
@@ -73,6 +74,8 @@ export default function SupplierPage() {
   const [active, setActive] = useState<Supplier | null>(null)
   const [confirmDel, setConfirmDel] = useState<Supplier | null>(null)
   const [archivedView, setArchivedView] = useState(false)
+  // Kompidensyal ang store name — nakatago ang default sa bawat pagbukas.
+  const [showStores, setShowStores] = useState(false)
   const [toast, setToast] = useState("")
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(""), 3500) }
 
@@ -134,6 +137,7 @@ export default function SupplierPage() {
           <p className="text-xs text-slate-400 mt-0.5">{filtered.length} record{filtered.length === 1 ? "" : "s"}</p>
         </div>
         <div className="flex items-center gap-2">
+          <ConfidentialToggle shown={showStores} onToggle={() => setShowStores(v => !v)} label="store names" />
           <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => { setActive(null); setScreen("add") }}><Plus className="w-4 h-4" /> Add New</Button>
           <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => { setArchivedView(v => !v); setPage(1) }}>
             {archivedView ? <><List className="w-4 h-4" /> List</> : <><FolderOpen className="w-4 h-4" /> Archives</>}
@@ -190,7 +194,8 @@ export default function SupplierPage() {
               ) : paginated.map((s, i) => (
                 <tr key={s.id} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40`}>
                   <td className="px-4 py-3 text-slate-400">{showFrom + i}</td>
-                  <td className="px-4 py-3 font-semibold text-slate-800">{s.store_name || "—"}</td>
+                  {/* Kompidensyal — nakatago hangga't hindi pinipindot ang mata. */}
+                  <td className="px-4 py-3 max-w-[200px]"><Confidential value={s.store_name} forceShow={showStores} className="font-semibold text-slate-800" /></td>
                   <td className="px-4 py-3 text-slate-700">{s.name || "—"}</td>
                   <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{s.contact || "—"}</td>
                   <td className="px-4 py-3 text-slate-600 max-w-[220px]"><AddressCell text={s.address} /></td>
@@ -451,7 +456,7 @@ function ViewScreen({ supplier, onBack, onEdit }: { supplier: Supplier; onBack: 
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"><ChevronLeft className="w-4 h-4" /> Back to Suppliers</button>
       <div className="bg-white rounded-2xl border border-slate-200 p-6 max-w-3xl">
         <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2 mb-4"><Factory className="w-5 h-5" /> VIEW SUPPLIER</h1>
-        <F l="Supplier Store Name" v={supplier.store_name} /><F l="Supplier Name" v={supplier.name} />
+        <F l="Supplier Store Name" v={<Confidential value={supplier.store_name} className="text-slate-800" />} /><F l="Supplier Name" v={supplier.name} />
         <F l="Supplier Contact" v={supplier.contact} /><F l="Supplier Address" v={supplier.address} />
         <F l="Province" v={supplier.province} /><F l="City" v={supplier.city} /><F l="Brgy." v={supplier.brgy} />
         <F l="Contact Person" v={supplier.contact_person} /><F l="Person Contact No." v={supplier.contact_person_no} />
