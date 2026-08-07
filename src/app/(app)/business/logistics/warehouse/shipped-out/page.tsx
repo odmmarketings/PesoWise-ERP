@@ -11,6 +11,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems } from "@/lib/product-items-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
+import { useProductBatches } from "@/lib/product-batches-store"
 import { useShippedOutScans, type ParcelInfo } from "@/lib/shipped-out-store"
 import { buildRecipes, explodeOrderItems, isDeductable } from "@/lib/shipped-out-sync"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
@@ -97,6 +98,7 @@ export default function ShippedOutPage() {
   const unitStore = useUnitCodes()
   const products = useProductItems()
   const releases = useStockReleases()
+  const batches = useProductBatches()
   const store = useShippedOutScans()
 
   const [tab, setTab] = useState<"scan" | "report">("scan")
@@ -160,6 +162,15 @@ export default function ShippedOutPage() {
     if (res !== "claimed") return res            // "already" o error — walang binabawas
     if (items.length) {
       products.releaseStock(items.map(i => ({ id: i.item_id, qty: i.deducted })))
+      // Kinakain din ang batch nang FIFO — dito nakukuha ang TUNAY na COGS ng labas
+      // na ito (presyo ng mismong mga pirasong umalis, hindi average).
+      const used = batches.consume(items.map(i => ({ id: i.item_id, qty: i.deducted })))
+      // Itinatago kung saang batch galing — kung hindi, mawawala ang impormasyon at
+      // hindi na malalaman kung saan ibabalik kapag nag-RTS ang parcel na ito.
+      const lines = used.flatMap(u => u.lines.map(l => ({ item_id: u.item_id, ...l })))
+      void store.saveBatchLines(code, lines,
+        used.reduce((s, u) => s + u.cogsValue, 0),
+        used.reduce((s, u) => s + u.short, 0))
       releases.addRelease({
         category: "Shipped Out", ref: code,
         items: items.map(i => ({ item_id: i.item_id, sku: i.sku, name: i.name, required: 1, release: i.deducted, deducted: i.deducted })),
@@ -302,16 +313,18 @@ export default function ShippedOutPage() {
   const repTotals = useMemo(() => ({
     amount: repScans.reduce((s, r) => s + (r.amount || 0), 0),
     units: repScans.reduce((s, r) => s + (r.deducted_total || 0), 0),
+    cogs: repScans.reduce((s, r) => s + (r.cogs_value || 0), 0),
   }), [repScans])
   const repStats = useMemo(() => statsOf(repScans), [repScans])   // eslint-disable-line react-hooks/exhaustive-deps
 
   function exportReport() {
-    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Deducted from Inventory (units)", "Amount", "Manual Scan", "Scanned By", "POS Shipped", "Deducted?"]
+    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Deducted from Inventory (units)", "Amount", "Manual Scan", "Scanned By", "POS Shipped", "Deducted?", "Galing sa Batch (COG)", "COGS"]
     const data = [headers, ...repScans.map(s => [
       fmtDT(s.created_at), s.tracking_no, courierLabel(s.courier, s.tracking_no), s.page_name, s.customer, s.order_item,
       s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.deducted_total, s.amount,
       fmtDT(s.manual_scanned_at), s.manual_scanned_by || s.scanned_by, fmtDT(s.pancake_shipped_at), s.deducted ? "Oo" : "Hindi pa",
-    ]), ["TOTAL", "", "", "", "", "", "", repTotals.units, repTotals.amount, "", "", "", ""]]
+      (s.batch_lines || []).map(l => `${l.qty}x @₱${l.cog}${l.batch_no ? ` (${l.batch_no})` : ""}`).join(", "), s.cogs_value,
+    ]), ["TOTAL", "", "", "", "", "", "", repTotals.units, repTotals.amount, "", "", "", "", "", repTotals.cogs]]
     const ws = XLSX.utils.aoa_to_sheet(data)
     for (let c = 0; c < headers.length; c++) {
       const addr = XLSX.utils.encode_cell({ r: 0, c })

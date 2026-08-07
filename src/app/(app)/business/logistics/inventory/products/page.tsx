@@ -5,11 +5,12 @@ import { Input } from "@/components/ui/input"
 import * as XLSX from "xlsx-js-style"
 import {
   Tag, Plus, Search, Pencil, X, ChevronLeft, ChevronRight, Check, Settings, Archive, ArchiveRestore,
-  FolderOpen, List, Wrench, Upload, FileSpreadsheet, RotateCcw, Trash2, LayoutDashboard,
+  FolderOpen, List, Wrench, Upload, FileSpreadsheet, RotateCcw, Trash2, LayoutDashboard, PackagePlus,
 } from "lucide-react"
 import { useProductItems, itemRemaining, ITEM_STATUSES, type ProductItem, type NewItemInput, type ItemStatus } from "@/lib/product-items-store"
 import { useSuppliers } from "@/lib/supplier-store"
 import { Confidential, ConfidentialToggle } from "@/components/business/Confidential"
+import { useProductBatches, valueOf, batchRemaining, fifoOrder, type ProductBatch } from "@/lib/product-batches-store"
 import { InventoryDashboard } from "@/components/business/inventory/InventoryDashboard"
 
 const INP = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400"
@@ -128,6 +129,11 @@ export default function ProductItemsPage() {
   const [active, setActive] = useState<ProductItem | null>(null)
   const [confirmDel, setConfirmDel] = useState<ProductItem | null>(null)      // soft delete
   const [confirmPurge, setConfirmPurge] = useState<ProductItem | null>(null)  // permanent delete (deleted view)
+  const batchStore = useProductBatches()
+  const [receiving, setReceiving] = useState<ProductItem | null>(null)   // Receive Stock modal
+  // Hindi kusang nawawala ang pagkakaiba ng batch at ng bilang — ipinapakita, hindi itinatago.
+  const drift = useMemo(() => batchStore.reconcile(store.items.filter(i => !i.deleted)),
+    [batchStore, store.items])
   const [toolsOpen, setToolsOpen] = useState(false)
   // Kompidensyal ang supplier store name — nakatago ang default sa bawat pagbukas.
   const [showSuppliers, setShowSuppliers] = useState(false)
@@ -323,6 +329,7 @@ export default function ProductItemsPage() {
                         </>
                       ) : (
                         <>
+                          <button onClick={() => setReceiving(i)} className="hover:text-emerald-600" title="Receive Stock (bagong dating, sariling COG)"><PackagePlus className="w-4 h-4" /></button>
                           <button onClick={() => { setActive(i); setScreen("view") }} className="hover:text-blue-600" title="View"><Search className="w-4 h-4" /></button>
                           <button onClick={() => { setActive(i); setScreen("edit") }} className="hover:text-teal-600" title="Edit"><Pencil className="w-4 h-4" /></button>
                           <button onClick={() => setConfirmDel(i)} className="hover:text-rose-600" title="Delete"><X className="w-4 h-4" /></button>
@@ -343,7 +350,9 @@ export default function ProductItemsPage() {
           <div className="space-y-1">
             <p className="text-sm text-slate-500">Showing {showFrom} to {showTo} of {filtered.length} entr{filtered.length === 1 ? "y" : "ies"}</p>
             <p className="text-sm"><strong className="text-slate-800">Total Remaining Qty</strong> <span className="text-slate-500">: {fmtNum(filtered.reduce((s, i) => s + itemRemaining(i), 0))}</span></p>
-            <p className="text-sm"><strong className="text-slate-800">Total COG Amount</strong> <span className="text-slate-500">: {fmtNum(filtered.reduce((s, i) => s + i.cog * itemRemaining(i), 0))}</span></p>
+            {/* Halaga mula sa BATCH — bawat layer sa sariling presyo. Ang qty × isang COG
+                ay mali kapag may dalawang presyo ang natitirang stock. */}
+            <p className="text-sm"><strong className="text-slate-800">Total COG Amount</strong> <span className="text-slate-500">: {fmtNum(filtered.reduce((s, i) => s + valueOf(batchStore.byItem(i.id)).value, 0))}</span></p>
           </div>
           <div className="flex items-center gap-1">
             <button disabled={pageSafe <= 1} onClick={() => setPage(p => p - 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
@@ -353,6 +362,42 @@ export default function ProductItemsPage() {
         </div>
       </div>
       </>)}
+
+      {/* Naghiwalay ba ang batch sa bilang ng Product Item? Sinasabi agad — ang
+          tahimik na pagkakaiba ay nangangahulugan ng maling halaga ng inventory. */}
+      {batchStore.loaded && drift.length > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-start gap-2.5">
+          <Settings className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <p className="text-sm font-bold text-amber-800">
+              {drift.length} item{drift.length === 1 ? "" : "s"} — hindi tugma ang batch sa bilang
+            </p>
+            <p className="text-xs text-amber-700">
+              Nagkakaiba ang kabuuan ng mga batch at ang Goods/Remaining. Mali ang Total COG Amount hangga't
+              hindi naaayos: {drift.slice(0, 3).map(d => {
+                const it = store.items.find(i => i.id === d.item_id)
+                return `${it?.name || d.item_id} (batch ${fmtNum(d.batchQty)} vs goods ${fmtNum(d.goods)})`
+              }).join(" · ")}{drift.length > 3 ? ` · +${drift.length - 3} pa` : ""}.
+              Ayusin sa pamamagitan ng Receive Stock o pag-edit ng batch.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Receive Stock — bagong batch + kasabay na pagtaas ng Goods, para laging
+          magkasundo ang bilang sa Product Item at ang kabuuan ng mga batch. */}
+      {receiving && (
+        <ReceiveStockModal
+          item={receiving}
+          batches={batchStore.byItem(receiving.id)}
+          onClose={() => setReceiving(null)}
+          onSave={input => {
+            batchStore.addBatch({ item_id: receiving.id, ...input })
+            store.updateItem(receiving.id, { goods: (receiving.goods || 0) + input.qty })
+            flash(`Received ${fmtNum(input.qty)} pcs @ ₱${fmtNum(input.cog)} — bagong batch para sa ${receiving.name || receiving.sku}.`)
+            setReceiving(null)
+          }} />
+      )}
 
       {/* Soft-delete confirmation */}
       {confirmDel && (
@@ -381,6 +426,111 @@ export default function ProductItemsPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Receive Stock ────────────────────────────────────────────────────────────
+// Bawat dating ay sariling batch na may sariling COG. Dito nagsisimula ang FIFO:
+// ang bawas mamaya ay kukuha sa pinakalumang batch, kaya ang COGS ng isang labas
+// ay ang presyong TOTOONG binayaran para sa mga pirasong iyon — hindi average.
+//
+// ⚠ Nasa module scope ito. Kapag inilagay sa loob ng page component, mare-remount
+// ang mga input kada keystroke at mawawala ang focus (naranasan na sa Add User).
+function ReceiveStockModal({ item, batches, onClose, onSave }: {
+  item: ProductItem
+  batches: ProductBatch[]
+  onClose: () => void
+  onSave: (input: { qty: number; cog: number; received_date: string; batch_no: string; supplier: string; notes: string }) => void
+}) {
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const [qty, setQty] = useState("")
+  const [cog, setCog] = useState(item.cog ? String(item.cog) : "")
+  const [date, setDate] = useState(todayStr)
+  const [batchNo, setBatchNo] = useState("")
+  const [supplier, setSupplier] = useState(item.supplier || "")
+  const [notes, setNotes] = useState("")
+  const [err, setErr] = useState("")
+
+  const qtyN = Number(qty) || 0
+  const cogN = Number(cog) || 0
+  const existing = fifoOrder(batches).filter(b => batchRemaining(b) > 0)
+
+  function submit() {
+    if (qtyN <= 0) return setErr("Ilagay ang dami ng dumating.")
+    if (cogN <= 0) return setErr("Ilagay ang COG kada piraso para sa batch na ito.")
+    if (!date) return setErr("Ilagay ang petsa ng dating — ito ang pagkakasunod-sunod ng FIFO.")
+    onSave({ qty: qtyN, cog: cogN, received_date: date, batch_no: batchNo.trim(), supplier: supplier.trim(), notes: notes.trim() })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><PackagePlus className="w-5 h-5 text-emerald-600" /> Receive Stock</h2>
+          <p className="text-xs text-slate-400 mt-0.5">{item.name || item.sku}</p>
+        </div>
+
+        <div className="px-6 py-4 space-y-3 overflow-auto">
+          {err && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{err}</div>}
+
+          {existing.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Mga batch na may natitira</p>
+              {existing.map(b => (
+                <p key={b.id} className="text-xs text-slate-600 flex justify-between tabular-nums">
+                  <span>{b.received_date} · {b.batch_no || "—"}</span>
+                  <span>{fmtNum(batchRemaining(b))} pcs @ ₱{fmtNum(b.cog)}</span>
+                </p>
+              ))}
+              <p className="text-[11px] text-slate-400 mt-1">Dito muna kukuha ang bawas bago mapunta sa bagong batch.</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-slate-600">Dami <span className="text-red-500">*</span></label>
+              <Input className="mt-1" type="number" value={qty} placeholder="Ilan ang dumating" onChange={e => { setQty(e.target.value); setErr("") }} />
+            </div>
+            <div>
+              <label className="text-sm text-slate-600">COG kada piraso <span className="text-red-500">*</span></label>
+              <Input className="mt-1" type="number" value={cog} placeholder="Presyo sa batch na ito" onChange={e => { setCog(e.target.value); setErr("") }} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-slate-600">Petsa ng dating <span className="text-red-500">*</span></label>
+              <Input className="mt-1" type="date" value={date} onChange={e => { setDate(e.target.value); setErr("") }} />
+            </div>
+            <div>
+              <label className="text-sm text-slate-600">Batch / Ref No.</label>
+              <Input className="mt-1" value={batchNo} placeholder="Opsyonal (hal. PO-12)" onChange={e => setBatchNo(e.target.value)} />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm text-slate-600">Supplier</label>
+            <Input className="mt-1" value={supplier} onChange={e => setSupplier(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-sm text-slate-600">Notes</label>
+            <Input className="mt-1" value={notes} placeholder="Opsyonal" onChange={e => setNotes(e.target.value)} />
+          </div>
+
+          {qtyN > 0 && cogN > 0 && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              Idadagdag: <strong>{fmtNum(qtyN)} pcs @ ₱{fmtNum(cogN)}</strong> = <strong>₱{fmtNum(qtyN * cogN)}</strong>.
+              Tataas ang Goods mula {fmtNum(item.goods)} papuntang <strong>{fmtNum(item.goods + qtyN)}</strong>.
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex gap-2">
+          <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={submit}>Receive Stock</Button>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+        </div>
+      </div>
     </div>
   )
 }

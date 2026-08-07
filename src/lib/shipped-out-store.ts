@@ -15,6 +15,8 @@ import { currentUserName } from "@/lib/current-user"
 // kahit ilang device o ilang beses tumakbo ang sync, iisa pa rin ang bawas.
 
 export interface ShippedScanItem { item_id: string; sku: string; name: string; deducted: number }
+/** Kung saang cost layer galing ang isang pirasong umalis — ito ang binabasa ng RTS restock. */
+export interface BatchLine { item_id: string; batch_id: string; batch_no: string; qty: number; cog: number; value: number }
 export interface ShippedScan {
   id: string
   tracking_no: string
@@ -34,12 +36,16 @@ export interface ShippedScan {
   pancake_shipped_at: string
   deducted: boolean
   deducted_at: string
+  batch_lines: BatchLine[]
+  cogs_value: number
+  cogs_short: number
 }
 /** Ang datos ng parcel, walang kinalaman sa kung saan ito nanggaling. */
 export type ParcelInfo = Omit<
   ShippedScan,
   "id" | "scanned_by" | "created_at" | "items" | "deducted_total"
   | "manual_scanned_at" | "manual_scanned_by" | "pancake_shipped_at" | "deducted" | "deducted_at"
+  | "batch_lines" | "cogs_value" | "cogs_short"
 >
 
 const uid = () => `shp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
@@ -56,6 +62,8 @@ function rowTo(r: any): ShippedScan {
     manual_scanned_at: r.manual_scanned_at || "", manual_scanned_by: r.manual_scanned_by || "",
     pancake_shipped_at: r.pancake_shipped_at || "",
     deducted: !!r.deducted, deducted_at: r.deducted_at || "",
+    batch_lines: Array.isArray(r.batch_lines) ? r.batch_lines : [],
+    cogs_value: Number(r.cogs_value) || 0, cogs_short: Number(r.cogs_short) || 0,
   }
 }
 
@@ -158,5 +166,24 @@ export function useShippedOutScans() {
     return data && data.length ? "claimed" : "already"
   }, [])
 
-  return { scans, loaded, refresh, markManualScan, claimDeduction }
+  /**
+   * Itinatala kung saang batch kinuha ang labas na ito. Hiwalay ito sa claim dahil
+   * alam lang ang sagot PAGKATAPOS tumakbo ang FIFO — at ang claim ang dapat maunang
+   * makuha para hindi madoble ang bawas.
+   *
+   * Ito ang magiging basehan ng RTS restock: hanapin ang tracking, basahin ang linya,
+   * ibalik ang dami sa MISMONG batch na pinanggalingan.
+   */
+  const saveBatchLines = useCallback(async (
+    trackingNo: string, lines: BatchLine[], cogsValue: number, cogsShort: number,
+  ) => {
+    const businessId = await getBusinessId()
+    if (!businessId) return
+    const supabase = createSupabaseBrowserClient()
+    await supabase.from("shipped_out_scans")
+      .update({ batch_lines: lines, cogs_value: cogsValue, cogs_short: cogsShort })
+      .eq("business_id", businessId).eq("tracking_no", trackingNo)
+  }, [])
+
+  return { scans, loaded, refresh, markManualScan, claimDeduction, saveBatchLines }
 }

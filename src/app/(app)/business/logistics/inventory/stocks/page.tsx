@@ -4,6 +4,7 @@ import { Boxes, ChevronDown, Check } from "lucide-react"
 import { useProductItems, itemRemaining } from "@/lib/product-items-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
+import { useProductBatches } from "@/lib/product-batches-store"
 
 // STOCKS UPDATE (LHIKE manual): search by ONE category — Sku Code (unit-code SKU) /
 // Unit Code / Item Code (product-item SKU) / Item Name — then enter Release Qty per row
@@ -55,6 +56,7 @@ export default function StocksPage() {
   const products = useProductItems()
   const unitStore = useUnitCodes()
   const releaseLog = useStockReleases()
+  const batches = useProductBatches()
 
   const [pick, setPick] = useState<{ cat: Cat; value: string }>({ cat: "", value: "" })
   const [rows, setRows] = useState<StockRow[]>([])
@@ -98,7 +100,11 @@ export default function StocksPage() {
   function submit() {
     const toApply = rows.filter(r => Number(r.release) > 0)
     if (toApply.length === 0) { flash("⚠ Enter a Release Qty first."); return }
-    products.releaseStock(toApply.map(r => ({ id: r.itemId, qty: Number(r.release) * r.required })))
+    const deltas = toApply.map(r => ({ id: r.itemId, qty: Number(r.release) * r.required }))
+    products.releaseStock(deltas)
+    // Kaparehong FIFO na pagkain ng batch gaya ng Shipped Out — kung hindi, may
+    // bawas na hindi tumatama sa anumang cost layer at masisira ang valuation.
+    batches.consume(deltas)
     releaseLog.addRelease({
       category: CAT_LABEL[pick.cat as Exclude<Cat, "">] || "", ref: pick.value,
       items: toApply.map(r => ({ item_id: r.itemId, sku: r.itemSku, name: r.itemName, required: r.required, release: Number(r.release), deducted: Number(r.release) * r.required })),
