@@ -109,6 +109,31 @@ export function planFifo(batches: ProductBatch[], qty: number): ConsumePlan {
   }
 }
 
+/**
+ * Binabalak kung saang batch ibabalik ang `qty` na MABUTING piraso ng isang nagbalik na parcel.
+ *
+ * Sinusundan ang `lines` na naitala noong umalis ito — sa MISMONG cost layer bumabalik,
+ * hindi sa pinakabago. Kung ibinalik sa maling layer, mawawala ang isang ₱35 na piraso at
+ * madadagdagan ka ng ₱30 na hindi mo naman binili.
+ *
+ * Kapag mas kaunti ang bumalik kaysa sa umalis (may sira o nawala), unahin ang mga linya
+ * ayon sa pagkakatala — FIFO din iyon, kaya ang pinakaluma ang unang naibabalik.
+ *
+ * PURO ito — walang isinusulat.
+ */
+export function planRestore(lines: ConsumeLine[], goodQty: number): ConsumeLine[] {
+  let left = Math.max(0, Number(goodQty) || 0)
+  const out: ConsumeLine[] = []
+  for (const l of lines) {
+    if (left <= 0) break
+    const take = Math.min(l.qty, left)
+    if (take <= 0) continue
+    out.push({ ...l, qty: take, value: take * l.cog })
+    left -= take
+  }
+  return out
+}
+
 /** Kabuuang natitira at halaga ng isang item — ito ang tamang valuation, hindi qty × isang COG. */
 export function valueOf(batches: ProductBatch[]) {
   return batches.reduce((acc, b) => {
@@ -189,6 +214,23 @@ export function useProductBatches() {
   }
 
   /**
+   * Ibinabalik ang mga piraso sa MISMONG batch na pinanggalingan nila (binabawasan ang
+   * `consumed`). Ang tumatawag ang nagbabawas sa `released` ng product item.
+   */
+  function restore(lines: { batch_id: string; qty: number }[]) {
+    const back = new Map<string, number>()
+    for (const l of lines) back.set(l.batch_id, (back.get(l.batch_id) || 0) + l.qty)
+    if (back.size === 0) return
+    const next = batches.map(b => back.has(b.id)
+      // Hindi bumababa sa zero: ang negatibong consumed ay magpapalabas ng stock na
+      // hindi naman natanggap kailanman.
+      ? { ...b, consumed: Math.max(0, b.consumed - (back.get(b.id) || 0)) }
+      : b)
+    persist(next)
+    writeManyRows("product_batches", next.filter(b => back.has(b.id)))
+  }
+
+  /**
    * Naghiwalay ba ang batch sa product_items? Ipinapakita ito sa UI.
    * Ang pagkakaiba ay hindi kusang nawawala — mas mabuting makita agad kaysa
    * maniwala sa maling halaga ng inventory nang matagal.
@@ -207,5 +249,5 @@ export function useProductBatches() {
     return out
   }
 
-  return { batches, loaded, byItem, addBatch, updateBatch, consume, reconcile }
+  return { batches, loaded, byItem, addBatch, updateBatch, consume, restore, reconcile }
 }

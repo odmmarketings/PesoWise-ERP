@@ -114,7 +114,19 @@ export function useProductItems() {
     writeManyRows("product_items", next.filter(i => m.has(i.id)))
   }
 
+  /** Pagbabalik ng nagbalik na parcel — binabawasan ang `released` kaya tumataas ang Remaining. */
+  function restockStock(deltas: { id: string; qty: number }[]) {
+    const m = new Map(deltas.map(d => [d.id, d.qty]))
+    // Hindi bumababa sa zero ang released — mas marami ang naibalik kaysa umalis ay
+    // ibig sabihin may mas malalim na problema, at hindi ito dapat itago sa negatibo.
+    const next = items.map(i => m.has(i.id)
+      ? { ...i, released: Math.max(0, (i.released || 0) - (m.get(i.id) || 0)) }
+      : i)
+    persist(next)
+    writeManyRows("product_items", next.filter(i => m.has(i.id)))
+  }
+
   // Usable items (for pickers): active, not deleted, not archived.
   const activeItems = items.filter(i => i.status === "Active" && !i.deleted && !i.archived)
-  return { items, activeItems, addItem, addMany, updateItem, softDelete, restoreItem, hardDelete, setArchived, releaseStock }
+  return { items, activeItems, addItem, addMany, updateItem, softDelete, restoreItem, hardDelete, setArchived, releaseStock, restockStock }
 }

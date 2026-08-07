@@ -3,13 +3,17 @@ import { useState, useMemo, useEffect, useRef } from "react"
 import * as XLSX from "xlsx-js-style"
 import {
   Undo2, RefreshCw, Search, X, Check, ChevronLeft, ChevronRight, Upload, ScanLine, Download, Camera,
-  PackageCheck, PackageX, Receipt, AlertTriangle,
+  PackageCheck, PackageX, Receipt, AlertTriangle, PackagePlus,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { useRtsMeta, type RtsMeta, type RtsItemCount } from "@/lib/rts-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { scanSound, primeScanSound } from "@/lib/scan-sound"
+import { useShippedOutScans } from "@/lib/shipped-out-store"
+import { useProductBatches, planRestore } from "@/lib/product-batches-store"
+import { useProductItems } from "@/lib/product-items-store"
+import { useStockReleases } from "@/lib/stock-releases-store"
 
 // RTS ITEMS (LHIKE manual) — Return-to-Sender parcels, live from Pancake (orders whose status
 // is Returning/Returned across all connected pages). Features: sortable/filterable table w/
@@ -19,6 +23,11 @@ import { scanSound, primeScanSound } from "@/lib/scan-sound"
 
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const num = (n: number) => (isFinite(n) ? n : 0).toLocaleString("en-PH")
+const fmtDT = (iso: string) => {
+  if (!iso) return ""
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? "" : d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
 const INP = "h-8 w-full rounded border border-slate-300 px-1.5 text-xs bg-white focus:outline-none focus:border-blue-400"
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
@@ -76,6 +85,65 @@ export default function RtsItemsPage() {
   const [claimsOpen, setClaimsOpen] = useState(false)
   const [viewRow, setViewRow] = useState<RtsRow | null>(null)
   const [camOpen, setCamOpen] = useState(false)
+
+  // ── RTS RESTOCK ────────────────────────────────────────────────────────────
+  // Ang nagbalik na parcel ay ibinabalik sa MISMONG cost layer na pinanggalingan
+  // nito — nakasulat iyon sa `batch_lines` ng Shipped Out, magkatugma sa tracking
+  // number. Kung sa pinakabagong batch ibinalik, mawawala ang isang ₱35 na piraso
+  // at madadagdagan ka ng ₱30 na hindi mo naman binili.
+  const shipped = useShippedOutScans()
+  const batchStore = useProductBatches()
+  const productStore = useProductItems()
+  const releaseLog = useStockReleases()
+  const [restocking, setRestocking] = useState<RtsRow | null>(null)
+  const [restockBusy, setRestockBusy] = useState(false)
+
+  const scanByTracking = useMemo(() => {
+    const m = new Map<string, ReturnType<typeof useShippedOutScans>["scans"][number]>()
+    for (const s of shipped.scans) m.set(s.tracking_no.trim().toLowerCase(), s)
+    return m
+  }, [shipped.scans])
+
+  /** Ilang MABUTING piraso ang bumalik — sira at nawala ay hindi na maibebenta. */
+  function goodQtyOf(tracking: string, fallbackQty: number) {
+    const m = rts.meta[tracking]
+    const counted = (m?.items || []).reduce((s, i) => s + (Number(i.goods) || 0), 0)
+    // Hindi pa na-check → ipinapalagay na lahat mabuti; ipinapakita ito bago kumpirmahin.
+    return (m?.items && m.items.length > 0) ? counted : fallbackQty
+  }
+
+  async function doRestock(row: RtsRow) {
+    const tracking = String(row.tracking_no || "").trim()
+    const scan = scanByTracking.get(tracking.toLowerCase())
+    if (!scan || !scan.batch_lines.length) { flash("⚠ Walang naitalang batch para sa parcel na ito — hindi malalaman kung saan ibabalik."); return }
+    const good = goodQtyOf(tracking, scan.deducted_total)
+    if (good <= 0) { flash("⚠ Walang mabuting piraso na ibabalik."); return }
+
+    setRestockBusy(true)
+    const lines = planRestore(scan.batch_lines.map(l => ({ batch_id: l.batch_id, batch_no: l.batch_no, qty: l.qty, cog: l.cog, value: l.value })), good)
+    const withItem = lines.map((l, i) => ({ ...l, item_id: scan.batch_lines[i]?.item_id || "" }))
+    // Unahin ang gate — kapag natalo tayo, ibang device na ang nagbalik at wala tayong dapat gawin.
+    const res = await shipped.claimRestock(tracking, withItem, good)
+    setRestockBusy(false)
+    setRestocking(null)
+    if (res === "already") { flash("⚠ Naibalik na ang parcel na ito sa inventory."); return }
+    if (res !== "claimed") { flash(`⚠ ${res}`); return }
+
+    batchStore.restore(withItem)
+    const perItem = new Map<string, number>()
+    for (const l of withItem) perItem.set(l.item_id, (perItem.get(l.item_id) || 0) + l.qty)
+    const deltas = Array.from(perItem, ([id, qty]) => ({ id, qty }))
+    productStore.restockStock(deltas)
+    releaseLog.addRelease({
+      category: "RTS Restock", ref: tracking,
+      items: deltas.map(d => {
+        const it = productStore.items.find(x => x.id === d.id)
+        // Negatibo ang deducted — stock-IN ito, at ganito ito lalabas sa Transaction History.
+        return { item_id: d.id, sku: it?.sku || "", name: it?.name || "", required: 1, release: d.qty, deducted: -d.qty }
+      }),
+    })
+    flash(`Naibalik ang ${good} pc${good === 1 ? "" : "s"} sa inventory — sa mismong batch na pinanggalingan.`)
+  }
 
   // Scan summary — ONE date filter (presets) + 4 CLICKABLE counters: Received / Claims / Damage / Loss.
   const [statRange, setStatRange] = useState("Today")
@@ -447,7 +515,25 @@ export default function RtsItemsPage() {
                       })()}
                     </td>
                     <td className="px-3 py-2.5">
-                      <button onClick={() => setViewRow(r)} className="w-8 h-8 rounded border border-slate-300 flex items-center justify-center text-slate-500 hover:text-blue-600 hover:border-blue-400" title="View / tag for claim"><Search className="w-4 h-4" /></button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setViewRow(r)} className="w-8 h-8 rounded border border-slate-300 flex items-center justify-center text-slate-500 hover:text-blue-600 hover:border-blue-400" title="View / tag for claim"><Search className="w-4 h-4" /></button>
+                        {(() => {
+                          const tno = String(r.tracking_no || "").trim()
+                          const scan = scanByTracking.get(tno.toLowerCase())
+                          if (!scan) return null
+                          if (scan.restocked_at) return (
+                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 whitespace-nowrap"
+                              title={`Naibalik ${scan.restocked_qty} pc(s) noong ${fmtDT(scan.restocked_at)}${scan.restocked_by ? ` · ${scan.restocked_by}` : ""}`}>
+                              ↩ NASA STOCK
+                            </span>
+                          )
+                          return (
+                            <button onClick={() => setRestocking(r)}
+                              className="w-8 h-8 rounded border border-emerald-300 flex items-center justify-center text-emerald-600 hover:bg-emerald-50"
+                              title="Ibalik sa inventory (sa mismong batch na pinanggalingan)"><PackagePlus className="w-4 h-4" /></button>
+                          )
+                        })()}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -473,6 +559,62 @@ export default function RtsItemsPage() {
           <p><strong className="text-slate-800">Total Claimed</strong> : {totals.claimed.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>
         </div>
       </div>
+
+      {/* Kumpirmasyon ng pagbabalik — ipinapakita ang MISMONG batch bago pumayag, dahil
+          ang maling layer ay tahimik na sumisira sa halaga ng inventory. */}
+      {restocking && (() => {
+        const tno = String(restocking.tracking_no || "").trim()
+        const scan = scanByTracking.get(tno.toLowerCase())
+        const good = scan ? goodQtyOf(tno, scan.deducted_total) : 0
+        const checked = (rts.meta[tno]?.items || []).length > 0
+        const lines = scan ? planRestore(scan.batch_lines, good) : []
+        return (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => setRestocking(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+              <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                <PackagePlus className="w-5 h-5 text-emerald-600" /> Ibalik sa inventory
+              </h2>
+              <p className="text-xs text-slate-500 font-mono">{tno}</p>
+
+              {lines.length === 0 ? (
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  Walang maibabalik. {scan ? "Walang mabuting pirasong naiulat, o walang naitalang batch para sa parcel na ito." : "Wala itong Shipped Out record, kaya hindi malalaman kung saang batch babalik."}
+                </p>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 space-y-1">
+                    <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Babalik sa mismong batch</p>
+                    {lines.map((l, i) => (
+                      <p key={i} className="text-sm text-slate-700 flex justify-between tabular-nums">
+                        <span>{l.batch_no || "—"}</span>
+                        <span>{num(l.qty)} pc{l.qty === 1 ? "" : "s"} @ {peso(l.cog)}</span>
+                      </p>
+                    ))}
+                  </div>
+                  {!checked && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                      Hindi pa na-check ang parcel na ito, kaya ipinapalagay na <strong>lahat mabuti</strong>. Kung may sira,
+                      i-check muna (🔍) para tama ang maibalik — ang sira ay hindi na maibebenta.
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500">
+                    Ang sira at nawala ay hindi ibinabalik sa sellable na stock — nagastos na ang COGS nila.
+                  </p>
+                </>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button onClick={() => setRestocking(null)} disabled={restockBusy}
+                  className="h-9 px-4 rounded-lg border border-slate-300 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+                <button onClick={() => doRestock(restocking)} disabled={restockBusy || lines.length === 0}
+                  className="h-9 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold disabled:opacity-50">
+                  {restockBusy ? "Ibinabalik…" : `Ibalik ang ${num(good)} pc${good === 1 ? "" : "s"}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {camOpen && <CameraScanScreen rows={rows} rts={rts} onClose={() => setCamOpen(false)} />}
     </div>

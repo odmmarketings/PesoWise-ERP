@@ -320,7 +320,10 @@ Sidebar section renamed **LOGISTIC & INVENTORY**; the sidebar now supports colla
   - ⚠️ **Two sources of quantity exist by design**: `product_items.goods/released` (the count) and the batches (the cost). Receive Stock writes both; every deduction eats both. `reconcile()` compares them and Product Items shows an amber banner when they drift — a silent gap means a wrong inventory valuation.
   - **Batch provenance is persisted** on `shipped_out_scans.batch_lines` (+ `cogs_value`, `cogs_short`). This is what makes a correct RTS restock possible later: look the parcel up by tracking number and return the pieces to the *same* batch they came from. Without it the information is gone the moment the page reloads.
   - Migration `0019` backfills one `OPENING` batch per item at its current cog, so nothing visibly changes on rollout. It is idempotent (skips items that already have a batch).
-  - **Not built:** RTS restock-to-inventory. Returned parcels still do not add stock back — `batch_lines` is the groundwork, not the feature.
+  - **RTS restock (BUILT, migration `0021`)** — a returned parcel goes back to the **same batch it left from**, read off `shipped_out_scans.batch_lines` (both modules key on tracking number). `planRestore()` is pure and exported. Gated by `restocked_at` with the same conditional-update trick as `deducted`, so two devices can't restock one parcel twice.
+    - ⚠️ **Only GOOD pieces return.** Damage/loss stay consumed: they left, can never be sold, and their COGS is already expensed. Returning them would show sellable stock that does not exist. `goodQtyOf()` reads the RTS check counts; an unchecked parcel is assumed all-good and the confirm modal says so.
+    - Restock logs to `stock_releases` with category `"RTS Restock"` and a **negative** `deducted`, so Transaction History reads it as stock-in.
+    - ⚠️ Restocking to the *newest* batch instead would silently destroy valuation — you'd lose a ₱35 piece and gain a ₱30 one you never bought. The confirm modal shows the exact target batch before anyone commits.
 - **Placeholders:** Logistics Settings (ComingSoon). PO Stock-Out remains a stub (wire to Stocks releases next).
 
 > ⚠️ **Sidebar gotcha:** a `NavItem` **with `children` only expands on click — it never navigates to its own `href`.** Any parent route that has a real page (`/logistics/warehouse`, `/logistics/inventory`) needs an explicit child link pointing back at itself, or the page is unreachable. Those child hrefs also become grantable in the User Management permission matrix, which builds its checkboxes from child hrefs.
@@ -342,7 +345,7 @@ Replaced the `BOARD` section, whose "Kanban Board" link had **never had a page**
 
 ## Persistence — Supabase is the source of truth (localStorage is a read cache)
 
-**This section used to say "no Supabase wiring yet". That is obsolete.** Migrations `0001`–`0020` live in `supabase/migrations/` and every module now reads/writes Supabase; `localStorage` (`pesowise_*`) survives only as a **same-session read cache** for instant paint, migrated up once on first load. Store shape: `use client` hook → paint from cache → fetch from Supabase (`.eq("business_id", …)`) → `normalize()` legacy/partial rows defensively → write through on every mutation.
+**This section used to say "no Supabase wiring yet". That is obsolete.** Migrations `0001`–`0021` live in `supabase/migrations/` and every module now reads/writes Supabase; `localStorage` (`pesowise_*`) survives only as a **same-session read cache** for instant paint, migrated up once on first load. Store shape: `use client` hook → paint from cache → fetch from Supabase (`.eq("business_id", …)`) → `normalize()` legacy/partial rows defensively → write through on every mutation.
 
 - Single-business deployment: `getBusinessId()` = `businesses.select("id").limit(1)` — it is `"use client"` and **NOT usable server-side**. In scripts/API routes use `createSupabaseServerClient()` (service role) + the same one-liner.
 - RLS on every table: `owner_id = auth.uid()` OR `public.is_business_member(business_id)`. Copy an existing policy verbatim when adding a table.

@@ -39,6 +39,10 @@ export interface ShippedScan {
   batch_lines: BatchLine[]
   cogs_value: number
   cogs_short: number
+  restocked_at: string
+  restocked_by: string
+  restocked_qty: number
+  restock_lines: BatchLine[]
 }
 /** Ang datos ng parcel, walang kinalaman sa kung saan ito nanggaling. */
 export type ParcelInfo = Omit<
@@ -46,6 +50,7 @@ export type ParcelInfo = Omit<
   "id" | "scanned_by" | "created_at" | "items" | "deducted_total"
   | "manual_scanned_at" | "manual_scanned_by" | "pancake_shipped_at" | "deducted" | "deducted_at"
   | "batch_lines" | "cogs_value" | "cogs_short"
+  | "restocked_at" | "restocked_by" | "restocked_qty" | "restock_lines"
 >
 
 const uid = () => `shp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
@@ -64,6 +69,9 @@ function rowTo(r: any): ShippedScan {
     deducted: !!r.deducted, deducted_at: r.deducted_at || "",
     batch_lines: Array.isArray(r.batch_lines) ? r.batch_lines : [],
     cogs_value: Number(r.cogs_value) || 0, cogs_short: Number(r.cogs_short) || 0,
+    restocked_at: r.restocked_at || "", restocked_by: r.restocked_by || "",
+    restocked_qty: Number(r.restocked_qty) || 0,
+    restock_lines: Array.isArray(r.restock_lines) ? r.restock_lines : [],
   }
 }
 
@@ -185,5 +193,33 @@ export function useShippedOutScans() {
       .eq("business_id", businessId).eq("tracking_no", trackingNo)
   }, [])
 
-  return { scans, loaded, refresh, markManualScan, claimDeduction, saveBatchLines }
+  /**
+   * Kinukuha ang karapatang ibalik sa inventory ang isang nagbalik na parcel.
+   *   "claimed" — tayo ang nakakuha; ang TUMATAWAG ang dapat magbalik ngayon
+   *   "already" — naibalik na (ibang device/tab) — huwag nang ulitin
+   *
+   * Kaparehong pananggalang ng `deducted`: ang `.is("restocked_at", null)` ang gumagawa
+   * nitong conditional, kaya isa lang ang makakadaan kahit sabay-sabay pumindot.
+   */
+  const claimRestock = useCallback(async (
+    trackingNo: string, lines: BatchLine[], qty: number,
+  ): Promise<"claimed" | "already" | string> => {
+    const businessId = await getBusinessId()
+    if (!businessId) return "No business configured"
+    const supabase = createSupabaseBrowserClient()
+    const { data, error } = await supabase.from("shipped_out_scans")
+      .update({
+        restocked_at: new Date().toISOString(), restocked_by: currentUserName(),
+        restocked_qty: qty, restock_lines: lines,
+      })
+      .eq("business_id", businessId).eq("tracking_no", trackingNo)
+      .is("restocked_at", null)
+      .select("id")
+    if (error) return error.message
+    if (!data || data.length === 0) return "already"
+    await refresh()
+    return "claimed"
+  }, [refresh])
+
+  return { scans, loaded, refresh, markManualScan, claimDeduction, saveBatchLines, claimRestock }
 }
