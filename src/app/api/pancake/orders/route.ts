@@ -302,12 +302,35 @@ async function fetchStatusAgg(
     return { count: 0, sales: 0, error: { status, message: String(json?.message ?? `HTTP ${status || "network error"}`) } }
   }
   return {
+    // TAMA at awtoritatibo ang bilang: total_entries ito ng Pancake, hindi limitado ng pagination.
     count: Number(json?.total_entries ?? 0),
-    // ⚠ Server-side na buong-suma ito ng Pancake, kaya HINDI maaaring ituwid ng
-    // SCALE guard (kailangan ng per-order na item price para malaman kung 100×).
-    // Kapag may 100×-na-order sa loob ng saklaw, mataas ang bilang na ito.
-    // Ang phase=full (byDate) ay TAMA — doon dumadaan ang ROAS Summary.
+    // ⚠⚠ HUWAG IPAKITANG PERA ANG FIELD NA ITO. Server-side na buong-suma ito ng Pancake,
+    // kaya HINDI kayang ituwid ng SCALE guard (kailangan ng per-order na item price para
+    // malaman kung 100×). Kapag may kahit isang sirang order sa saklaw, sobrang taas nito —
+    // NASUKAT (Ago 6 2026): ₱146,512 dito kumpara sa totoong ₱47,710 sa parehong 83 parcels,
+    // dahil sa isang order na ₱998 na naka-imbak bilang ₱99,800.
+    // Para sa halaga, gamitin ang `exact` ng phase=full — doon hawak ang bawat order.
     sales: Number(json?.aggs?.cod?.value ?? 0),
+  }
+}
+
+/** Per-status na bilang + halaga, na-descale — galing sa pinaginate na order (hindi aggregate). */
+function emptyExact() {
+  return {
+    totalOrders: 0, totalSales: 0,
+    shipped: 0, shippedSales: 0,
+    delivered: 0, deliveredSales: 0,
+    returning: 0, returningSales: 0,
+    returned: 0, returnedSales: 0,
+    packaging: 0, packagingSales: 0,
+    waiting: 0, waitingSales: 0,
+    fulfilled: 0, fulfilledSales: 0,
+    unfulfilled: 0, unfulfilledSales: 0,
+    cancelled: 0, cancelledSales: 0,
+    inTransit: 0, inTransitSales: 0,
+    onDelivery: 0, onDeliverySales: 0,
+    // Ipinapakita sa UI para hindi tahimik ang pagtutuwid ng 100× na halaga.
+    rescaledOrders: 0, rescaledExcess: 0,
   }
 }
 
@@ -326,6 +349,10 @@ export async function GET(req: NextRequest) {
   //   "total" = only the all-orders count (for Today's Sales); "packaging" = only status 8
   //   (for Unfulfilled / Last Month). Empty = the full per-status set (default).
   const fields = searchParams.get("fields") || ""
+  // status: nililimitahan ang FULL-phase pagination sa mga tiyak na order status (comma-separated).
+  // Dahil dito, makukuha ang TAMANG (na-descale) na halaga ng isang status sa mahabang saklaw nang
+  // hindi pinaginate ang lahat ng order — hal. status=8 para sa Packaging ng buong nakaraang buwan.
+  const statusFilter = (searchParams.get("status") || "").split(",").map(s => s.trim()).filter(Boolean)
   const noCache = searchParams.get("nocache") === "1"
   const wantFast = phase === "fast" || phase === "all"
   const wantFull = phase === "full" || phase === "all"
@@ -341,7 +368,7 @@ export async function GET(req: NextRequest) {
   // Cache key MUST include api_key — otherwise a changed/corrected key would be served another
   // key's cached data (the bug where fixing a bad key didn't reload). Only successful responses
   // are cached (failures return before the cache.set below), so a bad key never poisons the cache.
-  const cacheKey = `${shop_id}|${api_key}|${from}|${to}|${basis}|${phase}|${fields}`
+  const cacheKey = `${shop_id}|${api_key}|${from}|${to}|${basis}|${phase}|${fields}|${statusFilter.join("+")}`
   if (!noCache) {
     const hit = CACHE.get(cacheKey)
     if (hit && Date.now() - hit.ts < CACHE_TTL_MS) {
@@ -385,7 +412,7 @@ export async function GET(req: NextRequest) {
     // Fetch page 1 first to learn total_pages, then fetch the rest in PARALLEL (bounded
     // concurrency) instead of one-at-a-time — turns ~N sequential round-trips into ~1 + a
     // few parallel batches, the single biggest speed-up for date/filter changes.
-    const ordersPromise: Promise<{ orders: any[]; error?: ConnErr }> = (wantFull || wantRows)
+    const ordersPromise: Promise<{ orders: any[]; truncated?: boolean; error?: ConnErr }> = (wantFull || wantRows)
       ? (async () => {
           const MAX_PAGES = 200
           const CONCURRENCY = wantRows ? 12 : 8  // more parallelism for the row pull (single page, lighter payload)
@@ -398,6 +425,7 @@ export async function GET(req: NextRequest) {
             if (startTs) url.searchParams.set("startDateTime", String(startTs))
             if (endTs) url.searchParams.set("endDateTime", String(endTs))
             if (startTs || endTs) url.searchParams.set("updateStatus", updateStatus)
+            for (const s of statusFilter) url.searchParams.append("filter_status[]", s)
             url.searchParams.set("option_sort", "inserted_at_asc")
             // Sales Tracker only needs a subset of fields — request just those so Pancake returns
             // small order objects instead of the full (huge) record. Big transfer/parse savings.
@@ -433,7 +461,10 @@ export async function GET(req: NextRequest) {
             for (const r of results) orders.push(...r.items)
           }
 
-          return { orders }
+          // Kapag lumampas sa MAX_PAGES, KULANG ang nakuha — kaya kulang din ang anumang
+          // halagang kukwentahin dito. Ipinapaalam ito para may babala ang UI imbes na
+          // tahimik na magpakita ng mas mababang benta.
+          return { orders, truncated: first.totalPages > MAX_PAGES }
         })()
       : Promise.resolve({ orders: [] })
 
@@ -503,15 +534,47 @@ export async function GET(req: NextRequest) {
     }
 
     if (wantFull) {
-      // --- Courier sub-status tallies (In Transit / On Delivery) from partner.partner_status ---
+      // --- Courier sub-status tallies + EXACT per-status money -------------------------
+      // Isang pagdaan lang: mahal ang orderIsScaled() (dinadaanan ang bawat item), kaya
+      // minsan lang ito tinatawag kada order at pinagsasaluhan ng dalawang tally.
+      //
+      // BAKIT DITO KINUKUWENTA ANG PERA: ang mga aggregate ng Pancake (fetchStatusAgg) ay
+      // suma nang server-side, kaya hindi maabot ng 100× na SCALE guard. Dito lang, kung
+      // saan hawak natin ang bawat order, nagiging tama ang halaga.
       let inTransitCount = 0, inTransitSales = 0
       let onDeliveryCount = 0, onDeliverySales = 0
+      const exact = emptyExact()
       for (const o of allOrders) {
+        const isScaled = orderIsScaled(o)
+        const cod = descale(o.cod, isScaled)
+        if (isScaled) {
+          exact.rescaledOrders++
+          exact.rescaledExcess += Number(o?.cod ?? 0) - cod
+        }
+
         const ps = o.partner?.partner_status
-        const cod = descale(o.cod, orderIsScaled(o))
         if (ps === "on_the_way") { inTransitCount++; inTransitSales += cod }
         else if (ps === "out_for_delivery") { onDeliveryCount++; onDeliverySales += cod }
+
+        // Ang kanselado ay HINDI kita — itinatabi, hindi ibinibilang sa Total Sales.
+        // Kaparehong tuntunin ng byDate sa ibaba, kaya laging magkatugma ang card at ang
+        // breakdown modal nito.
+        const st = typeof o.status === "number" ? o.status : -1
+        if (st === 6) { exact.cancelled++; exact.cancelledSales += cod; continue }
+
+        exact.totalOrders++; exact.totalSales += cod
+        if (st === 2) { exact.shipped++; exact.shippedSales += cod }
+        else if (st === 3) { exact.delivered++; exact.deliveredSales += cod }
+        else if (st === 4) { exact.returning++; exact.returningSales += cod }
+        else if (st === 5) { exact.returned++; exact.returnedSales += cod }
+        else if (st === 8) { exact.packaging++; exact.packagingSales += cod }
+        else if (st === 9) { exact.waiting++; exact.waitingSales += cod }
       }
+      // Fulfilled = Delivered + Shipped + Waiting for Pickup; Unfulfilled = Packaging (status 8).
+      exact.fulfilled = exact.delivered + exact.shipped + exact.waiting
+      exact.fulfilledSales = exact.deliveredSales + exact.shippedSales + exact.waitingSales
+      exact.unfulfilled = exact.packaging
+      exact.unfulfilledSales = exact.packagingSales
 
       // --- byDate aggregation for per-day ROAS breakdown ---
       const byDate: Record<string, {
@@ -589,6 +652,10 @@ export async function GET(req: NextRequest) {
 
       response.byDate = byDate
       response.courier = { inTransitCount, inTransitSales, onDeliveryCount, onDeliverySales }
+      exact.inTransit = inTransitCount; exact.inTransitSales = inTransitSales
+      exact.onDelivery = onDeliveryCount; exact.onDeliverySales = onDeliverySales
+      response.exact = exact
+      response.truncated = !!ordersResult.truncated
 
       // When phase=all, merge courier tallies into statusCounts/Sales so the response
       // keeps its original full shape (the ROAS tracker relies on this).

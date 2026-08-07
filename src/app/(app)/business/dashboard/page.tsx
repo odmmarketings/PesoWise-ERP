@@ -149,6 +149,25 @@ interface StatusGroup {
   fulfilled: number; unfulfilled: number
 }
 
+// Per-status na bilang + halaga na kinuwenta mula sa BAWAT order (phase=full), kaya
+// nadaanan ng 100× na SCALE guard at hindi kasama ang kanselado. Ito ang pinagmumulan
+// ng lahat ng perang ipinapakita — HINDI ang `statusSales` na galing sa aggregate.
+interface ExactTotals {
+  totalOrders: number; totalSales: number
+  shipped: number; shippedSales: number
+  delivered: number; deliveredSales: number
+  returning: number; returningSales: number
+  returned: number; returnedSales: number
+  packaging: number; packagingSales: number
+  waiting: number; waitingSales: number
+  fulfilled: number; fulfilledSales: number
+  unfulfilled: number; unfulfilledSales: number
+  cancelled: number; cancelledSales: number
+  inTransit: number; inTransitSales: number
+  onDelivery: number; onDeliverySales: number
+  rescaledOrders: number; rescaledExcess: number
+}
+
 interface OrdersResponse {
   byDate?: Record<string, DayData>
   statusCounts?: StatusGroup
@@ -156,19 +175,34 @@ interface OrdersResponse {
   totalOrders?: number
   totalSales?: number
   courier?: { inTransitCount: number; inTransitSales: number; onDeliveryCount: number; onDeliverySales: number }
+  exact?: ExactTotals
+  truncated?: boolean
 }
 
 async function fetchOrders(
   apiKey: string, pageId: string, from: string, to: string, basis: string,
-  phase: "fast" | "full" | "all" = "all", noCache = false, fields = ""
+  phase: "fast" | "full" | "all" = "all", noCache = false, fields = "", status = ""
 ): Promise<OrdersResponse> {
   const json = await cachedJson(
     `/api/pancake/orders?api_key=${encodeURIComponent(apiKey)}&page_id=${encodeURIComponent(pageId)}`
     + `&from=${from}&to=${to}&basis=${encodeURIComponent(basis)}&phase=${phase}`
-    + `${fields ? `&fields=${fields}` : ""}${noCache ? "&nocache=1" : ""}`,
+    + `${fields ? `&fields=${fields}` : ""}${status ? `&status=${status}` : ""}${noCache ? "&nocache=1" : ""}`,
     { force: noCache }
   )
   return json as OrdersResponse
+}
+
+function addExact(acc: AggData, e: ExactTotals) {
+  acc.totalOrders += e.totalOrders; acc.totalSales += e.totalSales
+  acc.shipped += e.shipped; acc.shippedSales += e.shippedSales
+  acc.delivered += e.delivered; acc.deliveredSales += e.deliveredSales
+  acc.returning += e.returning; acc.returningSales += e.returningSales
+  acc.returned += e.returned; acc.returnedSales += e.returnedSales
+  acc.cancelled += e.cancelled
+  acc.fulfilled += e.fulfilled; acc.fulfilledSales += e.fulfilledSales
+  acc.unfulfilled += e.unfulfilled; acc.unfulfilledSales += e.unfulfilledSales
+  acc.inTransit += e.inTransit; acc.inTransitSales += e.inTransitSales
+  acc.onDelivery += e.onDelivery; acc.onDeliverySales += e.onDeliverySales
 }
 
 // Run async work over items with a concurrency cap — avoids bursting Pancake's rate limit
@@ -193,6 +227,11 @@ export default function BusinessDashboardPage() {
   // Unfulfilled (Packaging, status 8) for the PREVIOUS calendar month — independent of the selected range
   const [lastMonthUnfulfilled, setLastMonthUnfulfilled] = useState<{ count: number; amount: number }>({ count: 0, amount: 0 })
   const [dailyData, setDailyData] = useState<DailyData>({})
+  // Mga order na may 100×-na-halaga mula sa Pancake at itinuwid sa pagbasa — ipinapakita
+  // para hindi tahimik ang pagtutuwid at para mahanap at maayos ang order sa Pancake mismo.
+  const [rescaled, setRescaled] = useState<{ orders: number; excess: number }>({ orders: 0, excess: 0 })
+  // Lumampas ang saklaw sa pagination cap → kulang ang halaga. Binabalaan, hindi tinatago.
+  const [truncated, setTruncated] = useState(false)
   const [salesModalOpen, setSalesModalOpen] = useState(false)
   const [fetchErrors, setFetchErrors] = useState<string[]>([])
   const [lastFetched, setLastFetched] = useState<string | null>(null)
@@ -230,41 +269,19 @@ export default function BusinessDashboardPage() {
     const lmToStr = format(endOfMonth(lastMonth), "yyyy-MM-dd")
     const errs: string[] = []
 
-    // ── PHASE 1 (FAST): headline + per-status cards from cheap aggregate calls (no pagination).
-    // Paints the main cards in ~1 request's time instead of waiting for the full order pull.
+    // ── PHASE 1 (FAST): BILANG lamang, mula sa murang aggregate (walang pagination).
+    // Awtoritatibo ang bilang (total_entries) at hindi ito naaapektuhan ng 100× na bug,
+    // kaya agad itong maipipinta. Ang PERA ay sinasadyang iniiwang hindi pa ipinapakita
+    // hanggang dumating ang phase 2 — mas mabuti nang maghintay kaysa magpakita ng
+    // halagang mali (hanggang 2.6× ang taas, nasukat Ago 6 2026).
     const fastAgg = emptyAgg()
-    const lastMonthAgg = { count: 0, amount: 0 }
     await mapLimit(pages, PANCAKE_CONCURRENCY, async page => {
       const pageId = page.pancake_page_id || page.shop_id
       try {
-        // "Today's Sales" = orders placed today (always sales-order/creation basis).
-        // fields=total → 1 cheap call instead of the full per-status set.
-        const todayData = fStr === todayStr && basisKey === "sales_order"
-          ? null // comes from the main fetch below
-          : fetchOrders(page.api_key, pageId, todayStr, todayStr, "sales_order", "fast", noCache, "total").catch(() => null)
-        // Last-month Packaging (Unfulfilled), fired in parallel — fields=packaging → 1 cheap call.
-        const lastMonthData = fetchOrders(page.api_key, pageId, lmFromStr, lmToStr, "sales_order", "fast", noCache, "packaging").catch(() => null)
-
-        const { statusCounts, statusSales, totalOrders = 0, totalSales = 0 } =
-          await fetchOrders(page.api_key, pageId, fStr, tStr, basisKey, "fast", noCache)
-
-        if (todayData) {
-          const td = await todayData
-          if (td) { fastAgg.todayOrders += td.totalOrders ?? 0; fastAgg.todaySales += td.totalSales ?? 0 }
-        } else {
-          fastAgg.todayOrders += totalOrders
-          fastAgg.todaySales += totalSales
-        }
-
-        const lm = await lastMonthData
-        if (lm?.statusCounts) {
-          lastMonthAgg.count += lm.statusCounts.unfulfilled        // unfulfilled == packaging
-          lastMonthAgg.amount += lm.statusSales?.unfulfilled ?? 0
-        }
-
-        fastAgg.totalOrders += totalOrders
-        fastAgg.totalSales += totalSales
+        const { statusCounts } = await fetchOrders(page.api_key, pageId, fStr, tStr, basisKey, "fast", noCache)
         if (statusCounts) {
+          // Ang kanselado ay hindi kita — tinatanggal agad sa Total Sales.
+          fastAgg.totalOrders += statusCounts.total - statusCounts.cancelled
           fastAgg.shipped += statusCounts.shipped
           fastAgg.delivered += statusCounts.delivered
           fastAgg.returning += statusCounts.returning
@@ -273,48 +290,68 @@ export default function BusinessDashboardPage() {
           fastAgg.fulfilled += statusCounts.fulfilled
           fastAgg.unfulfilled += statusCounts.unfulfilled
         }
-        if (statusSales) {
-          fastAgg.shippedSales += statusSales.shipped
-          fastAgg.deliveredSales += statusSales.delivered
-          fastAgg.returningSales += statusSales.returning
-          fastAgg.returnedSales += statusSales.returned
-          fastAgg.fulfilledSales += statusSales.fulfilled
-          fastAgg.unfulfilledSales += statusSales.unfulfilled
-        }
       } catch (e: any) {
         errs.push(`${page.name}: ${e?.message || "Failed"}`)
       }
     })
 
-    setAgg(fastAgg)  // In-Transit/On-Delivery stay 0 until phase 2 patches them
-    setLastMonthUnfulfilled(lastMonthAgg)
+    setAgg(fastAgg)
     setFetchErrors(errs)
     setLastFetched(format(new Date(), "MMM dd, yyyy h:mm a"))
     setLoading(false)
 
-    // ── PHASE 2 (FULL): pagination-derived data — In-Transit/On-Delivery tallies + daily breakdown.
+    // ── PHASE 2 (FULL): lahat ng PERA, kinuwenta mula sa bawat order kaya na-descale.
+    // Tatlong saklaw ang hinihila kada page:
+    //   • ang piniling saklaw   — lahat ng card + araw-araw na breakdown
+    //   • ngayong araw          — "Today's Sales" (laging creation basis)
+    //   • nakaraang buwan (st 8)— "Unfulfilled / Last Month"; naka-filter sa status kaya
+    //                             ilang page lang ang hinihila, hindi ang buong buwan
     const newDaily: DailyData = {}
-    let inTransit = 0, inTransitSales = 0, onDelivery = 0, onDeliverySales = 0
+    const exactAgg = emptyAgg()
+    const lastMonthAgg = { count: 0, amount: 0 }
+    let rescaledOrders = 0, rescaledExcess = 0, truncated = false
+
     await mapLimit(pages, PANCAKE_CONCURRENCY, async page => {
       const pageId = page.pancake_page_id || page.shop_id
       try {
-        const { byDate, courier } = await fetchOrders(page.api_key, pageId, fStr, tStr, basisKey, "full", noCache)
-        for (const [date, d] of Object.entries(byDate ?? {})) {
+        const [main, today, lm] = await Promise.all([
+          fetchOrders(page.api_key, pageId, fStr, tStr, basisKey, "full", noCache),
+          fetchOrders(page.api_key, pageId, todayStr, todayStr, "sales_order", "full", noCache).catch(() => null),
+          fetchOrders(page.api_key, pageId, lmFromStr, lmToStr, "sales_order", "full", noCache, "", "8").catch(() => null),
+        ])
+
+        for (const [date, d] of Object.entries(main.byDate ?? {})) {
           if (!newDaily[date]) newDaily[date] = { count: 0, amount: 0 }
           newDaily[date].count += d.orders
           newDaily[date].amount += d.sales
         }
-        if (courier) {
-          inTransit += courier.inTransitCount; inTransitSales += courier.inTransitSales
-          onDelivery += courier.onDeliveryCount; onDeliverySales += courier.onDeliverySales
+        if (main.exact) {
+          addExact(exactAgg, main.exact)
+          rescaledOrders += main.exact.rescaledOrders
+          rescaledExcess += main.exact.rescaledExcess
+        }
+        if (main.truncated) truncated = true
+
+        if (today?.exact) {
+          exactAgg.todayOrders += today.exact.totalOrders
+          exactAgg.todaySales += today.exact.totalSales
+        }
+        if (lm?.exact) {
+          lastMonthAgg.count += lm.exact.packaging
+          lastMonthAgg.amount += lm.exact.packagingSales
         }
       } catch {
-        // headline cards already shown; surface detail-phase issues quietly
+        // nakapinta na ang bilang; tahimik na hahayaan ang detalye
       }
     })
 
-    setAgg(prev => ({ ...prev, inTransit, inTransitSales, onDelivery, onDeliverySales }))
+    // Ipinapalit ang BUONG agg — dito na galing ang bilang at ang halaga, kaya laging
+    // magkatugma ang dalawa (at ang TOTAL SALES card sa sarili nitong breakdown modal).
+    setAgg(exactAgg)
+    setLastMonthUnfulfilled(lastMonthAgg)
     setDailyData(newDaily)
+    setRescaled({ orders: rescaledOrders, excess: rescaledExcess })
+    setTruncated(truncated)
     setLoadingDetails(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -387,6 +424,37 @@ export default function BusinessDashboardPage() {
         </div>
       )}
 
+      {/* Naitama ang 100×-na-halaga — sinasabi kung ilan at magkano, para mahanap at
+          maayos ang order sa Pancake mismo imbes na tahimik na itinatago ang pagkakamali. */}
+      {!loadingDetails && rescaled.orders > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-start gap-2.5">
+          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <p className="text-sm font-bold text-amber-800">
+              {rescaled.orders} order{rescaled.orders === 1 ? "" : "s"} na 100× ang halaga sa Pancake — naitama sa pagbasa
+            </p>
+            <p className="text-xs text-amber-700">
+              Kung hindi ito naitama, mas mataas sana ng <strong>{fmtPeso(rescaled.excess)}</strong> ang ipinapakita rito.
+              Sira ang naka-imbak sa Pancake, hindi ang presyo — ayusin doon para tumugma ang lahat ng report.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Lumampas sa pagination cap — KULANG ang halaga, kaya sinasabi agad. */}
+      {!loadingDetails && truncated && (
+        <div className="bg-red-50 border border-red-300 rounded-xl p-3 flex items-start gap-2.5">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <p className="text-sm font-bold text-red-700">Sobrang haba ng saklaw — kulang ang halaga</p>
+            <p className="text-xs text-red-600">
+              Lumampas sa 20,000 order ang napiling saklaw, kaya hindi lahat ay nabasa. Mas <strong>mababa</strong> sa
+              totoo ang mga halaga rito. Paikliin ang saklaw para tumpak.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* No pages with credentials */}
       {pagesWithCreds.length === 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center text-sm text-amber-700">
@@ -402,8 +470,12 @@ export default function BusinessDashboardPage() {
             <ShoppingBag strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
           </div>
           <div className="text-right ml-auto z-10">
-            <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(agg.todaySales)}</p>
-            <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">TODAY&apos;S SALES ({agg.todayOrders})</p>
+            {loadingDetails
+              ? <RefreshCw className="w-5 h-5 text-white/80 animate-spin ml-auto" />
+              : <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(agg.todaySales)}</p>}
+            <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">
+              TODAY&apos;S SALES ({loadingDetails ? "…" : agg.todayOrders})
+            </p>
           </div>
         </div>
       </div>
@@ -429,8 +501,12 @@ export default function BusinessDashboardPage() {
             <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
               <card.icon strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
             </div>
+            {/* Ang bilang ay handa na sa phase 1; ang halaga ay naghihintay sa tumpak
+                na pagkuwenta ng phase 2 imbes na magpakita ng aggregate na mali. */}
             <div className="text-right ml-auto z-10">
-              <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>
+              {loadingDetails
+                ? <RefreshCw className="w-5 h-5 text-white/80 animate-spin ml-auto" />
+                : <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>}
               <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">{card.label} ({card.count})</p>
             </div>
           </div>
@@ -455,19 +531,21 @@ export default function BusinessDashboardPage() {
       {/* Parcel Status — 3×3 sa desktop, 2 kada hanay sa cellphone */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
         {[
-          { label: "SHIPPED OUT", sub: "Shippedout, Pick-Up", count: agg.shipped, amount: agg.shippedSales, color: "bg-teal-500", pct: null, icon: Truck },
-          { label: "ODZ / INCOMPLETE", sub: null, count: 0, amount: 0, color: "bg-slate-500", pct: null, icon: AlertCircle },
-          { label: "UNFULFILLED / LAST MONTH", sub: "Packaging — previous month", count: lastMonthUnfulfilled.count, amount: lastMonthUnfulfilled.amount, color: "bg-blue-400", pct: null, icon: Clock },
-          { label: "IN-TRANSIT", sub: "In-Transit, Problematic", count: agg.inTransit, amount: agg.inTransitSales, color: "bg-teal-600", pct: null, icon: Truck },
-          { label: "ON-DELIVERY", sub: "On-Delivery, Delivering", count: agg.onDelivery, amount: agg.onDeliverySales, color: "bg-orange-500", pct: null, icon: Truck },
-          { label: "DELIVERED", sub: null, count: agg.delivered, amount: agg.deliveredSales, color: "bg-purple-500", pct: deliveredPct, icon: Package },
-          { label: "FOR RETURN", sub: "Returning — pabalik palang", count: agg.returning, amount: agg.returningSales, color: "bg-orange-400", pct: null, icon: RotateCcw },
-          { label: "RETURNED", sub: "Back in the warehouse", count: agg.returned, amount: agg.returnedSales, color: "bg-red-500", pct: null, icon: XCircle },
-          { label: "TOTAL RTS", sub: null, count: totalRTS, amount: totalRTSSales, color: "bg-red-600", pct: rtsPct, icon: ArrowDownUp },
+          { label: "SHIPPED OUT", sub: "Shippedout, Pick-Up", count: agg.shipped, amount: agg.shippedSales, color: "bg-teal-500", pct: null, icon: Truck, late: false },
+          { label: "ODZ / INCOMPLETE", sub: null, count: 0, amount: 0, color: "bg-slate-500", pct: null, icon: AlertCircle, late: false },
+          { label: "UNFULFILLED / LAST MONTH", sub: "Packaging — previous month", count: lastMonthUnfulfilled.count, amount: lastMonthUnfulfilled.amount, color: "bg-blue-400", pct: null, icon: Clock, late: true },
+          { label: "IN-TRANSIT", sub: "In-Transit, Problematic", count: agg.inTransit, amount: agg.inTransitSales, color: "bg-teal-600", pct: null, icon: Truck, late: true },
+          { label: "ON-DELIVERY", sub: "On-Delivery, Delivering", count: agg.onDelivery, amount: agg.onDeliverySales, color: "bg-orange-500", pct: null, icon: Truck, late: true },
+          { label: "DELIVERED", sub: null, count: agg.delivered, amount: agg.deliveredSales, color: "bg-purple-500", pct: deliveredPct, icon: Package, late: false },
+          { label: "FOR RETURN", sub: "Returning — pabalik palang", count: agg.returning, amount: agg.returningSales, color: "bg-orange-400", pct: null, icon: RotateCcw, late: false },
+          { label: "RETURNED", sub: "Back in the warehouse", count: agg.returned, amount: agg.returnedSales, color: "bg-red-500", pct: null, icon: XCircle, late: false },
+          { label: "TOTAL RTS", sub: null, count: totalRTS, amount: totalRTSSales, color: "bg-red-600", pct: rtsPct, icon: ArrowDownUp, late: false },
         ].map(card => {
-          // In-Transit / On-Delivery come from the slower full phase — show a spinner until ready
-          const isDetail = card.label === "IN-TRANSIT" || card.label === "ON-DELIVERY"
-          const pending = isDetail && loadingDetails
+          // Lahat ng HALAGA ay galing sa phase 2 (doon lang natutuwid ang 100×). Ang BILANG
+          // naman ay handa na sa phase 1 maliban sa mga naka-`late` — courier sub-status at
+          // ang nakaraang buwan, na pagination lang ang makapagsasabi.
+          const pending = loadingDetails
+          const countPending = card.late && loadingDetails
           return (
           <div key={card.label}
             className={`relative overflow-hidden ${card.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]`}>
@@ -479,7 +557,7 @@ export default function BusinessDashboardPage() {
                 ? <RefreshCw className="w-5 h-5 text-white/80 animate-spin ml-auto" />
                 : <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>}
               <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">
-                {card.label} ({pending ? "…" : card.count}){card.pct ? <span className="ml-1 font-bold">{card.pct}</span> : null}
+                {card.label} ({countPending ? "…" : card.count}){card.pct ? <span className="ml-1 font-bold">{card.pct}</span> : null}
               </p>
             </div>
           </div>
@@ -497,7 +575,7 @@ export default function BusinessDashboardPage() {
             <div className="flex items-start justify-between px-5 pt-4 pb-3 border-b border-slate-200">
               <div>
                 <h2 className="text-lg font-bold text-blue-600 tracking-wide">TOTAL SALES</h2>
-                <p className="text-xs text-red-500 mt-0.5">**Reserves are excluded, while cancellations are included.</p>
+                <p className="text-xs text-red-500 mt-0.5">**Hindi kasama ang reserves at ang mga kanselado.</p>
                 <p className="text-[11px] text-slate-400 mt-0.5">{asOfLabel}</p>
               </div>
               <button onClick={() => setSalesModalOpen(false)}
