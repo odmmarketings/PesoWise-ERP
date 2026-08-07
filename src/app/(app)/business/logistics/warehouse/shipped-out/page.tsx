@@ -11,18 +11,25 @@ import { useActivePages } from "@/lib/pages-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems } from "@/lib/product-items-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
-import { useShippedOutScans, type ShippedScanItem } from "@/lib/shipped-out-store"
+import { useShippedOutScans, type ParcelInfo } from "@/lib/shipped-out-store"
+import { buildRecipes, explodeOrderItems, isDeductable } from "@/lib/shipped-out-sync"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { scanSound, primeScanSound } from "@/lib/scan-sound"
 import { courierOf, courierTally, COURIERS, COURIER_COLOR } from "@/lib/courier"
 
 // ──────────────────────────────────────────────────────────────────────────────
-// SHIPPED OUT (Barcode) — i-scan ang waybill tracking (camera / hardware scanner /
-// type) sa paglabas ng parcel: hahanapin ang order sa Pancake, hahatiin sa unit-code
-// recipes, at AWTOMATIKONG BABAWASAN ang inventory (product_items.released) na naka-log
-// din sa stock_releases (kaya kita sa Transaction History at sa Stock-Out Audit bilang
-// "manual" na labas). Dedup sa DB: isang beses lang mababawas ang isang tracking no.
-// Pangalawang tab = SHIPPED OUT REPORT ng lahat ng na-scan, may date filter + courier tally.
+// SHIPPED OUT (Barcode) — DALAWANG talaan, IISANG bawas.
+//
+//   MANUAL SCAN (dito)  — i-scan ang waybill sa paglabas. Talaan ng warehouse: sino,
+//                         kailan, ilan. HINDI ito bumabawas ng inventory.
+//   PANCAKE SHIPPED     — kapag na-detect na umalis na ang parcel (Shipped/Delivered/
+//                         Returning/Returned), doon nababawasan ang inventory sa pamamagitan
+//                         ng unit-code recipe → product_items.released + stock_releases.
+//
+// Ganito para iisa ang pinagmumulan ng bawas at maikukumpara pa rin ang binilang ng
+// warehouse sa aktwal na umalis. Ang `deducted` sa DB ang nag-iisang pinto — conditional
+// update ang nagbabantay, kaya hindi madodoble kahit sabay tumakbo ang dalawang device.
+// Pangalawang tab = SHIPPED OUT REPORT, may date filter, courier tally, at paghahambing.
 // ──────────────────────────────────────────────────────────────────────────────
 
 const pad = (n: number) => String(n).padStart(2, "0")
@@ -56,12 +63,6 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   let i = 0
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
-
-// "2x Lumyra, 1x Iba" → [{qty, name}] — kapareho ng Fulfillment/Inventory Dashboard parser.
-const parseItems = (orderItem: string) => String(orderItem || "").split(",").map(s => s.trim()).filter(Boolean).map(seg => {
-  const m = seg.match(/^(\d+)\s*x\s*(.+)$/i)
-  return m ? { qty: Number(m[1]) || 1, name: m[2].trim() } : { qty: 1, name: seg }
-})
 
 // Dalawa lang ang courier natin: SPX at J&T (tingnan ang src/lib/courier.ts — may
 // tracking-prefix fallback kapag blangko ang partner_name). Lumalabas lang ang OTHER
@@ -139,21 +140,62 @@ export default function ShippedOutPage() {
   }, [rows])
 
   // Order name → product item components (unit-code recipes; plain items = sarili nila).
-  const recipeByName = useMemo(() => {
-    const alive = products.items.filter(i => !i.deleted)
-    const byName = new Map(alive.map(i => [i.name.toLowerCase(), i]))
-    const m = new Map<string, { itemId: string; sku: string; name: string; qty: number }[]>()
-    for (const i of alive) if (!m.has(i.name.toLowerCase())) m.set(i.name.toLowerCase(), [{ itemId: i.id, sku: i.sku, name: i.name, qty: 1 }])
-    for (const c of unitStore.codes) {
-      if (!c.code) continue
-      const comps = c.items.map(r => {
-        const it = byName.get(r.name.toLowerCase())
-        return it ? { itemId: it.id, sku: it.sku, name: it.name, qty: r.qty || 1 } : null
-      }).filter(Boolean) as { itemId: string; sku: string; name: string; qty: number }[]
-      if (comps.length) m.set(c.code.toLowerCase(), comps)
+  // Pinagsasaluhan ng manual scan at ng automated sync — tingnan ang lib/shipped-out-sync.
+  const recipeByName = useMemo(
+    () => buildRecipes(products.items, unitStore.codes),
+    [products.items, unitStore.codes])
+
+  const parcelInfo = (row: any, code: string): ParcelInfo => ({
+    tracking_no: code, courier: String(row.courier || ""), page_name: String(row.page_name || ""),
+    order_id: String(row.id || ""), customer: String(row.customer_name || ""),
+    order_item: String(row.order_item || ""), amount: Number(row.final_price || 0),
+    date: dstr(new Date()),
+  })
+
+  /** Ang NAG-IISANG lugar kung saan bumababa ang inventory. Tumatakbo lang kapag
+   *  nanalo tayo sa claim — hindi kailanman kapag "already". */
+  async function applyDeduction(row: any, code: string) {
+    const { items, total } = explodeOrderItems(String(row.order_item || ""), recipeByName)
+    const res = await store.claimDeduction(parcelInfo(row, code), items, total)
+    if (res !== "claimed") return res            // "already" o error — walang binabawas
+    if (items.length) {
+      products.releaseStock(items.map(i => ({ id: i.item_id, qty: i.deducted })))
+      releases.addRelease({
+        category: "Shipped Out", ref: code,
+        items: items.map(i => ({ item_id: i.item_id, sku: i.sku, name: i.name, required: 1, release: i.deducted, deducted: i.deducted })),
+      })
     }
-    return m
-  }, [products.items, unitStore.codes])
+    return "claimed"
+  }
+
+  // ── AUTOMATED PANCAKE SHIPPED — ito ang bumabawas ────────────────────────────
+  // Tumatakbo tuwing may bagong Pancake rows. Ang parcel na umalis na sa bodega
+  // (Shipped/Delivered/Returning/Returned) at hindi pa nababawasan ay babawasan.
+  // Ligtas ulit-ulitin: ang claim gate sa DB ang huling nagpapasya, hindi ito.
+  const [syncing, setSyncing] = useState(false)
+  const [syncedCount, setSyncedCount] = useState(0)
+  const syncBusy = useRef(false)
+
+  useEffect(() => {
+    if (syncBusy.current || !store.loaded || loading || rows.length === 0) return
+    const done = new Set(store.scans.filter(s => s.deducted).map(s => s.tracking_no.toLowerCase()))
+    const pending = rows.filter(r => isDeductable(r) && !done.has(String(r.tracking_no).trim().toLowerCase()))
+    if (pending.length === 0) return
+
+    syncBusy.current = true
+    setSyncing(true)
+    ;(async () => {
+      let n = 0
+      for (const r of pending) {
+        const code = String(r.tracking_no).trim()
+        try { if (await applyDeduction(r, code) === "claimed") n++ } catch { /* susunod na takbo */ }
+      }
+      if (n > 0) { setSyncedCount(c => c + n); await store.refresh() }
+      setSyncing(false)
+      syncBusy.current = false
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, store.loaded, loading])
 
   // ── Scan handling ────────────────────────────────────────────────────────────
   const [manual, setManual] = useState("")
@@ -192,56 +234,39 @@ export default function ShippedOutPage() {
       return
     }
 
-    // I-explode ang waybill lines → product item deductions.
-    const perItem = new Map<string, ShippedScanItem>()
-    const unmapped: string[] = []
-    for (const li of parseItems(row.order_item)) {
-      const recipe = recipeByName.get(li.name.toLowerCase())
-      if (!recipe) { unmapped.push(li.name); continue }
-      for (const c of recipe) {
-        const prev = perItem.get(c.itemId)
-        const add = li.qty * c.qty
-        if (prev) prev.deducted += add
-        else perItem.set(c.itemId, { item_id: c.itemId, sku: c.sku, name: c.name, deducted: add })
-      }
-    }
-    const items = Array.from(perItem.values())
-    const total = items.reduce((s, i) => s + i.deducted, 0)
+    // Ang manual scan ay TALAAN ng warehouse — hindi ito bumabawas ng inventory.
+    // Ang Pancake shipped ang bumabawas, kaya iisa lang ang pinagmumulan ng bawas.
+    // Binubuklat pa rin ang resipe para maipakita AGAD kung may hindi magkakatugma.
+    const { items, unmapped } = explodeOrderItems(String(row.order_item || ""), recipeByName)
 
     setBusy(true)
-    // 1) Itala MUNA ang scan — ito ang dedup gate (DB unique). Kapag duplicate, WALANG deduction.
-    const res = await store.addScan({
-      tracking_no: code, courier: String(row.courier || ""), page_name: String(row.page_name || ""),
-      order_id: String(row.id || ""), customer: String(row.customer_name || ""),
-      order_item: String(row.order_item || ""), items, deducted_total: total,
-      amount: Number(row.final_price || 0), date: dstr(new Date()),
-    })
-    if (res === "duplicate") {
-      setBusy(false); beep("error")
-      showBanner({ kind: "err", title: "ALREADY SCANNED", sub: `${code} — already recorded (another device/tab).` })
-      return
-    }
-    if (res !== "added") {
-      setBusy(false); beep("error")
-      showBanner({ kind: "err", title: "SAVE FAILED", sub: res })
-      return
-    }
-    // 2) Saka ibawas sa inventory + i-log sa release history.
-    if (items.length) {
-      products.releaseStock(items.map(i => ({ id: i.item_id, qty: i.deducted })))
-      releases.addRelease({
-        category: "Shipped Out", ref: code,
-        items: items.map(i => ({ item_id: i.item_id, sku: i.sku, name: i.name, required: 1, release: i.deducted, deducted: i.deducted })),
-      })
-    }
+    const res = await store.markManualScan(parcelInfo(row, code))
     setBusy(false)
+    if (res !== "added" && res !== "restamped") {
+      beep("error")
+      showBanner(res === "already"
+        ? { kind: "err", title: "ALREADY SCANNED", sub: `${code} — naitala na (ibang device/tab).` }
+        : { kind: "err", title: "SAVE FAILED", sub: res })
+      return
+    }
     setManual("")
-    if (items.length === 0) {
+
+    // Kung umalis na sa Pancake, nabawasan na ito ng sync — sabihin, para alam ng
+    // warehouse na tapos na ang parcel na ito at hindi na maghintay.
+    const already = store.scans.find(s => s.tracking_no.toLowerCase() === key)?.deducted
+      || isDeductable(row)
+    if (unmapped.length && items.length === 0) {
       beep("warn")
-      showBanner({ kind: "warn", title: "SCANNED — NOTHING DEDUCTED", sub: `${code} — no unit code/product matched "${row.order_item}". The scan was still recorded.` })
+      showBanner({ kind: "warn", title: "SCANNED — WALANG KATUGMANG UNIT CODE", sub: `${code} — walang tumugma sa "${row.order_item}". Naitala pa rin, pero hindi ito mababawas hangga't walang unit code na ganito ang pangalan.` })
     } else {
       beep("ok")
-      showBanner({ kind: "ok", title: "SHIPPED OUT ✓", sub: `${code} · ${row.customer_name || ""} — deducted: ${items.map(i => `${num(i.deducted)}× ${i.name}`).join(", ")}${unmapped.length ? ` · no match: ${unmapped.join(", ")}` : ""}` })
+      showBanner({
+        kind: "ok",
+        title: already ? "SCANNED ✓ · BAWAS NA" : "SCANNED ✓ · HINDI PA BAWAS",
+        sub: already
+          ? `${code} · ${row.customer_name || ""} — Shipped na sa Pancake, kaya nabawasan na ang inventory.`
+          : `${code} · ${row.customer_name || ""} — naitala. Mababawas kapag na-Shipped na ito sa Pancake.${unmapped.length ? ` · walang tugma: ${unmapped.join(", ")}` : ""}`,
+      })
     }
     inputRef.current?.focus()
   }
@@ -250,6 +275,18 @@ export default function ShippedOutPage() {
   const today = dstr(new Date())
   const todayScans = useMemo(() => store.scans.filter(s => s.date === today), [store.scans, today])
   const todayCouriers = useMemo(() => courierTallyOf(todayScans), [todayScans])
+
+  // Paghahambing ng dalawang pinagmumulan. Ang `pending` ang mahalaga: na-scan ng
+  // warehouse pero hindi pa Shipped sa Pancake, kaya hindi pa bawas. Kapag lumaki ito,
+  // may hindi minamarkahang Shipped sa POS — hindi nawawalang tahimik ang parcel.
+  const statsOf = (list: typeof store.scans) => ({
+    manual: list.filter(s => s.manual_scanned_at).length,
+    auto: list.filter(s => s.pancake_shipped_at).length,
+    deducted: list.filter(s => s.deducted).length,
+    pending: list.filter(s => s.manual_scanned_at && !s.deducted).length,
+    autoOnly: list.filter(s => s.pancake_shipped_at && !s.manual_scanned_at).length,
+  })
+  const todayStats = useMemo(() => statsOf(todayScans), [todayScans])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Report tab ───────────────────────────────────────────────────────────────
   const [repA, setRepA] = useState(monthStart())
@@ -266,13 +303,15 @@ export default function ShippedOutPage() {
     amount: repScans.reduce((s, r) => s + (r.amount || 0), 0),
     units: repScans.reduce((s, r) => s + (r.deducted_total || 0), 0),
   }), [repScans])
+  const repStats = useMemo(() => statsOf(repScans), [repScans])   // eslint-disable-line react-hooks/exhaustive-deps
 
   function exportReport() {
-    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Deducted from Inventory (units)", "Amount", "Scanned By"]
+    const headers = ["Date/Time", "Tracking No", "Courier", "Page", "Customer", "Order", "Item Name (deducted)", "Deducted from Inventory (units)", "Amount", "Manual Scan", "Scanned By", "POS Shipped", "Deducted?"]
     const data = [headers, ...repScans.map(s => [
       fmtDT(s.created_at), s.tracking_no, courierLabel(s.courier, s.tracking_no), s.page_name, s.customer, s.order_item,
-      s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.deducted_total, s.amount, s.scanned_by,
-    ]), ["TOTAL", "", "", "", "", "", "", repTotals.units, repTotals.amount, ""]]
+      s.items.map(i => `${i.deducted}x ${i.name}`).join(", "), s.deducted_total, s.amount,
+      fmtDT(s.manual_scanned_at), s.manual_scanned_by || s.scanned_by, fmtDT(s.pancake_shipped_at), s.deducted ? "Oo" : "Hindi pa",
+    ]), ["TOTAL", "", "", "", "", "", "", repTotals.units, repTotals.amount, "", "", "", ""]]
     const ws = XLSX.utils.aoa_to_sheet(data)
     for (let c = 0; c < headers.length; c++) {
       const addr = XLSX.utils.encode_cell({ r: 0, c })
@@ -341,8 +380,26 @@ export default function ShippedOutPage() {
             </div>
             <p className="text-[11px] text-slate-400 mt-4">
               {loading ? "Loading orders from Pancake…" : `${num(rows.length)} order${rows.length === 1 ? "" : "s"} loaded (${win.from} → ${win.to}) mula sa ${pagesWithCreds.length} page${pagesWithCreds.length === 1 ? "" : "s"}.`}
-              {" "}On scan, inventory is deducted automatically via the unit-code recipe and written to release history.
+              {" "}Ang scan ay talaan ng warehouse — ang bawas sa inventory ay awtomatikong nangyayari kapag
+              na-Shipped na ang parcel sa Pancake.
             </p>
+            {/* Kitang-kita ang automated na bawas — kung hindi, walang paraan para malaman
+                ng warehouse kung gumagana ito o tahimik na tumigil. */}
+            <div className="mt-2 text-[11px] flex items-center gap-1.5">
+              {syncing ? (
+                <span className="text-blue-600 flex items-center gap-1.5">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Sinusuri ang Pancake para sa mga umalis na parcel…
+                </span>
+              ) : syncedCount > 0 ? (
+                <span className="text-emerald-600 font-semibold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3" /> {num(syncedCount)} parcel{syncedCount === 1 ? "" : "s"} ang awtomatikong nabawas ngayong session
+                </span>
+              ) : (
+                <span className="text-slate-400 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3" /> Walang bagong parcel na kailangang bawasan — updated ang inventory.
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Right — today panel (reference: As of + list + courier tally) */}
@@ -385,6 +442,21 @@ export default function ShippedOutPage() {
                     <p className="text-sm font-extrabold text-slate-800 tabular-nums">{num(c.count)}</p>
                   </div>
                 ))}
+              </div>
+              {/* Manual laban sa automated — dalawang talaan, iisang bawas. */}
+              <div className="grid grid-cols-3 divide-x divide-slate-100 text-center border-t border-slate-100">
+                <div className="px-2 py-2">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">Manual scan</p>
+                  <p className="text-sm font-extrabold text-slate-800 tabular-nums">{num(todayStats.manual)}</p>
+                </div>
+                <div className="px-2 py-2">
+                  <p className="text-[10px] font-semibold uppercase text-emerald-600">POS · bawas</p>
+                  <p className="text-sm font-extrabold text-emerald-700 tabular-nums">{num(todayStats.deducted)}</p>
+                </div>
+                <div className="px-2 py-2">
+                  <p className="text-[10px] font-semibold uppercase text-amber-600">Hindi pa bawas</p>
+                  <p className="text-sm font-extrabold text-amber-700 tabular-nums">{num(todayStats.pending)}</p>
+                </div>
               </div>
               <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Total Shipped Out</span>
@@ -435,6 +507,31 @@ export default function ShippedOutPage() {
             <div className="bg-emerald-600 rounded-xl px-4 py-3">
               <p className="text-[10px] font-semibold text-emerald-100 uppercase tracking-wider">Total Amount</p>
               <p className="text-xl font-extrabold text-white tabular-nums">{peso(repTotals.amount)}</p>
+            </div>
+          </div>
+
+          {/* Paghahambing ng dalawang pinagmumulan — dito makikita kung tugma ang
+              binilang ng warehouse sa aktwal na umalis ayon sa Pancake. */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Manual scan</p>
+              <p className="text-xl font-extrabold text-slate-800 tabular-nums">{num(repStats.manual)}</p>
+              <p className="text-[10px] text-slate-400">na-scan ng warehouse</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600">POS automated · bawas</p>
+              <p className="text-xl font-extrabold text-emerald-700 tabular-nums">{num(repStats.deducted)}</p>
+              <p className="text-[10px] text-slate-400">nabawasan sa inventory</p>
+            </div>
+            <div className="bg-white rounded-xl border border-amber-200 px-4 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">Hindi pa bawas</p>
+              <p className="text-xl font-extrabold text-amber-700 tabular-nums">{num(repStats.pending)}</p>
+              <p className="text-[10px] text-slate-400">na-scan pero hindi pa Shipped sa POS</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-600">Hindi na-scan</p>
+              <p className="text-xl font-extrabold text-blue-700 tabular-nums">{num(repStats.autoOnly)}</p>
+              <p className="text-[10px] text-slate-400">umalis pero walang manual scan</p>
             </div>
           </div>
 
