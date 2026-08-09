@@ -367,9 +367,18 @@ export default function AdspentROASSummaryPage() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Table — WALANG sariling vertical scroll: dumadaloy ito nang tuloy-tuloy pababa
+          gaano man kahaba ang saklaw (Ene–Ago = ~220 araw). Ang page mismo (ang main
+          element) ang umiiskrol.
+
+          ⚠ Ang pahalang na scroll ay MAY breakpoint, hindi laging naka-on: ang
+          `overflow-x-auto` ay nagpapa-compute sa `overflow-y` bilang `auto` din, kaya
+          nagiging scroll container ang div at doon dumidikit ang sticky thead/tfoot imbes
+          na sa main — mawawala ang naka-dikit na header at totals. Sa xl pataas kasya na
+          ang anim na kolum, kaya `overflow-visible` doon at bumabalik ang sticky. Sa mas
+          maliit na screen, pahalang na scroll ang mas kailangan. */}
       {appliedRange && !loading && rows.length > 0 && (
-        <div className="rounded-xl border border-gray-200 overflow-auto max-h-[78vh] inline-block max-w-full align-top">
+        <div className="rounded-xl border border-gray-200 overflow-x-auto xl:overflow-visible inline-block max-w-full align-top">
           <table className="w-auto border-collapse text-sm">
             <thead className="sticky top-0 z-20">
               {/* Span header */}
