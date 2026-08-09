@@ -48,7 +48,26 @@ function toRow(c: RawCampaign, accountId: string, accountName: string, accountOw
     costPerMsg: c.messaging > 0 ? c.spend / c.messaging : 0,
   }
 }
-const isMsg = (o: string) => /messag|engagement|leads/i.test(o)
+// ── PAG-URI NG OBJECTIVE ──────────────────────────────────────────────────────
+// Dati ay binary ito: `Messaging` = tugma sa isMsg, at ang `Conversions` ay ang
+// LAHAT ng iba pa. Kaya ang OUTCOME_APP_PROMOTION, OUTCOME_TRAFFIC,
+// OUTCOME_AWARENESS at OUTCOME_VIDEO_VIEWS ay naipapasok sa "Conversions" —
+// mali, at nagpapalabo sa CPP/CVR/ROAS na para lang sa sales campaigns.
+// NASUKAT (Ago 6 2026): 158 OUTCOME_SALES at 2 OUTCOME_APP_PROMOTION; ang huli
+// ay nakabilang sa Conversions.
+// Ngayon ay tahasan na ang pag-uri, at may "Other" na pagpipilian para walang
+// campaign na nagtatago sa labas ng lahat ng bucket.
+// `lead` hindi `leads`: ang bago ng Meta ay OUTCOME_LEADS pero ang luma ay
+// LEAD_GENERATION — isahan. Sa `leads`, ang mga lumang campaign ay hindi
+// napupunta sa Messaging (dati nang bug, nahuli ng test Ago 6 2026).
+const isMsg = (o: string) => /messag|engagement|lead/i.test(o)
+const isConv = (o: string) => /sales|conversion|purchase|catalog/i.test(o)
+/** Aling bucket ng dropdown ang kinabibilangan ng objective na ito? */
+function objBucket(o: string): Exclude<Obj, "All"> {
+  if (isMsg(o)) return "Messaging"
+  if (isConv(o)) return "Conversions"
+  return "Other"
+}
 const statusColor = (s: string) => /active/i.test(s) ? "text-emerald-600 bg-emerald-50" : /paus/i.test(s) ? "text-amber-600 bg-amber-50" : "text-slate-500 bg-slate-100"
 // Show the campaign status capitalised — "Active", "Paused", etc.
 const statusLabel = (s: string) => { const t = String(s).replace(/_/g, " ").toLowerCase(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t }
@@ -60,7 +79,7 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
 }
 
 type Tab = "dashboard" | "daily" | "manager"
-type Obj = "All" | "Conversions" | "Messaging"
+type Obj = "All" | "Conversions" | "Messaging" | "Other"
 
 // Module-level flag: resets on a full page (re)load, but persists across in-app navigation.
 // Lets us tell a real refresh apart from leaving the section and coming back.
@@ -192,25 +211,45 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
   const [showCharts, setShowCharts] = useState(() => { try { return localStorage.getItem("pesowise_fb_showcharts") !== "0" } catch { return true } })
   useEffect(() => { try { localStorage.setItem("pesowise_fb_showcharts", showCharts ? "1" : "0") } catch {} }, [showCharts])
 
-  const accounts = useMemo(() => Array.from(new Set(rows.map(r => r.accountName))).sort(), [rows])
-  const owners = useMemo(() => Array.from(new Set(rows.map(r => r.accountOwner).filter(Boolean))).sort(), [rows])
+  // Ang mga pagpipilian ay galing sa REGISTRY ng ad accounts, pinagsama sa nakita
+  // sa rows. Kung `rows` lang ang pinagbatayan, ang account/owner na walang
+  // campaign sa panahong ito ay hindi mapipili — kaya mukhang nawawala ang tao
+  // gayong may account naman siya.
+  const accounts = useMemo(() => Array.from(new Set([
+    ...fbAccounts.filter(a => !a.archived).map(a => a.name),
+    ...rows.map(r => r.accountName),
+  ].filter(Boolean))).sort(), [fbAccounts, rows])
+  const owners = useMemo(() => Array.from(new Set([
+    ...fbAccounts.filter(a => !a.archived).map(a => a.owner),
+    ...rows.map(r => r.accountOwner),
+  ].filter(Boolean))).sort(), [fbAccounts, rows])
 
-  // Overview cards react to every filter EXCEPT Status — Status only narrows the table below.
+  // ── STATUS FILTER ───────────────────────────────────────────────────────────
+  // DATING BUG (nasukat Ago 6 2026): ang "Paused" ay nangangailangan ng
+  // `spend > 0`, kaya sa 145 na PAUSED campaigns ay 45 lang ang lumalabas —
+  // 100 ang nakatago. Iyon ang "hindi accurate" na filter. Ang status ay
+  // STATUS; hindi ito dapat maghalo ng kondisyon sa spend. Ang "With spend"
+  // ang para doon.
+  //   All         → lahat
+  //   Active      → effective_status ACTIVE
+  //   Paused      → LAHAT ng paused (kasama ang zero-spend)
+  //   With spend  → anumang may gastos sa panahon (hindi status, kaya hiwalay)
+  const passStatus = (r: Row) => fStatus === "Active" ? /active/i.test(r.status)
+    : fStatus === "Paused" ? /paus/i.test(r.status)
+      : fStatus === "With spend" ? r.spend > 0 : true
+
+  // Ang bawat filter — KASAMA ang Status — ay umaapekto sa cards AT sa table.
+  // Dati ay laktaw ang cards sa Status, kaya "Active" ang napili pero buong-buwan
+  // pa rin ang spend sa itaas (₱818,974 sa cards vs ₱176,247 sa table). Mukhang
+  // sira ang report; ang filter ay dapat mag-filter.
   const cardRows = useMemo(() => rows.filter(r => {
-    if (objective !== "All" && (objective === "Messaging" ? !isMsg(r.objective) : isMsg(r.objective))) return false
+    if (objective !== "All" && objBucket(r.objective) !== objective) return false
     if (fAccount !== "All" && r.accountName !== fAccount) return false
     if (fOwner !== "All" && r.accountOwner !== fOwner) return false
     if (qCampaign && !r.name.toLowerCase().includes(qCampaign.toLowerCase())) return false
-    return true
-  }), [rows, objective, fAccount, fOwner, qCampaign])
-  // Campaign Performance table = the card filter + the Status filter.
-  //   Active      → currently running
-  //   Paused      → paused campaigns that still spent in the period (zero-spend dropped)
-  //   With spend  → anything (active or paused) that spent in the period
-  const passStatus = (r: Row) => fStatus === "Active" ? /active/i.test(r.status)
-    : fStatus === "Paused" ? (/paus/i.test(r.status) && r.spend > 0)
-      : fStatus === "With spend" ? r.spend > 0 : true
-  const filtered = useMemo(() => cardRows.filter(passStatus), [cardRows, fStatus])
+    return passStatus(r)
+  }), [rows, objective, fAccount, fOwner, qCampaign, fStatus])
+  const filtered = cardRows
 
   // ── View-only level tabs (Campaigns / Ad Sets / Ads). Ad-set and ad metrics are lazy-loaded
   // once per date range (server cache handles freshness) — no toggles here, viewing only. ──
@@ -280,6 +319,23 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
   // (a turned-off campaign that still spent had its budget in play, so it counts).
   const activeBudget = useMemo(() => cardRows.filter(r => /active/i.test(r.status) || r.spend > 0).reduce((s, r) => s + r.budget, 0), [cardRows])
   const overallRoas = agg.spend > 0 ? agg.sales / agg.spend : 0
+  // Dalawang bagay na hindi kayang gawin ng filter — dating tahimik lang:
+  //  1. Ang Objective ay galing sa Meta sa CAMPAIGN level lang; walang objective
+  //     ang ad set/ad rows, kaya hindi ito maisasalang doon.
+  //  2. Kapag na-rate-limit ang meta edge call ng Graph API, "—" ang status ng
+  //     rows. Ang Active/Paused ay walang maipapakita — at walang paliwanag dati.
+  const filterNotes = useMemo(() => {
+    const notes: string[] = []
+    if (perfLevel !== "campaign" && objective !== "All") {
+      notes.push(`Objective “${objective}” applies to campaigns only — Meta doesn’t report an objective per ad set or ad, so the table below is not filtered by it.`)
+    }
+    const unknown = (perfLevel === "campaign" ? filtered : (lvlData[perfLevel] || [])).filter(r => !r.status || r.status === "—").length
+    if (unknown > 0 && (fStatus === "Active" || fStatus === "Paused")) {
+      notes.push(`${unknown} row${unknown === 1 ? "" : "s"} came back without a status from Meta (usually rate limiting), so the “${fStatus}” filter can’t place them. Refresh to try again.`)
+    }
+    return notes
+  }, [perfLevel, objective, fStatus, filtered, lvlData])
+
   const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0
   const convRate = agg.clicks > 0 ? (agg.purchases / agg.clicks) * 100 : 0
   const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0
@@ -327,7 +383,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
       <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap gap-3 items-end">
         <Sel value={fAccount} onChange={setFAccount} opts={["All", ...accounts]} label="Account" />
         <Sel value={fOwner} onChange={setFOwner} opts={["All", ...owners]} label="Owner" />
-        <Sel value={objective} onChange={(v) => setObjective(v as Obj)} opts={["All", "Conversions", "Messaging"]} label="Objective" />
+        <Sel value={objective} onChange={(v) => setObjective(v as Obj)} opts={["All", "Conversions", "Messaging", "Other"]} label="Objective" />
         <Sel value={fStatus} onChange={setFStatus} opts={["All", "Active", "Paused", "With spend"]} label="Status" />
         <div className="relative flex-1 min-w-[180px]">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -338,7 +394,15 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
         </button>
       </div>
 
-      {/* Overview cards — reflect Account / Owner / Objective / Search (NOT Status, which is table-only) */}
+      {/* Kung saan hindi kayang gawin ng filter ang inaasahan, SABIHIN — huwag
+          hayaang mag-isip ang user na mali ang datos. */}
+      {(filterNotes.length > 0) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[13px] text-amber-800 space-y-1">
+          {filterNotes.map((n, i) => <p key={i}>{n}</p>)}
+        </div>
+      )}
+
+      {/* Overview cards — sumusunod sa LAHAT ng filter, kasama ang Status */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {cards.map((c, i) => <Kpi key={i} {...c} />)}
       </div>
