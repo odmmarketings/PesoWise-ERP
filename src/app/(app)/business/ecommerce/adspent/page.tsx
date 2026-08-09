@@ -6,7 +6,7 @@ import {
 } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
-import { useFBAccounts, actId, type FBAccount } from "@/lib/fb-store"
+import { useFBAccounts, actId, allAccountIds, type FBAccount } from "@/lib/fb-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
@@ -72,15 +72,20 @@ async function fetchAdspentFromFB(
     if (accts.length === 0) return
     const byDate: Record<string, number> = {}
     for (const a of accts) {
-      try {
-        const j = await fetch(
-          `/api/fb/insights?token=${encodeURIComponent(a.token)}`
-          + `&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${fromStr}&to=${toStr}`
-        ).then(r => r.json())
-        if (j.success) for (const [d, v] of Object.entries(j.byDate || {})) byDate[d] = (byDate[d] || 0) + Number(v)
-        else failed.push(`${a.name || a.ad_account_id}: ${String(j.error || "Meta refused the request").slice(0, 120)}`)
-      } catch (e: any) {
-        failed.push(`${a.name || a.ad_account_id}: ${e?.message || "network error"}`)
+      // LAHAT ng ad account ID ng registration — pati ang mga na-disable na. Totoong
+      // perang nagastos iyon; kung ang pangunahin lang ang babasahin, tahimik na
+      // magiging kulang ang adspent at magmumukhang mas mataas ang ROAS.
+      for (const acct of allAccountIds(a)) {
+        try {
+          const j = await fetch(
+            `/api/fb/insights?token=${encodeURIComponent(a.token)}`
+            + `&account_id=${encodeURIComponent(acct)}&from=${fromStr}&to=${toStr}`
+          ).then(r => r.json())
+          if (j.success) for (const [d, v] of Object.entries(j.byDate || {})) byDate[d] = (byDate[d] || 0) + Number(v)
+          else failed.push(`${a.name || acct}${acct !== actId(a.ad_account_id) ? ` (${acct})` : ""}: ${String(j.error || "Meta refused the request").slice(0, 120)}`)
+        } catch (e: any) {
+          failed.push(`${a.name || acct}: ${e?.message || "network error"}`)
+        }
       }
     }
     // Ang mga araw LANG na may isinagot ang Meta ang isinusulat — kaya hindi

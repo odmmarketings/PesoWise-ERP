@@ -23,7 +23,16 @@ export interface FBAccount {
   owner: string
   page_name: string         // PesoWise page this maps to (for adspent sync)
   page_url: string
-  ad_account_id: string     // e.g. act_909054325102209 or just the digits
+  ad_account_id: string     // e.g. act_909054325102209 or just the digits — ANG PANGUNAHIN
+  /**
+   * Karagdagang ad account ID na ang gastos ay dapat isama sa adspent ng registration
+   * na ito — kadalasan mga NA-DISABLE nang account na may nagastos pa rin.
+   *
+   * PANG-SUMA LANG NG GASTOS. Ang `ad_account_id` pa rin ang ginagamit ng Ads Manager,
+   * ng FB Billing, at ng status sync — sinasadya, para walang masira sa mga umiiral na
+   * tampok habang nakukuha pa rin ang nawawalang gastos.
+   */
+  extra_account_ids: string[]
   token: string             // Meta access token (System User token ideally)
   platform: string          // "Facebook"
   focus: string             // Conversions / Messaging / …
@@ -37,7 +46,7 @@ export interface FBAccount {
 
 export interface NewFBInput {
   name: string; owner: string; page_name: string; page_url: string
-  ad_account_id: string; token: string; platform: string; focus: string; currency: string
+  ad_account_id: string; extra_account_ids?: string[]; token: string; platform: string; focus: string; currency: string
   status?: FBStatus; remarks: string; card_id?: string
 }
 
@@ -49,6 +58,22 @@ export function actId(raw: string) {
   return s.startsWith("act_") ? s : `act_${s.replace(/\D/g, "")}`
 }
 
+/**
+ * LAHAT ng ad account ID ng isang registration — ang pangunahin at ang mga karagdagan,
+ * naka-normalize at walang duplicate.
+ *
+ * Ito ang dapat gamitin ng anumang SUMA NG GASTOS. Ang paggamit ng `ad_account_id`
+ * lang ay tahimik na nagbabawas sa adspent ng bawat na-disable na account.
+ */
+export function allAccountIds(a: Pick<FBAccount, "ad_account_id" | "extra_account_ids">): string[] {
+  const out: string[] = []
+  for (const raw of [a.ad_account_id, ...(a.extra_account_ids || [])]) {
+    const id = actId(raw)
+    if (id && !out.includes(id)) out.push(id)
+  }
+  return out
+}
+
 function normalize(r: Partial<FBAccount>): FBAccount {
   return {
     id: r.id || uid(),
@@ -57,6 +82,9 @@ function normalize(r: Partial<FBAccount>): FBAccount {
     page_name: r.page_name || "",
     page_url: r.page_url || "",
     ad_account_id: r.ad_account_id || "",
+    extra_account_ids: Array.isArray(r.extra_account_ids)
+      ? r.extra_account_ids.map(x => String(x || "").trim()).filter(Boolean)
+      : [],
     token: r.token || "",
     platform: r.platform || "Facebook",
     focus: r.focus || "Conversions",

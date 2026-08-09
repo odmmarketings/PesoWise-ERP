@@ -4,7 +4,7 @@ import { ChevronDown, Check, Search, X, RefreshCw, Activity, ArrowDownUp, BarCha
 import { format, eachDayOfInterval, subDays } from "date-fns"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
-import { useFBAccounts, actId } from "@/lib/fb-store"
+import { useFBAccounts, actId, allAccountIds } from "@/lib/fb-store"
 import { usePageColors, colorForPage } from "@/lib/page-colors"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 
@@ -279,10 +279,13 @@ export default function ROASTrackerPage() {
         if (accts.length === 0) return
         const byDate: Record<string, number> = {}
         for (const a of accts) {
-          try {
-            const j = await fetch(`/api/fb/insights?token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${fromStr}&to=${toStr}`).then(r => r.json())
-            if (j.success) for (const [d, v] of Object.entries(j.byDate || {})) byDate[d] = (byDate[d] || 0) + Number(v)
-          } catch {}
+          // Pati ang mga na-disable nang ad account — totoong gastos pa rin iyon.
+          for (const acct of allAccountIds(a)) {
+            try {
+              const j = await fetch(`/api/fb/insights?token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(acct)}&from=${fromStr}&to=${toStr}`).then(r => r.json())
+              if (j.success) for (const [d, v] of Object.entries(j.byDate || {})) byDate[d] = (byDate[d] || 0) + Number(v)
+            } catch {}
+          }
         }
         for (const [d, v] of Object.entries(byDate)) entries.push({ pageId: pg.id, date: d, value: v })
       })
