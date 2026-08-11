@@ -36,6 +36,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${geist.variable} h-full`}>
       <head>
         <meta charSet="utf-8" />
+        {/* Inilalapat ang naka-save na tema BAGO ang unang paint. Kung sa React
+            effect ito gagawin, kikislap ang puti bago magdilim sa bawat load. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("pesowise_theme");if(t==="dark"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}`,
+          }}
+        />
       </head>
       <body className="min-h-full flex flex-col antialiased">
         {children}

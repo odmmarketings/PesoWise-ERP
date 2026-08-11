@@ -25,17 +25,140 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK MODE
+   ───────────────────────────────────────────────────────────────────────────
+   BAKIT SA CSS AT HINDI SA `dark:` KADA CLASS: 2,329 na hardcoded na
+   light-mode utility ang nasa 78 files at wala ni isang `dark:` variant.
+   Ang pagdaan sa bawat isa ay libo-libong edit na hindi ko mave-verify
+   (nasa likod ng login ang mga page).
+
+   BAKIT CLASS OVERRIDE AT HINDI TOKEN OVERRIDE: napatunayan na ang lahat ng
+   utility ay dumadaan sa `var(--color-*)`, kaya ang pagpalit ng `--color-white`
+   ay magbabaligtad sana ng lahat sa isang linya — PERO ang `text-white` ay
+   gumagamit ng PAREHONG token, at nasa lahat ng colored stat card iyon. Kaya
+   magiging madilim ang teksto sa asul/berdeng card. Kaya ang IMINUMUNGKAHING
+   utility class ang binabago, hindi ang token: nananatiling puti ang
+   `text-white`, ang `bg-white` lang ang nagiging madilim.
+
+   Ang `.dark .x` (0,2,0) ay nananaig sa `.x` (0,1,0) — walang kailangang
+   !important.
+   ═══════════════════════════════════════════════════════════════════════════ */
 .dark {
-  --background: #0f172a;
-  --foreground: #f8fafc;
-  --card: #1e293b;
-  --card-foreground: #f8fafc;
-  --secondary: #1e293b;
-  --secondary-foreground: #f8fafc;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --border: #334155;
+  --background: #0b1220;
+  --foreground: #e8edf5;
+  --card: #131c2e;
+  --card-foreground: #e8edf5;
+  --secondary: #1b2536;
+  --secondary-foreground: #e8edf5;
+  --muted: #1b2536;
+  --muted-foreground: #8a94a8;
+  --border: #263248;
+
+  /* Ang mga surface na ginagamit sa buong overrides sa ibaba */
+  --dk-surface: #131c2e;   /* card / panel (bg-white) */
+  --dk-sunken: #0f172a;    /* mas madilim na strip (bg-slate-50) */
+  --dk-raised: #1b2536;    /* hover / bg-slate-100 */
+  --dk-border: #263248;
+  --dk-border-soft: #1e2839;
+  --dk-text: #e8edf5;      /* text-slate-900/800 */
+  --dk-text-2: #b8c2d4;    /* text-slate-700/600 */
+  --dk-text-3: #8a94a8;    /* text-slate-500/400 */
 }
+
+/* ── Mga surface ───────────────────────────────────────────────────────── */
+.dark .bg-white { background-color: var(--dk-surface); }
+.dark .bg-slate-50, .dark .bg-gray-50 { background-color: var(--dk-sunken); }
+.dark .bg-slate-100, .dark .bg-gray-100 { background-color: var(--dk-raised); }
+.dark .bg-slate-200, .dark .bg-gray-200 { background-color: #2a374e; }
+.dark .hover\:bg-white:hover { background-color: var(--dk-raised); }
+.dark .hover\:bg-slate-50:hover, .dark .hover\:bg-gray-50:hover { background-color: var(--dk-raised); }
+.dark .hover\:bg-slate-100:hover, .dark .hover\:bg-gray-100:hover { background-color: #222e42; }
+/* Semi-transparent na bersyon na ginagamit sa mga hovered row */
+.dark .bg-slate-50\/70 { background-color: color-mix(in srgb, var(--dk-sunken) 70%, transparent); }
+
+/* ── Teksto ────────────────────────────────────────────────────────────── */
+.dark .text-slate-900, .dark .text-gray-900,
+.dark .text-slate-800, .dark .text-gray-800 { color: var(--dk-text); }
+.dark .text-slate-700, .dark .text-gray-700,
+.dark .text-slate-600, .dark .text-gray-600 { color: var(--dk-text-2); }
+.dark .text-slate-500, .dark .text-gray-500,
+.dark .text-slate-400, .dark .text-gray-400 { color: var(--dk-text-3); }
+.dark .hover\:text-slate-800:hover, .dark .hover\:text-slate-700:hover { color: var(--dk-text); }
+
+/* ── Mga hangganan ─────────────────────────────────────────────────────── */
+.dark .border-slate-100, .dark .border-gray-100 { border-color: var(--dk-border-soft); }
+.dark .border-slate-200, .dark .border-gray-200,
+.dark .border-slate-300, .dark .border-gray-300 { border-color: var(--dk-border); }
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--dk-border-soft); }
+.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--dk-border); }
+.dark .hover\:border-slate-400:hover { border-color: #3a4a66; }
+
+/* ── Mga form control ──────────────────────────────────────────────────── */
+.dark input, .dark textarea, .dark select {
+  background-color: var(--dk-sunken);
+  border-color: var(--dk-border);
+  color: var(--dk-text);
+}
+.dark input::placeholder, .dark textarea::placeholder { color: #6b7688; }
+.dark select option { background-color: var(--dk-surface); color: var(--dk-text); }
+
+/* ── Mga may-kulay na badge at panel (bg-*-50 / -100) ──────────────────────
+   Ang maliwanag na tint sa madilim na surface ay nakakasilaw at hindi mabasa.
+   Ginagawang malalim na bersyon ng parehong kulay, at pinapaliwanag ang teksto
+   para manatiling nababasa. `color-mix` para hindi mag-imbento ng bagong palette. */
+.dark [class*="bg-emerald-50"], .dark [class*="bg-emerald-100"],
+.dark [class*="bg-green-50"], .dark [class*="bg-green-100"],
+.dark [class*="bg-teal-50"], .dark [class*="bg-teal-100"],
+.dark [class*="bg-blue-50"], .dark [class*="bg-blue-100"],
+.dark [class*="bg-sky-50"], .dark [class*="bg-sky-100"],
+.dark [class*="bg-indigo-50"], .dark [class*="bg-indigo-100"],
+.dark [class*="bg-violet-50"], .dark [class*="bg-violet-100"],
+.dark [class*="bg-purple-50"], .dark [class*="bg-purple-100"],
+.dark [class*="bg-fuchsia-50"], .dark [class*="bg-fuchsia-100"],
+.dark [class*="bg-pink-50"], .dark [class*="bg-pink-100"],
+.dark [class*="bg-rose-50"], .dark [class*="bg-rose-100"],
+.dark [class*="bg-red-50"], .dark [class*="bg-red-100"],
+.dark [class*="bg-orange-50"], .dark [class*="bg-orange-100"],
+.dark [class*="bg-amber-50"], .dark [class*="bg-amber-100"],
+.dark [class*="bg-yellow-50"], .dark [class*="bg-yellow-100"],
+.dark [class*="bg-cyan-50"], .dark [class*="bg-cyan-100"] {
+  background-color: color-mix(in srgb, currentColor 16%, var(--dk-surface));
+}
+.dark .text-emerald-700, .dark .text-emerald-600 { color: #4ade80; }
+.dark .text-green-700, .dark .text-green-600 { color: #4ade80; }
+.dark .text-teal-700, .dark .text-teal-600 { color: #2dd4bf; }
+.dark .text-blue-700, .dark .text-blue-600 { color: #60a5fa; }
+.dark .text-sky-700, .dark .text-sky-600 { color: #38bdf8; }
+.dark .text-indigo-700, .dark .text-indigo-600 { color: #818cf8; }
+.dark .text-violet-700, .dark .text-violet-600 { color: #a78bfa; }
+.dark .text-purple-700, .dark .text-purple-600 { color: #c084fc; }
+.dark .text-fuchsia-700, .dark .text-fuchsia-600 { color: #e879f9; }
+.dark .text-pink-700, .dark .text-pink-600 { color: #f472b6; }
+.dark .text-rose-700, .dark .text-rose-600 { color: #fb7185; }
+.dark .text-red-700, .dark .text-red-600 { color: #f87171; }
+.dark .text-orange-700, .dark .text-orange-600 { color: #fb923c; }
+.dark .text-amber-700, .dark .text-amber-600 { color: #fbbf24; }
+.dark .text-cyan-700, .dark .text-cyan-600 { color: #22d3ee; }
+
+/* ── Mga hangganan ng may-kulay na alert panel ─────────────────────────── */
+.dark .border-amber-200, .dark .border-red-200, .dark .border-red-300,
+.dark .border-rose-200, .dark .border-emerald-200, .dark .border-blue-200,
+.dark .border-green-200, .dark .border-teal-200, .dark .border-purple-200 {
+  border-color: color-mix(in srgb, currentColor 34%, var(--dk-surface));
+}
+
+/* ── Anino: hindi nakikita ang itim na anino sa madilim; gawing lalim ─── */
+.dark .shadow-sm, .dark .shadow, .dark .shadow-md,
+.dark .shadow-lg, .dark .shadow-xl, .dark .shadow-2xl {
+  --tw-shadow-color: rgba(0, 0, 0, 0.55);
+}
+
+/* ── Naka-hardcode na light na bahagi ──────────────────────────────────── */
+.dark .page-title { color: var(--dk-text); }
+.dark tr[onClick]:hover, .dark tr.clickable:hover { background-color: rgba(255, 255, 255, 0.04); }
+.dark .icon-btn:hover { background-color: rgba(255, 255, 255, 0.08); }
+.dark select:hover:not(:disabled) { border-color: #3a4a66; }
 
 * {
   box-sizing: border-box;

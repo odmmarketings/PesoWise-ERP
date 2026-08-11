@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Menu, Clock } from "lucide-react"
 import type { Plan } from "@/lib/types"
 import { getDaysRemaining } from "@/lib/utils"
+import { ThemeToggle } from "@/components/layout/ThemeToggle"
 
 interface TopbarProps {
   plan: Plan
@@ -28,6 +29,8 @@ export function Topbar({ plan, trialEndsAt, onToggleSidebar, onUpgrade }: Topbar
       </button>
 
       <div className="flex-1" />
+
+      <ThemeToggle />
 
       {/* Trial warning */}
       {plan === "trial" && daysLeft <= 7 && (
