@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { DollarSign, RefreshCw } from "lucide-react"
 import { format, startOfMonth } from "date-fns"
-import { useFBAccounts, actId, allAccountIds } from "@/lib/fb-store"
+import { useFBAccounts, actId } from "@/lib/fb-store"
 
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -16,10 +16,7 @@ export default function AdSpendReportPage() {
     if (fb.activeAccounts.length === 0) { setFbTotal(0); return }
     setLoading(true); let total = 0
     for (const a of fb.activeAccounts) {
-      // Pati ang mga na-disable nang ad account — totoong gastos pa rin iyon.
-      for (const acct of allAccountIds(a)) {
-        try { const r = await fetch(`/api/fb/insights?token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(acct)}&from=${from}&to=${to}`); const j = await r.json(); if (j.success) total += j.total || 0 } catch {}
-      }
+      try { const r = await fetch(`/api/fb/insights?token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`); const j = await r.json(); if (j.success) total += j.total || 0 } catch {}
     }
     setFbTotal(total); setLoading(false)
   }, [fb.activeAccounts, from, to])

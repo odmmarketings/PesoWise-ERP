@@ -258,15 +258,7 @@ export default function AdAccountsPage() {
                   <td className="px-4 py-3 font-semibold text-slate-800">{a.name}</td>
                   <td className="px-4 py-3 text-slate-600">{a.owner || "—"}</td>
                   <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">{a.focus}</span></td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-400">
-                    {actId(a.ad_account_id)}
-                    {a.extra_account_ids?.length > 0 && (
-                      <span className="ml-1.5 font-sans not-italic text-[10px] font-bold text-blue-600"
-                        title={`Kasama sa adspent: ${a.extra_account_ids.map(actId).join(", ")}`}>
-                        +{a.extra_account_ids.length}
-                      </span>
-                    )}
-                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-400">{actId(a.ad_account_id)}</td>
                   <td className="px-4 py-3"><span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${STATUS_BADGE[a.status] || "bg-slate-100 text-slate-600"}`}>{a.status.toLowerCase()}</span></td>
                   <td className="px-4 py-3"><span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${PLATFORM_BADGE[a.platform] || "bg-slate-100 text-slate-600"}`}>{a.platform}</span></td>
                   <td className="px-4 py-3">
@@ -331,11 +323,6 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
     platform: initial?.platform || "Facebook", focus: initial?.focus || "Conversions", currency: initial?.currency || "PHP",
     status: initial?.status || "Active", remarks: initial?.remarks || "", card_id: initial?.card_id || "",
   })
-  // Karagdagang ad account ID (kadalasan disabled na) na isasama ang gastos sa adspent.
-  const [extraIds, setExtraIds] = useState<string[]>(initial?.extra_account_ids || [])
-  const setExtra = (i: number, v: string) => setExtraIds(p => p.map((x, n) => n === i ? v : x))
-  const addExtra = () => setExtraIds(p => [...p, ""])
-  const removeExtra = (i: number) => setExtraIds(p => p.filter((_, n) => n !== i))
   const { cards } = useFinanceCards()   // Finance → Cards registry (kung saang card naka-register)
   const [err, setErr] = useState("")
   const set = (k: keyof NewFBInput, v: string) => setF(p => ({ ...p, [k]: v }))
@@ -348,12 +335,7 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
     if (!f.ad_account_id.trim()) return setErr("Ad Account ID is required.")
     setErr("")
     const finalToken = (hasDefault && !useCustom) ? defaultToken : f.token.trim()
-    const primary = actId(f.ad_account_id.trim())
-    // Ang blangko at ang kaparehong ID ay tinatanggal — ang duplicate ay magdodoble sa gastos.
-    const extras = Array.from(new Set(
-      extraIds.map(x => actId(x.trim())).filter(x => x && x !== primary)
-    ))
-    onSave({ ...f, name: f.name.trim(), ad_account_id: f.ad_account_id.trim(), extra_account_ids: extras, token: finalToken })
+    onSave({ ...f, name: f.name.trim(), ad_account_id: f.ad_account_id.trim(), token: finalToken })
   }
 
   return (
@@ -374,28 +356,7 @@ function FormScreen({ mode, initial, pages, owners, defaultToken, onBack, onSave
               {FB_FOCUS.map(x => <option key={x}>{x}</option>)}
             </select>
           </FormRow>
-          <FormRow label="Ad Account ID" required>
-            <div className="space-y-2">
-              <Input className={INP} value={f.ad_account_id} onChange={e => set("ad_account_id", e.target.value)} placeholder="act_909054325102209 or 909054325102209" />
-              {extraIds.map((v, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Input className={INP} value={v} onChange={e => setExtra(i, e.target.value)} placeholder="Dagdag na ad account (hal. na-disable na)" />
-                  <button type="button" onClick={() => removeExtra(i)} title="Alisin"
-                    className="shrink-0 w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:border-rose-300">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-              <button type="button" onClick={addExtra} className="text-[11px] text-blue-600 hover:underline flex items-center gap-1">
-                <Plus className="w-3 h-3" /> Magdagdag ng ad account
-              </button>
-              <p className="text-[11px] text-slate-400 leading-snug">
-                Para sa mga <strong>na-disable na</strong> ad account na may nagastos pa rin. Isasama ang gastos nila
-                sa adspent ng registration na ito. Ang <strong>una</strong> ang pangunahin — iyon ang ginagamit ng
-                Ads Manager, FB Billing, at status sync.
-              </p>
-            </div>
-          </FormRow>
+          <FormRow label="Ad Account ID" required><Input className={INP} value={f.ad_account_id} onChange={e => set("ad_account_id", e.target.value)} placeholder="act_909054325102209 or 909054325102209" /></FormRow>
           <FormRow label="API Token">
             {hasDefault && !useCustom ? (
               <div className="space-y-1">
