@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
-  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown,
+  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
@@ -66,6 +66,80 @@ type FatigueRow = {
   signals: string[]; freq3: number; ctrDelta: number; cpmDelta: number; cppDelta: number
 }
 
+// ── Ad-account picker ───────────────────────────────────────────────────────
+// Kaparehong hugis ng GroupPicker sa Fulfillment (purple na badge ng kabuuan),
+// pero may TATLONG bilang kada ad account: berde = scale, pula = kill,
+// dilaw = watch. Kaya makikita agad kung saang account nakatago ang trabaho
+// nang hindi kailangang pumili isa-isa.
+function AccountPicker({ value, onChange, items, totals }: {
+  value: string
+  onChange: (v: string) => void
+  items: { name: string; scale: number; kill: number; watch: number }[]
+  totals: { scale: number; kill: number; watch: number }
+}) {
+  const [open, setOpen] = useState(false)
+  const sorted = useMemo(() =>
+    [...items].sort((a, b) =>
+      (b.kill + b.scale + b.watch) - (a.kill + a.scale + a.watch) || a.name.localeCompare(b.name)),
+    [items])
+  const cur = value === "ALL" ? totals : (items.find(i => i.name === value) ?? { scale: 0, kill: 0, watch: 0 })
+  const sum = (x: { scale: number; kill: number; watch: number }) => x.scale + x.kill + x.watch
+  const withWork = sorted.filter(i => sum(i) > 0).length
+
+  // Ang zero ay pinapatahimik (kulay-abo) para ang mata ay dumapo sa may laman.
+  const N = ({ n, tone }: { n: number; tone: "scale" | "kill" | "watch" }) => (
+    <span className={`inline-flex items-center justify-center min-w-[22px] h-5 px-1 rounded-md text-[11px] font-bold tabular-nums ${
+      n === 0 ? "bg-slate-100 text-slate-300"
+        : tone === "scale" ? "bg-emerald-100 text-emerald-700"
+          : tone === "kill" ? "bg-rose-100 text-rose-700"
+            : "bg-amber-100 text-amber-700"}`}>{n}</span>
+  )
+  const Trio = ({ x }: { x: { scale: number; kill: number; watch: number } }) => (
+    <span className="flex items-center gap-1 shrink-0">
+      <N n={x.scale} tone="scale" /><N n={x.kill} tone="kill" /><N n={x.watch} tone="watch" />
+    </span>
+  )
+
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(o => !o)}
+        className="h-9 pl-2 pr-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 flex items-center gap-2 text-sm min-w-[240px] max-w-[330px]">
+        <Trio x={cur} />
+        <span className="flex-1 text-left truncate text-slate-700">{value === "ALL" ? "All ad accounts" : value}</span>
+        <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[45]" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-[46] w-[380px] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Scale · Kill · Watch</span>
+              <span className="text-[11px] text-slate-400">{withWork} of {sorted.length} need attention</span>
+            </div>
+            <div className="max-h-[360px] overflow-y-auto py-1">
+              <button onClick={() => { onChange("ALL"); setOpen(false) }}
+                className={`w-full px-3 py-2 flex items-center gap-2.5 text-sm hover:bg-slate-50 ${value === "ALL" ? "bg-blue-50" : ""}`}>
+                <Trio x={totals} />
+                <span className="flex-1 text-left font-semibold text-slate-800 truncate">All ad accounts</span>
+                {value === "ALL" && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
+              </button>
+              <div className="my-1 border-t border-slate-100" />
+              {sorted.map(it => (
+                <button key={it.name} onClick={() => { onChange(it.name); setOpen(false) }}
+                  className={`w-full px-3 py-2 flex items-center gap-2.5 text-sm hover:bg-slate-50 ${value === it.name ? "bg-blue-50" : ""}`}>
+                  <Trio x={it} />
+                  <span className={`flex-1 text-left truncate ${sum(it) > 0 ? "text-slate-700" : "text-slate-400"}`}>{it.name}</span>
+                  {value === it.name && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 const peso = (n: number) => "₱" + Math.round(n).toLocaleString("en-PH")
 const dec = (n: number) => (isFinite(n) ? n : 0).toFixed(2)
 const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
@@ -89,6 +163,7 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
   const [fatigueLoading, setFatigueLoading] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [fOwner, setFOwner] = useState("All")
+  const [fAccount, setFAccount] = useState("ALL")
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc")
 
   const live = useMemo(() => accounts.filter(a => !a.archived && a.token && a.ad_account_id), [accounts])
@@ -297,18 +372,48 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
   // ang owner na walang gastos sa buwan.
   const owners = useMemo(() => Array.from(new Set(live.map(a => a.owner).filter(Boolean))).sort(), [live])
 
+  // Ang bilang kada ad account ay sinusukat sa OWNER-filtered set (hindi sa
+  // account-filtered) — kung hindi, magiging zero ang lahat ng ibang account
+  // pagkapili mo ng isa, at hindi mo na makikita kung saan pa may trabaho.
+  const ownerScoped = useMemo(() =>
+    fOwner === "All" ? signals : signals.filter(s => s.adset.account.owner === fOwner),
+    [signals, fOwner])
+  const accountItems = useMemo(() => {
+    const m = new Map<string, { name: string; scale: number; kill: number; watch: number }>()
+    // Isama ang LAHAT ng account na nasa saklaw ng owner, kahit walang signal —
+    // para malaman mong tahimik ito, hindi nawawala.
+    for (const a of live) if (fOwner === "All" || a.owner === fOwner) m.set(a.name, { name: a.name, scale: 0, kill: 0, watch: 0 })
+    for (const s of ownerScoped) {
+      const e = m.get(s.adset.account.name) ?? { name: s.adset.account.name, scale: 0, kill: 0, watch: 0 }
+      if (s.kind === "scale") e.scale++; else if (s.kind === "kill") e.kill++; else e.watch++
+      m.set(e.name, e)
+    }
+    return [...m.values()]
+  }, [live, fOwner, ownerScoped])
+  const accountTotals = useMemo(() => accountItems.reduce(
+    (t, i) => ({ scale: t.scale + i.scale, kill: t.kill + i.kill, watch: t.watch + i.watch }),
+    { scale: 0, kill: 0, watch: 0 }), [accountItems])
+
   // Filter + sort ayon sa 7-day net ROAS (ang default na 30-araw na sukat).
   const view = useMemo(() => {
-    const f = fOwner === "All" ? signals : signals.filter(s => s.adset.account.owner === fOwner)
+    const f = fAccount === "ALL" ? ownerScoped : ownerScoped.filter(s => s.adset.account.name === fAccount)
     return [...f].sort((a, b) => sortDir === "desc"
       ? b.windows.w7.netRoas - a.windows.w7.netRoas
       : a.windows.w7.netRoas - b.windows.w7.netRoas)
-  }, [signals, fOwner, sortDir])
+  }, [ownerScoped, fAccount, sortDir])
+
+  // Ang pagpili ng owner ay maaaring mag-alis sa napiling account — ibalik sa ALL
+  // para hindi mapagkamalang walang datos.
+  useEffect(() => {
+    if (fAccount !== "ALL" && !accountItems.some(i => i.name === fAccount)) setFAccount("ALL")
+  }, [accountItems, fAccount])
 
   const scaleRows = view.filter(s => s.kind === "scale")
   const killRows = view.filter(s => s.kind === "kill")
   const watchRows = view.filter(s => s.kind === "watch")
-  const fatigueView = useMemo(() => fOwner === "All" ? fatigue : fatigue.filter(f => f.account.owner === fOwner), [fatigue, fOwner])
+  const fatigueView = useMemo(() => fatigue.filter(f =>
+    (fOwner === "All" || f.account.owner === fOwner) && (fAccount === "ALL" || f.account.name === fAccount)),
+    [fatigue, fOwner, fAccount])
   // Ang badge sa tab ay hindi naka-filter — ang KABUUAN ang gusto mong makita,
   // hindi ang bahagi ng napiling owner.
   const totalSignals = signals.filter(s => s.kind !== "watch").length + fatigue.length
@@ -451,15 +556,24 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
     <div className="space-y-5">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm text-slate-500">
-          Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · window: last 30 days · ad-set level
-        </p>
+        <div className="space-y-1">
+          <p className="text-sm text-slate-500">
+            Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · window: last 30 days · ad-set level
+          </p>
+          {/* Legend — ang tatlong bilang sa account picker ay nasa ganitong pagkakasunod */}
+          <p className="text-[11px] text-slate-400 flex items-center gap-2.5">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> scale</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" /> kill</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" /> watch</span>
+          </p>
+        </div>
         <span className="ml-auto flex items-center gap-2">
           <select value={fOwner} onChange={e => setFOwner(e.target.value)}
             className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 min-w-[130px]">
             <option value="All">All Owners</option>
             {owners.map(o => <option key={o}>{o}</option>)}
           </select>
+          <AccountPicker value={fAccount} onChange={setFAccount} items={accountItems} totals={accountTotals} />
           <button onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}
             title={sortDir === "desc" ? "Highest net ROAS first" : "Lowest net ROAS first"}
             className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 flex items-center gap-1.5 hover:bg-slate-50 whitespace-nowrap">
