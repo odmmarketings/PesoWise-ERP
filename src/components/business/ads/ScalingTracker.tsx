@@ -1,8 +1,8 @@
 "use client"
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
-  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle,
+  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
@@ -82,13 +82,28 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
   const saveRules = (r: Rules) => { setRules(r); try { localStorage.setItem(RULES_KEY, JSON.stringify(r)) } catch {} }
 
   const [loading, setLoading] = useState(true)
+  const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [errors, setErrors] = useState<string[]>([])
   const [adsets, setAdsets] = useState<AdsetModel[]>([])
   const [fatigue, setFatigue] = useState<FatigueRow[]>([])
   const [fatigueLoading, setFatigueLoading] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [fOwner, setFOwner] = useState("All")
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc")
 
   const live = useMemo(() => accounts.filter(a => !a.archived && a.token && a.ad_account_id), [accounts])
+
+  // ⚠ ANG BITAG NA NAKA-DOKUMENTO SA CLAUDE.md: ang useActivePages() (at ang mga
+  // store array sa pangkalahatan) ay nagbabalik ng SARIWANG array bawat render.
+  // Nailagay sila sa dependencies ng load callbacks, kaya WALANG KATAPUSANG
+  // nagre-refetch ang tab: render → bagong `load` → effect → setState → render…
+  // Kaya "nag-blink-blink" ang loading at hindi natatapos — nire-restart ang hila
+  // bago pa matapos (nakita Ago 13 2026; ganito rin ang Jul 9 Fulfillment glitch).
+  // Ang effect ay nakakabit na sa VALUE STRING (liveKey); ang arrays ay binabasa
+  // sa REF sa oras ng takbo, hindi sa closure.
+  const liveKey = useMemo(() => live.map(a => a.id).join(","), [live])
+  const liveRef = useRef(live);      liveRef.current = live
+  const pagesRef = useRef(allPages); pagesRef.current = allPages
 
   // ── 30-araw na saklaw (PHT — lokal na orasan ng user) ──────────────────────
   const today = dstr(new Date())
@@ -98,7 +113,9 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
   const prev7To = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 3); return dstr(d) }, [])
 
   const load = useCallback(async (force = false) => {
+    const live = liveRef.current, allPages = pagesRef.current
     setLoading(true)
+    setProgress({ done: 0, total: live.length })
     const errs: string[] = []
 
     // 1. RTS rate kada page (returning+returned ÷ total sales, parehong window).
@@ -145,14 +162,16 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
         }
         models.push(...byId.values())
       } catch (e: any) { errs.push(`${a.name}: ${String(e?.message).slice(0, 80)}`) }
+      finally { setProgress(p => ({ ...p, done: p.done + 1 })) }
     })
     setAdsets(models)
     setErrors(errs)
     setLoading(false)
-  }, [live, allPages, from30, today])
+  }, [from30, today])
 
   // 3. Fatigue kada AD: huling 3 araw vs naunang 7 (frequency mula kay Meta mismo).
   const loadFatigue = useCallback(async (force = false) => {
+    const live = liveRef.current
     setFatigueLoading(true)
     const out: FatigueRow[] = []
     await mapLimit(live, 3, async a => {
@@ -186,9 +205,17 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
     })
     setFatigue(out)
     setFatigueLoading(false)
-  }, [live, last3From, prev7From, prev7To, today])
+  }, [last3From, prev7From, prev7To, today])
 
-  useEffect(() => { load(); loadFatigue() }, [load, loadFatigue])
+  // Isang hila kada tunay na pagbabago ng account set — HINDI kada render.
+  // Ang `load`/`loadFatigue` ay sadyang WALA sa deps: matatag na sila ngayon
+  // (walang array sa kanilang closure), at ang paglagay sa kanila ay ibabalik
+  // lang ang loop.
+  useEffect(() => {
+    if (!liveKey) return
+    load(); loadFatigue()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveKey])
 
   // ── Signals ────────────────────────────────────────────────────────────────
   const signals = useMemo<Signal[]>(() => {
@@ -263,14 +290,29 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
             : `Today's net ${dec(todayNet)} is within 10% of the ${rules.killRoas} kill line.` })
       }
     }
-    return out.sort((a, b) => b.windows.w7.spend - a.windows.w7.spend)
+    return out
   }, [adsets, rules, today])
 
-  const scaleRows = signals.filter(s => s.kind === "scale")
-  const killRows = signals.filter(s => s.kind === "kill")
-  const watchRows = signals.filter(s => s.kind === "watch")
-  useEffect(() => { onSignals?.(scaleRows.length + killRows.length + fatigue.length) },
-    [scaleRows.length, killRows.length, fatigue.length, onSignals])
+  // Owner options galing sa REGISTRY (hindi sa loaded rows) para mapipili pa rin
+  // ang owner na walang gastos sa buwan.
+  const owners = useMemo(() => Array.from(new Set(live.map(a => a.owner).filter(Boolean))).sort(), [live])
+
+  // Filter + sort ayon sa 7-day net ROAS (ang default na 30-araw na sukat).
+  const view = useMemo(() => {
+    const f = fOwner === "All" ? signals : signals.filter(s => s.adset.account.owner === fOwner)
+    return [...f].sort((a, b) => sortDir === "desc"
+      ? b.windows.w7.netRoas - a.windows.w7.netRoas
+      : a.windows.w7.netRoas - b.windows.w7.netRoas)
+  }, [signals, fOwner, sortDir])
+
+  const scaleRows = view.filter(s => s.kind === "scale")
+  const killRows = view.filter(s => s.kind === "kill")
+  const watchRows = view.filter(s => s.kind === "watch")
+  const fatigueView = useMemo(() => fOwner === "All" ? fatigue : fatigue.filter(f => f.account.owner === fOwner), [fatigue, fOwner])
+  // Ang badge sa tab ay hindi naka-filter — ang KABUUAN ang gusto mong makita,
+  // hindi ang bahagi ng napiling owner.
+  const totalSignals = signals.filter(s => s.kind !== "watch").length + fatigue.length
+  useEffect(() => { onSignals?.(totalSignals) }, [totalSignals, onSignals])
 
   // ── Auto-pause (kapag naka-ON ang master + ang rule) ───────────────────────
   const [autoLog, setAutoLog] = useState<{ date: string; items: { id: string; name: string; token: string }[] }>(() => {
@@ -337,7 +379,7 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
     const key = mode === "row" && s ? s.adset.id : mode
     setAiBusy(key)
     try {
-      const rows = mode === "row" && s ? [compactRow(s)] : signals.map(compactRow)
+      const rows = mode === "row" && s ? [compactRow(s)] : view.map(compactRow)
       const j = await fetch("/api/ai/scaling", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode, rows, question: mode === "ask" ? askQ : undefined }),
@@ -413,6 +455,16 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
           Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · window: last 30 days · ad-set level
         </p>
         <span className="ml-auto flex items-center gap-2">
+          <select value={fOwner} onChange={e => setFOwner(e.target.value)}
+            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 min-w-[130px]">
+            <option value="All">All Owners</option>
+            {owners.map(o => <option key={o}>{o}</option>)}
+          </select>
+          <button onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}
+            title={sortDir === "desc" ? "Highest net ROAS first" : "Lowest net ROAS first"}
+            className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 flex items-center gap-1.5 hover:bg-slate-50 whitespace-nowrap">
+            ROAS {sortDir === "desc" ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />}
+          </button>
           <button onClick={() => askAi("brief")} disabled={aiBusy === "brief" || loading}
             className="h-9 px-3 rounded-lg bg-violet-600 text-white text-sm flex items-center gap-1.5 hover:bg-violet-700 disabled:opacity-50">
             <Sparkles className="w-4 h-4" /> {aiBusy === "brief" ? "Thinking…" : "Morning brief"}
@@ -480,7 +532,16 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
       )}
 
       {loading ? (
-        <p className="text-sm text-slate-400 flex items-center gap-2 py-10 justify-center"><RefreshCw className="w-4 h-4 animate-spin" /> Pulling 30 days of ad-set data…</p>
+        <div className="py-10 space-y-3">
+          <p className="text-sm text-slate-400 flex items-center gap-2 justify-center">
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            Pulling 30 days of ad-set data — {progress.done}/{progress.total} accounts
+          </p>
+          <div className="mx-auto w-64 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+            <div className="h-full bg-blue-500 rounded-full transition-[width] duration-300"
+              style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} />
+          </div>
+        </div>
       ) : (
         <>
           <Section title="Ready to Scale" icon={TrendingUp} color="text-emerald-600" accent="border-emerald-500" rows={scaleRows}
@@ -493,12 +554,12 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
           {/* Fatigue — kada AD */}
           <div className="space-y-2">
             <p className="text-sm font-bold text-violet-600 flex items-center gap-1.5">
-              <Flame className="w-4 h-4" /> Creative Fatigue — per ad ({fatigue.length})
+              <Flame className="w-4 h-4" /> Creative Fatigue — per ad ({fatigueView.length})
               {fatigueLoading && <RefreshCw className="w-3 h-3 animate-spin text-slate-400" />}
             </p>
-            {fatigue.length === 0
+            {fatigueView.length === 0
               ? <p className="text-[13px] text-slate-400 italic">{fatigueLoading ? "Comparing last 3 days vs the 7 before…" : "No ad shows 2+ fatigue signals."}</p>
-              : fatigue.map(f => (
+              : fatigueView.map(f => (
                 <div key={f.adId} className="border-l-4 border-violet-400 bg-white rounded-lg border border-slate-200 p-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-slate-800 text-sm">{f.adName}</span>
@@ -512,7 +573,7 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
 
           {/* Ask AI */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
-            <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-violet-600" /> Ask AI <span className="font-normal text-slate-400">— context: the {signals.length} signal rows above</span></p>
+            <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-violet-600" /> Ask AI <span className="font-normal text-slate-400">— context: the {view.length} signal rows shown{fOwner !== "All" ? ` (${fOwner})` : ""}</span></p>
             <div className="flex gap-2">
               <input value={askQ} onChange={e => setAskQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && askQ.trim()) askAi("ask") }}
                 placeholder="e.g. why did Lumyra Katarata drop the last 3 days?"
