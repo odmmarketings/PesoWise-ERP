@@ -160,6 +160,16 @@ const dec = (n: number) => (isFinite(n) ? n : 0).toFixed(2)
 const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 const netOf = (value: number, spend: number, rts: number) => spend > 0 ? (value * (1 - rts)) / (spend * VAT) : 0
 
+// ── MODULE-LEVEL CACHE ───────────────────────────────────────────────────────
+// Ang bawat tab ay may sariling `key` (kailangan — hindi dapat maghalo ang state),
+// pero ang remount ay nangangahulugang bagong hila. Sa 21 account at 30 araw,
+// mabigat iyon at nakakainis kapag nagpapalipat-lipat lang. Buhay ang module
+// habang nasa app, kaya ang pagbalik sa tab ay INSTANT; ang Refresh button
+// (force) ang tanging nagbabasag nito.
+type Cached = { ts: number; adsets: AdsetModel[]; errors: string[]; fatigue: FatigueRow[] }
+const MODEL_CACHE = new Map<string, Cached>()
+const MODEL_TTL = 10 * 60_000
+
 /** Ilang araw nang umiiral — pinapakita sa picker at sa registered rows. */
 function daysOld(iso: string): number {
   const t = new Date(iso).getTime()
@@ -226,8 +236,19 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   const prev7From = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 9); return dstr(d) }, [])
   const prev7To = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 3); return dstr(d) }, [])
 
+  const cacheKey = `${level}|${liveKey}|${from30}|${today}`
+
   const load = useCallback(async (force = false) => {
     const live = liveRef.current, allPages = pagesRef.current
+    // Sariwa pa ang cache? Ibalik agad — walang spinner, walang hila.
+    if (!force) {
+      const hit = MODEL_CACHE.get(cacheKey)
+      if (hit && Date.now() - hit.ts < MODEL_TTL) {
+        setAdsets(hit.adsets); setErrors(hit.errors); setFatigue(hit.fatigue)
+        setLoading(false); setFatigueLoading(false)
+        return
+      }
+    }
     setLoading(true)
     setProgress({ done: 0, total: live.length })
     const errs: string[] = []
@@ -314,11 +335,18 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     setAdsets(models)
     setErrors(errs)
     setLoading(false)
-  }, [from30, today])
+    // Itabi. Ang `fatigue` ay dumarating mamaya (hiwalay na hila) — ini-update ito
+    // ng loadFatigue sa parehong entry, kaya hindi nawawala kapag bumalik ka.
+    MODEL_CACHE.set(cacheKey, { ts: Date.now(), adsets: models, errors: errs, fatigue: MODEL_CACHE.get(cacheKey)?.fatigue ?? [] })
+  }, [from30, today, cacheKey])
 
   // 3. Fatigue kada AD: huling 3 araw vs naunang 7 (frequency mula kay Meta mismo).
   const loadFatigue = useCallback(async (force = false) => {
     const live = liveRef.current
+    if (!force) {
+      const hit = MODEL_CACHE.get(cacheKey)
+      if (hit && Date.now() - hit.ts < MODEL_TTL && hit.fatigue.length > 0) { setFatigue(hit.fatigue); setFatigueLoading(false); return }
+    }
     setFatigueLoading(true)
     const out: FatigueRow[] = []
     await mapLimit(live, 3, async a => {
@@ -352,7 +380,9 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     })
     setFatigue(out)
     setFatigueLoading(false)
-  }, [last3From, prev7From, prev7To, today])
+    const prev = MODEL_CACHE.get(cacheKey)
+    if (prev) MODEL_CACHE.set(cacheKey, { ...prev, fatigue: out })
+  }, [last3From, prev7From, prev7To, today, cacheKey])
 
   // Isang hila kada tunay na pagbabago ng account set — HINDI kada render.
   // Ang `load`/`loadFatigue` ay sadyang WALA sa deps: matatag na sila ngayon
@@ -709,8 +739,12 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   const [adRows, setAdRows] = useState<Record<string, AdRow[]>>({})
   const [adsBusy, setAdsBusy] = useState("")
 
+  // Ang parent ng drill-down: campaign sa Scaling, ang AD SET mismo sa Testing.
+  // Kaya may "View ads" din sa Testing — {adset}/insights?level=ad.
+  const drillParent = (s: Signal) => isCampaign ? s.adset.campaignId : s.adset.id
+
   async function loadDrill(s: Signal, lvl: "adset" | "ad") {
-    const cid = s.adset.campaignId
+    const cid = drillParent(s)
     if (!cid) return
     const key = `${cid}|${lvl}`
     if (drillOpen[cid] === lvl) { setDrillOpen(p => ({ ...p, [cid]: "" })); return }
@@ -718,7 +752,6 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     if (adRows[key]) return
     setAdsBusy(key)
     try {
-      // parent = campaign id sa dalawang antas: {campaign}/insights?level=adset|ad
       const j = await fetch(`/api/fb/insights?rich=1&level=${lvl}&parent=${encodeURIComponent(cid)}`
         + `&token=${encodeURIComponent(s.adset.account.token)}&account_id=${encodeURIComponent(actId(s.adset.account.ad_account_id))}`
         + `&from=${from30}&to=${today}`).then(r => r.json())
@@ -813,9 +846,11 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
               <TrendingUp className="w-3 h-3" /> Scale
             </button>
           )}
-          {isCampaign && s.reg && (["adset", "ad"] as const).map(lvl => {
-            const open = drillOpen[s.adset.campaignId] === lvl
-            const busyHere = adsBusy === `${s.adset.campaignId}|${lvl}`
+          {/* Scaling: ad sets + ads sa ilalim ng campaign. Testing: ads lang sa
+              ilalim ng ad set (wala nang mas mababa). */}
+          {s.reg && (isCampaign ? (["adset", "ad"] as const) : (["ad"] as const)).map(lvl => {
+            const open = drillOpen[drillParent(s)] === lvl
+            const busyHere = adsBusy === `${drillParent(s)}|${lvl}`
             return (
               <button key={lvl} onClick={() => loadDrill(s, lvl)} disabled={busyHere}
                 className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-md border disabled:opacity-50 ${
@@ -877,10 +912,10 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       {aiOpen === s.adset.id && aiText[s.adset.id] && (
         <div className="text-[13px] bg-violet-50 border border-violet-200 rounded-md p-2.5 text-slate-700 whitespace-pre-wrap">{aiText[s.adset.id]}</div>
       )}
-      {/* Drill-down: ad sets o ads sa loob ng campaign — net ROAS ang pagkakasunod */}
-      {isCampaign && drillOpen[s.adset.campaignId] && (() => {
-        const lvl = drillOpen[s.adset.campaignId] as "adset" | "ad"
-        const key = `${s.adset.campaignId}|${lvl}`
+      {/* Drill-down: ad sets/ads sa campaign (Scaling) o ads sa ad set (Testing) */}
+      {drillOpen[drillParent(s)] && (() => {
+        const lvl = drillOpen[drillParent(s)] as "adset" | "ad"
+        const key = `${drillParent(s)}|${lvl}`
         const rows = adRows[key] || []
         return (
         <div className="border border-slate-200 rounded-lg overflow-hidden">
