@@ -108,6 +108,35 @@ export async function GET(req: NextRequest) {
     const tokenKey = token.slice(-12)
     const cached = (k: string) => { const h = CACHE.get(k); return h && Date.now() - h.ts < CACHE_TTL_MS && !sp.get("nocache") ? h.data : null }
 
+    // ── Daily series per ad set — pinagbabatayan ng Scaling Tracker ──────────
+    // Isang tawag = 30 araw × bawat ad set, para makwenta ang streak ("3-5 araw
+    // na ≥3.9"), ang mga window (3/7/15/30), at ang kill rules nang hindi
+    // tumatawag kada window. Hindi kasama ang frequency/reach — hindi iyon
+    // ma-a-aggregate mula sa daily rows (dedup ng reach); sa fatigue check
+    // (rich level=ad) iyon nakukuha nang tama mula kay Meta mismo.
+    if (sp.get("series")) {
+      const ck = `series|adset|${accountId}|${from}|${to}|${tokenKey}`
+      const c = cached(ck); if (c) return NextResponse.json({ success: true, rows: c, cached: true })
+      const fields = `adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,actions,action_values`
+      let url = `${accountId}/insights?level=adset&fields=${fields}&time_range=${tr}&time_increment=1${attr}&limit=500&access_token=${enc}`
+      const rows: any[] = []
+      while (url) {
+        const j = await fbGet(url)
+        for (const r of j.data || []) {
+          const a = parseActions(r.actions, r.action_values, undefined)
+          rows.push({
+            id: r.adset_id, name: r.adset_name, campaignId: r.campaign_id, campaignName: r.campaign_name,
+            date: r.date_start, spend: Number(r.spend || 0),
+            impressions: Number(r.impressions || 0), clicks: Number(r.clicks || 0),
+            purchases: a.purchases, purchaseValue: a.purchaseValue,
+          })
+        }
+        url = j.paging?.next ? j.paging.next.replace(`${BASE}/`, "") : ""
+      }
+      CACHE.set(ck, { ts: Date.now(), data: rows })
+      return NextResponse.json({ success: true, rows })
+    }
+
     // ── Rich metrics at any level (campaign / adset / ad) for dashboard + Ads Manager ─
     if (sp.get("rich")) {
       const level = (sp.get("level") || "campaign") as "campaign" | "adset" | "ad"

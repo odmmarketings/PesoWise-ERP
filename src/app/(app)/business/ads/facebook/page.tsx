@@ -14,6 +14,7 @@ import { useFBAccounts, actId, type FBAccount } from "@/lib/fb-store"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
+import { ScalingTracker } from "@/components/business/ads/ScalingTracker"
 
 const VAT = 1.12
 // Default range = NGAYONG ARAW lang (hindi buong buwan). Iisang state lang ito kaya
@@ -78,7 +79,7 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   let i = 0; await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-type Tab = "dashboard" | "daily" | "manager"
+type Tab = "dashboard" | "daily" | "manager" | "scaling"
 type Obj = "All" | "Conversions" | "Messaging" | "Other"
 
 // Module-level flag: resets on a full page (re)load, but persists across in-app navigation.
@@ -99,7 +100,7 @@ export default function FacebookAdsPage() {
     let isReload = false
     try { isReload = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type === "reload" } catch {}
     if (firstMount && isReload) {
-      try { const t = localStorage.getItem("pesowise_fb_tab"); if (t === "daily" || t === "manager") return t } catch {}
+      try { const t = localStorage.getItem("pesowise_fb_tab"); if (t === "daily" || t === "manager" || t === "scaling") return t } catch {}
     }
     return "dashboard"
   })
@@ -108,6 +109,7 @@ export default function FacebookAdsPage() {
   const [to, setTo] = useState(defaultDateB())
 
   const [rows, setRows] = useState<Row[]>([])
+  const [scalingCount, setScalingCount] = useState(0)
   const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>([])
   const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>([])
   const [loading, setLoading] = useState(false)
@@ -165,11 +167,16 @@ export default function FacebookAdsPage() {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-slate-200">
-        {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2]] as [Tab, string, any][]).map(([t, label, Icon]) => (
+      <div className="flex gap-1 border-b border-slate-200 overflow-x-auto scrollbar-dark">
+        {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["scaling", "Scaling", TrendingUp]] as [Tab, string, any][]).map(([t, label, Icon]) => (
           <button key={t} onClick={() => setTab(t)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
             <Icon className="w-4 h-4" /> {label}
+            {/* Bilang ng scale+kill+fatigue signals — lumalabas matapos madalaw ang tab
+                (doon lang nagkakarga ang datos; sinadya, mabigat ang 30-araw na hila). */}
+            {t === "scaling" && scalingCount > 0 && (
+              <span className="text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-full">{scalingCount}</span>
+            )}
           </button>
         ))}
       </div>
@@ -181,7 +188,8 @@ export default function FacebookAdsPage() {
         </div>
       ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} />
         : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
-          : <AdsManager fb={fb} from={from} to={to} />}
+          : tab === "scaling" ? <ScalingTracker accounts={dataAccounts} onSignals={setScalingCount} />
+            : <AdsManager fb={fb} from={from} to={to} />}
     </div>
   )
 }
