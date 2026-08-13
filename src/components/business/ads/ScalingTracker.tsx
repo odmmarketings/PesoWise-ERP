@@ -778,6 +778,43 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     setAdsBusy("")
   }
 
+  // ── Per-ad actions sa drill table ──────────────────────────────────────────
+  // Kill = tunay na pause sa Meta. "Move to Scaling" = MARKER LANG (✅ Moved):
+  // mano-mano ang paglipat sa Ads Manager, itinatala lang dito para makita ng
+  // tatlong buyer kung alin na ang nailipat. Nakatago sa registry bilang
+  // level='ad-moved' (may level column na; walang bagong migration) — hindi ito
+  // lumalabas sa mga tab dahil naka-filter sila sa sariling level.
+  const movedAds = useMemo(() => new Set(
+    registry.regs.filter(r => r.level === "ad-moved").map(r => r.adset_id)
+  ), [registry.regs])
+  const [adActBusy, setAdActBusy] = useState("")
+
+  async function killAd(s: Signal, ad: { id: string; name: string }) {
+    if (!confirm(`Kill (pause) ad "${ad.name}" on Facebook?`)) return
+    setAdActBusy(ad.id)
+    try {
+      const j = await fetch("/api/fb/manage", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: s.adset.account.token, action: "status", id: ad.id, status: "PAUSED" }),
+      }).then(r => r.json())
+      if (!j.success) throw new Error(j.error || "pause failed")
+      const key = `${drillParent(s)}|ad`
+      setAdRows(p => ({ ...p, [key]: (p[key] || []).map(r => r.id === ad.id ? { ...r, status: "PAUSED" } : r) }))
+    } catch (e: any) { setErrors(p => [...p, `${ad.name}: kill failed — ${String(e?.message).slice(0, 80)}`]) }
+    setAdActBusy("")
+  }
+
+  async function markMoved(s: Signal, ad: { id: string; name: string }) {
+    setAdActBusy(ad.id)
+    const err = await registry.register([{
+      adset_id: ad.id, adset_name: ad.name, campaign_name: s.adset.campaignName,
+      account_name: s.adset.account.name, owner: s.adset.account.owner || "",
+      level: "ad-moved", registered_at: today, starting_budget: 0,
+    }])
+    if (err) setErrors(p => [...p, `${ad.name}: mark failed — ${err}`])
+    setAdActBusy("")
+  }
+
   // ── AI ─────────────────────────────────────────────────────────────────────
   const [aiOpen, setAiOpen] = useState<string>("")     // adset id na may bukas na opinion
   const [aiText, setAiText] = useState<Record<string, string>>({})
@@ -814,7 +851,8 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   const Row = ({ s, accent }: { s: Signal; accent: string }) => (
     <div className={`border-l-4 ${accent} bg-white rounded-lg border border-slate-200 p-3 space-y-1.5`}>
       <div className="flex flex-wrap items-center gap-2">
-        {isScaling && s.reg && (
+        {/* Checkbox = para sa bulk Scale — campaign level lang iyon */}
+        {isCampaign && s.reg && (
           <input type="checkbox" checked={scaleSel.has(s.adset.id)}
             onChange={e => setScaleSel(p => { const n = new Set(p); e.target.checked ? n.add(s.adset.id) : n.delete(s.adset.id); return n })} />
         )}
@@ -839,11 +877,21 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           <span className="text-[11px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">not scaled yet</span>
         )}
         <span className="ml-auto flex items-center gap-1.5">
-          {isScaling && s.reg && budgetTarget(s.adset).level !== "none" && (
+          {/* Scaling tab: Scale (itinataas ang campaign budget). Testing tab:
+              KILL — ang testing na pumalya ay pinapatay, hindi ini-scale; ang
+              nanalo ay inililipat sa scaling campaign sa Ads Manager. */}
+          {isCampaign && s.reg && budgetTarget(s.adset).level !== "none" && (
             <button onClick={() => setScaleFor(s)} disabled={busy === "scale"}
-              title={budgetTarget(s.adset).level === "campaign" ? "Raises the CAMPAIGN budget (CBO)" : "Raises this ad set's budget"}
+              title="Raises the CAMPAIGN budget (CBO)"
               className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
               <TrendingUp className="w-3 h-3" /> Scale
+            </button>
+          )}
+          {!isCampaign && s.reg && /active/i.test(s.adset.status) && (
+            <button onClick={() => { if (confirm(`Kill (pause) ad set "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
+              disabled={pausing === s.adset.id}
+              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
+              <Pause className="w-3 h-3" /> {pausing === s.adset.id ? "…" : "Kill"}
             </button>
           )}
           {/* Scaling: ad sets + ads sa ilalim ng campaign. Testing: ads lang sa
@@ -870,8 +918,10 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
             className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md border border-violet-200 text-violet-600 hover:bg-violet-50 disabled:opacity-50">
             <Sparkles className="w-3 h-3" /> {aiBusy === s.adset.id ? "…" : "AI opinion"}
           </button>
-          {s.kind === "kill" && /active/i.test(s.adset.status) && (
-            <button onClick={() => { if (confirm(`Pause ad set "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
+          {/* Sa Testing, ang bagong Kill button sa itaas na ang panpatay — doble
+              kung isasama pa ito. Sa Scaling (campaign) lang ang Pause now. */}
+          {isCampaign && s.kind === "kill" && /active/i.test(s.adset.status) && (
+            <button onClick={() => { if (confirm(`Pause campaign "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
               disabled={pausing === s.adset.id}
               className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
               <Pause className="w-3 h-3" /> {pausing === s.adset.id ? "…" : "Pause now"}
@@ -928,7 +978,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
               <table className="w-full text-[11px] min-w-[620px]">
                 <thead>
                   <tr className="bg-slate-50 text-slate-500 text-left">
-                    {["", lvl === "adset" ? "AD SET" : "AD", "STATUS", "SPEND", "NET ROAS", "PURCH", "CPP", "CTR", "FREQ"].map(h => (
+                    {["", lvl === "adset" ? "AD SET" : "AD", "STATUS", "SPEND", "NET ROAS", "PURCH", "CPP", "CTR", "FREQ", ...(lvl === "ad" ? ["ACTIONS"] : [])].map(h => (
                       <th key={h} className="px-2 py-1.5 font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -957,6 +1007,27 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
                       <td className="px-2 py-1.5 tabular-nums whitespace-nowrap">{r.purchases > 0 ? peso(r.cpp) : "—"}</td>
                       <td className="px-2 py-1.5 tabular-nums">{r.ctr.toFixed(2)}%</td>
                       <td className={`px-2 py-1.5 tabular-nums ${r.frequency >= 2.5 ? "text-amber-600 font-semibold" : ""}`}>{dec(r.frequency)}</td>
+                      {lvl === "ad" && (
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <span className="flex items-center gap-1">
+                            {/active/i.test(r.status) && (
+                              <button onClick={() => killAd(s, r)} disabled={adActBusy === r.id}
+                                className="text-[10px] flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
+                                <Pause className="w-2.5 h-2.5" /> {adActBusy === r.id ? "…" : "Kill"}
+                              </button>
+                            )}
+                            {/* Testing lang: ang panalong ad ay inililipat sa scaling
+                                campaign — mano-mano sa Ads Manager, marker lang ito. */}
+                            {!isCampaign && (movedAds.has(r.id)
+                              ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold">✅ Moved</span>
+                              : <button onClick={() => markMoved(s, r)} disabled={adActBusy === r.id}
+                                  title="Mark as moved — you move it yourself in Ads Manager"
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
+                                  {adActBusy === r.id ? "…" : "Move to Scaling"}
+                                </button>)}
+                          </span>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

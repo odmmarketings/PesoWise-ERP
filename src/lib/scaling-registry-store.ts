@@ -18,7 +18,10 @@ export interface ScaleEvent {
   to: number          // budget pagkatapos (pesos)
   applied: boolean    // true = na-update sa Meta via API; false = naitala lang (hal. CBO)
 }
-export type RegLevel = "adset" | "campaign"
+// "ad-moved" = marker na ang panalong ad ay mano-manong inilipat sa scaling
+// campaign sa Ads Manager (✅ Moved sa View ads). Hindi ito lumalabas sa mga tab —
+// naka-filter sila sa sariling level; shared lang ito sa tatlong buyer.
+export type RegLevel = "adset" | "campaign" | "ad-moved"
 
 export interface Registration {
   id: string
@@ -39,7 +42,7 @@ function rowToReg(r: any): Registration {
   return {
     id: r.id, adset_id: r.adset_id, adset_name: r.adset_name || "",
     campaign_name: r.campaign_name || "", account_name: r.account_name || "", owner: r.owner || "",
-    level: r.level === "campaign" ? "campaign" : "adset",
+    level: r.level === "campaign" ? "campaign" : r.level === "ad-moved" ? "ad-moved" : "adset",
     registered_at: r.registered_at, starting_budget: Number(r.starting_budget) || 0,
     scales: Array.isArray(r.scales) ? r.scales : [],
     active: r.active !== false,
