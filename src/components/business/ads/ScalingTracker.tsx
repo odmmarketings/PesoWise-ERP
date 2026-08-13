@@ -55,6 +55,7 @@ type AdsetModel = {
   status: string
   budget: number            // sariling budget ng ad set (ABO). 0 = CBO.
   campaignBudget: number    // budget ng campaign (CBO). Dito ang hawak kapag 0 ang taas.
+  createdTime: string       // ISO mula kay Meta — pinakabago ang una sa picker
   rtsRate: number
   dailies: Map<string, Daily>
 }
@@ -158,6 +159,17 @@ const peso = (n: number) => "₱" + Math.round(n).toLocaleString("en-PH")
 const dec = (n: number) => (isFinite(n) ? n : 0).toFixed(2)
 const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 const netOf = (value: number, spend: number, rts: number) => spend > 0 ? (value * (1 - rts)) / (spend * VAT) : 0
+
+/** "2h ago" / "3d ago" / "2026-07-18" — para makita kung bago nga ang nasa itaas. */
+function ago(iso: string): string {
+  const t = new Date(iso).getTime()
+  if (!isFinite(t)) return ""
+  const h = (Date.now() - t) / 3600_000
+  if (h < 1) return "just now"
+  if (h < 24) return `${Math.round(h)}h ago`
+  const d = Math.round(h / 24)
+  return d <= 30 ? `${d}d ago` : iso.slice(0, 10)
+}
 
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {
   let i = 0
@@ -264,6 +276,7 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
               // minana/inipon, at hindi iyon ang maitataas nang direkta.
               budget: mm.ownBudget || 0,
               campaignBudget: cm.ownBudget || 0,
+              createdTime: mm.createdTime || "",
               rtsRate: rtsByPage.get(a.page_name) ?? 0,
               dailies: new Map(),
             }
@@ -573,7 +586,13 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
     .filter(m => pickAcct === "All" || m.account.name === pickAcct)
     .filter(m => !pickActiveOnly || /active/i.test(m.status))
     .filter(m => !pickQ || `${m.name} ${m.campaignName} ${m.account.name}`.toLowerCase().includes(pickQ.toLowerCase()))
-    .sort((a, b) => a.account.name.localeCompare(b.account.name) || a.name.localeCompare(b.name)),
+    // PINAKABAGO ANG UNA. Ang bagong ginawang ad set ang irerehistro — hindi ang
+    // "Adset 10" na alphabetically nauuna. Dating naka-sort sa pangalan, kaya
+    // nahahalo ang bago at luma. Ang walang created_time ay huli (hindi nagtatago
+    // sa itaas na parang bago).
+    .sort((a, b) => (b.createdTime || "").localeCompare(a.createdTime || "")
+      || a.account.name.localeCompare(b.account.name)
+      || a.name.localeCompare(b.name)),
     [pickBase, pickOwner, pickAcct, pickActiveOnly, pickQ])
 
   // Ang pagpalit ng owner ay maaaring mag-alis sa napiling account — ibalik sa All.
@@ -929,6 +948,7 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
                         {m.campaignName} · {m.account.name} · {/active/i.test(m.status) ? "active" : m.status.toLowerCase()}
                         {(() => { const t = budgetTarget(m); return t.level === "adset" ? ` · budget ${peso(t.amount)}`
                           : t.level === "campaign" ? ` · CBO ${peso(t.amount)}` : " · no budget" })()}
+                        {m.createdTime && <> · created {ago(m.createdTime)}</>}
                       </span>
                     </span>
                   </label>
