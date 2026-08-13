@@ -50,10 +50,19 @@ function loadRules(): Rules {
 type Daily = { date: string; spend: number; purchases: number; purchaseValue: number; impressions: number; clicks: number }
 type AdsetModel = {
   id: string; name: string; campaignName: string
+  campaignId: string
   account: FBAccount
-  status: string; budget: number
+  status: string
+  budget: number            // sariling budget ng ad set (ABO). 0 = CBO.
+  campaignBudget: number    // budget ng campaign (CBO). Dito ang hawak kapag 0 ang taas.
   rtsRate: number
   dailies: Map<string, Daily>
+}
+/** Saan itataas ang budget: sa ad set (ABO) o sa campaign (CBO)? */
+function budgetTarget(m: AdsetModel): { level: "adset" | "campaign" | "none"; id: string; amount: number } {
+  if (m.budget > 0) return { level: "adset", id: m.id, amount: m.budget }
+  if (m.campaignBudget > 0) return { level: "campaign", id: m.campaignId, amount: m.campaignBudget }
+  return { level: "none", id: "", amount: 0 }
 }
 type Windows = Record<"w3" | "w7" | "w15" | "w30", { spend: number; value: number; purchases: number; netRoas: number; grossRoas: number; cpp: number }>
 type Signal = {
@@ -231,20 +240,30 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
     await mapLimit(live, 3, async a => {
       try {
         const acct = actId(a.ad_account_id)
-        const [series, meta] = await Promise.all([
+        const [series, meta, camp] = await Promise.all([
           fetch(`/api/fb/insights?series=1&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
           fetch(`/api/fb/insights?rich=1&level=adset&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
+          // 65% ng ad sets nila ay CBO (nasukat Ago 14 2026) — nasa CAMPAIGN ang
+          // budget, kaya kailangan ito para may maitaas.
+          fetch(`/api/fb/insights?rich=1&level=campaign&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
         ])
         if (!series.success) { errs.push(`${a.name}: ${String(series.error || "series failed").slice(0, 80)}`); return }
         const metaById = new Map<string, any>((meta.rows || []).map((r: any) => [r.id, r]))
+        const campById = new Map<string, any>((camp.rows || []).map((r: any) => [r.id, r]))
         const byId = new Map<string, AdsetModel>()
         for (const r of series.rows || []) {
           let m = byId.get(r.id)
           if (!m) {
             const mm = metaById.get(r.id) || {}
+            const cm = campById.get(r.campaignId) || {}
             m = {
               id: r.id, name: r.name, campaignName: r.campaignName || "",
-              account: a, status: mm.status || "—", budget: mm.budget || mm.ownBudget || 0,
+              campaignId: r.campaignId || "",
+              account: a, status: mm.status || "—",
+              // `ownBudget` LANG — ang `budget` ng adset rich mode ay maaaring
+              // minana/inipon, at hindi iyon ang maitataas nang direkta.
+              budget: mm.ownBudget || 0,
+              campaignBudget: cm.ownBudget || 0,
               rtsRate: rtsByPage.get(a.page_name) ?? 0,
               dailies: new Map(),
             }
@@ -380,12 +399,14 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
       }
 
       if (isActive && streak >= rules.scaleDays) {
-        const cur = m.budget || 0
+        const bt = budgetTarget(m)
         const n = (reg?.scales.length || 0) + 1
         out.push({ ...base, kind: "scale", rule: "ready_to_scale",
           reason: `Net ROAS ≥ ${rules.scaleRoas} for ${streak} straight days (7d: ${dec(windows.w7.netRoas)}).`
             + (reg ? ` This would be scale #${n}.` : "")
-            + (cur > 0 ? ` Raise 20% → ${peso(cur * 1.2)}, or 10% → ${peso(cur * 1.1)}.` : ` Raise budget 10–20%.`) })
+            + (bt.level !== "none"
+              ? ` Raise 20% → ${peso(bt.amount * 1.2)}, or 10% → ${peso(bt.amount * 1.1)}${bt.level === "campaign" ? " (campaign budget — CBO)" : ""}.`
+              : ` No budget found on the ad set or campaign — raise it in Ads Manager.`) })
         continue
       }
       if (!isActive) continue   // paused na — walang iki-kill o iba-bantay
@@ -531,15 +552,34 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
   const [pickOpen, setPickOpen] = useState(false)
   const [pickSel, setPickSel] = useState<Set<string>>(new Set())
   const [pickQ, setPickQ] = useState("")
+  // Sariling filter ang modal — hindi nakasabit sa header. Ang pagrehistro ay
+  // hiwalay na gawain sa pagtingin ng resulta, at 100+ ad set ang pagpipilian.
+  const [pickOwner, setPickOwner] = useState("All")
+  const [pickAcct, setPickAcct] = useState("All")
+  const [pickActiveOnly, setPickActiveOnly] = useState(false)
   const [busy, setBusy] = useState("")
   const regIds = useMemo(() => new Set(registry.regs.map(r => r.adset_id)), [registry.regs])
-  // Mapagpipilian: lahat ng ad set na may gastos sa buwan at hindi pa nakarehistro.
-  const pickable = useMemo(() => adsets
-    .filter(m => !regIds.has(m.id))
-    .filter(m => fOwner === "All" || m.account.owner === fOwner)
+
+  // Ang mga pagpipilian sa modal ay galing sa mga ad set na TALAGANG mapipili,
+  // hindi sa buong registry — kaya walang opsyon na zero ang kinalalabasan.
+  const pickBase = useMemo(() => adsets.filter(m => !regIds.has(m.id)), [adsets, regIds])
+  const pickOwners = useMemo(() => Array.from(new Set(pickBase.map(m => m.account.owner).filter(Boolean))).sort(), [pickBase])
+  const pickAccounts = useMemo(() => Array.from(new Set(
+    pickBase.filter(m => pickOwner === "All" || m.account.owner === pickOwner).map(m => m.account.name)
+  )).sort(), [pickBase, pickOwner])
+
+  const pickable = useMemo(() => pickBase
+    .filter(m => pickOwner === "All" || m.account.owner === pickOwner)
+    .filter(m => pickAcct === "All" || m.account.name === pickAcct)
+    .filter(m => !pickActiveOnly || /active/i.test(m.status))
     .filter(m => !pickQ || `${m.name} ${m.campaignName} ${m.account.name}`.toLowerCase().includes(pickQ.toLowerCase()))
     .sort((a, b) => a.account.name.localeCompare(b.account.name) || a.name.localeCompare(b.name)),
-    [adsets, regIds, fOwner, pickQ])
+    [pickBase, pickOwner, pickAcct, pickActiveOnly, pickQ])
+
+  // Ang pagpalit ng owner ay maaaring mag-alis sa napiling account — ibalik sa All.
+  useEffect(() => {
+    if (pickAcct !== "All" && !pickAccounts.includes(pickAcct)) setPickAcct("All")
+  }, [pickAccounts, pickAcct])
 
   async function doRegister() {
     setBusy("register")
@@ -560,27 +600,39 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
 
   async function applyScale(targets: Signal[], pct: number) {
     setBusy("scale")
+    // Ang CBO ay may ISANG budget na hinahati ng maraming ad set. Kung dalawang
+    // ad set ng parehong campaign ang napili, ang dobleng pagtaas ng 20% ay
+    // magiging 44% — hindi iyon ang hiningi. Isang beses kada campaign.
+    const doneCampaigns = new Set<string>()
     for (const s of targets) {
-      const from = s.adset.budget || 0
-      const to = Math.round(from * (1 + pct / 100))
+      const t = budgetTarget(s.adset)
       let applied = false
-      if (from > 0) {
+      let from = t.amount, to = Math.round(t.amount * (1 + pct / 100))
+
+      if (t.level === "none") {
+        setErrors(p => [...p, `${s.adset.name}: no budget found on the ad set or its campaign — raise it in Ads Manager.`])
+      } else if (t.level === "campaign" && doneCampaigns.has(t.id)) {
+        setErrors(p => [...p, `${s.adset.name}: shares campaign "${s.adset.campaignName}" with another selected ad set — the campaign budget was raised once, not twice.`])
+        from = t.amount; to = t.amount   // naitala pero hindi muling itinaas
+      } else {
         try {
           const j = await fetch("/api/fb/manage", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: s.adset.account.token, action: "update", id: s.adset.id, daily_budget: to }),
+            body: JSON.stringify({ token: s.adset.account.token, action: "update", id: t.id, daily_budget: to }),
           }).then(r => r.json())
           applied = !!j.success
-          if (!j.success) setErrors(p => [...p, `${s.adset.name}: budget update failed — ${String(j.error).slice(0, 80)}`])
+          if (!j.success) setErrors(p => [...p, `${s.adset.name}: ${t.level} budget update failed — ${String(j.error).slice(0, 90)}`])
+          else if (t.level === "campaign") doneCampaigns.add(t.id)
         } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: ${String(e?.message).slice(0, 80)}`]) }
-      } else {
-        // CBO: nasa campaign ang budget, wala sa ad set — itinatala pa rin ang
-        // hakbang para tumugma ang bilang, pero malinaw na HINDI ito na-apply.
-        setErrors(p => [...p, `${s.adset.name}: no ad-set budget (CBO) — recorded the step, raise it on the campaign in Ads Manager.`])
       }
+
       const ev: ScaleEvent = { date: today, pct, from, to: applied ? to : from, applied }
       if (s.reg) await registry.addScale(s.reg.adset_id, ev)
-      if (applied) setAdsets(prev => prev.map(m => m.id === s.adset.id ? { ...m, budget: to } : m))
+      if (applied) setAdsets(prev => prev.map(m =>
+        t.level === "adset"
+          ? (m.id === s.adset.id ? { ...m, budget: to } : m)
+          // CBO: bawat ad set ng campaign na iyon ay nakikita ang bagong budget
+          : (m.campaignId === t.id ? { ...m, campaignBudget: to } : m)))
     }
     setScaleFor(null); setBulkScale(false); setScaleSel(new Set()); setBusy("")
   }
@@ -627,7 +679,11 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
         )}
         <span className="font-semibold text-slate-800 text-sm">{s.adset.name}</span>
         <span className="text-[11px] text-slate-400">{s.adset.campaignName} · {s.adset.account.name}</span>
-        {s.adset.budget > 0 && <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">budget {peso(s.adset.budget)}</span>}
+        {(() => { const t = budgetTarget(s.adset); return t.level === "none" ? null : (
+          <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+            {t.level === "campaign" ? "CBO budget" : "budget"} {peso(t.amount)}
+          </span>
+        ) })()}
         {/* Pang-ilang scale na + saan nagsimula — ito ang hinihinging kasaysayan. */}
         {s.reg && s.reg.scales.length > 0 && (
           <span className="text-[11px] bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
@@ -639,8 +695,9 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
           <span className="text-[11px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">not scaled yet</span>
         )}
         <span className="ml-auto flex items-center gap-1.5">
-          {isScaling && s.reg && s.adset.budget > 0 && (
+          {isScaling && s.reg && budgetTarget(s.adset).level !== "none" && (
             <button onClick={() => setScaleFor(s)} disabled={busy === "scale"}
+              title={budgetTarget(s.adset).level === "campaign" ? "Raises the CAMPAIGN budget (CBO)" : "Raises this ad set's budget"}
               className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
               <TrendingUp className="w-3 h-3" /> Scale
             </button>
@@ -835,13 +892,33 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
               <p className="font-bold text-slate-800">Register ad sets to monitor</p>
               <p className="text-[12px] text-slate-500">Monitoring starts <b>today ({today})</b> — results are tracked from this date at 3 / 7 / 15 / 30 days. Only registered ad sets appear in Scaling.</p>
             </div>
-            <div className="px-5 py-2 border-b border-slate-100">
+            <div className="px-5 py-2 border-b border-slate-100 space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <select value={pickOwner} onChange={e => setPickOwner(e.target.value)}
+                  className="h-9 rounded-lg border border-slate-200 px-2 text-sm text-slate-700 min-w-[130px]">
+                  <option value="All">All Owners</option>
+                  {pickOwners.map(o => <option key={o}>{o}</option>)}
+                </select>
+                <select value={pickAcct} onChange={e => setPickAcct(e.target.value)}
+                  className="h-9 rounded-lg border border-slate-200 px-2 text-sm text-slate-700 flex-1 min-w-[170px]">
+                  <option value="All">All ad accounts ({pickAccounts.length})</option>
+                  {pickAccounts.map(a => <option key={a}>{a}</option>)}
+                </select>
+                <label className="h-9 flex items-center gap-1.5 text-[12px] text-slate-600 whitespace-nowrap">
+                  <input type="checkbox" checked={pickActiveOnly} onChange={e => setPickActiveOnly(e.target.checked)} />
+                  Active only
+                </label>
+              </div>
               <input value={pickQ} onChange={e => setPickQ(e.target.value)} placeholder="Search ad set / campaign / account…"
                 className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm" />
             </div>
             <div className="flex-1 overflow-y-auto px-2 py-1 min-h-[200px]">
               {pickable.length === 0
-                ? <p className="text-sm text-slate-400 italic p-4">{adsets.length === 0 ? "Still loading ad sets…" : "Nothing left to register — every ad set here is already registered."}</p>
+                ? <p className="text-sm text-slate-400 italic p-4">
+                    {adsets.length === 0 ? "Still loading ad sets…"
+                      : pickBase.length === 0 ? "Nothing left to register — every ad set is already registered."
+                        : "No ad set matches these filters."}
+                  </p>
                 : pickable.map(m => (
                   <label key={m.id} className="flex items-start gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
                     <input type="checkbox" className="mt-0.5" checked={pickSel.has(m.id)}
@@ -850,14 +927,25 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
                       <span className="block text-sm text-slate-800 truncate">{m.name}</span>
                       <span className="block text-[11px] text-slate-400 truncate">
                         {m.campaignName} · {m.account.name} · {/active/i.test(m.status) ? "active" : m.status.toLowerCase()}
-                        {m.budget > 0 ? ` · budget ${peso(m.budget)}` : " · no ad-set budget (CBO)"}
+                        {(() => { const t = budgetTarget(m); return t.level === "adset" ? ` · budget ${peso(t.amount)}`
+                          : t.level === "campaign" ? ` · CBO ${peso(t.amount)}` : " · no budget" })()}
                       </span>
                     </span>
                   </label>
                 ))}
             </div>
-            <div className="px-5 py-3 border-t border-slate-200 flex items-center gap-2">
-              <span className="text-[12px] text-slate-500">{pickSel.size} selected</span>
+            <div className="px-5 py-3 border-t border-slate-200 flex items-center gap-2 flex-wrap">
+              <span className="text-[12px] text-slate-500">
+                {pickSel.size} selected · {pickable.length} shown
+                {pickable.length > 0 && (
+                  <>
+                    {" · "}
+                    <button onClick={() => setPickSel(p => { const n = new Set(p); pickable.forEach(m => n.add(m.id)); return n })}
+                      className="text-blue-600 hover:underline">select all shown</button>
+                    {pickSel.size > 0 && <> · <button onClick={() => setPickSel(new Set())} className="text-slate-500 hover:underline">clear</button></>}
+                  </>
+                )}
+              </span>
               <span className="ml-auto flex gap-2">
                 <button onClick={() => setPickOpen(false)} className="h-9 px-3 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50">Cancel</button>
                 <button onClick={doRegister} disabled={pickSel.size === 0 || busy === "register"}
@@ -873,7 +961,19 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
       {/* ── Scale prompt: 10% o 20% ── */}
       {(scaleFor || bulkScale) && (() => {
         const targets = bulkScale ? view.filter(s => scaleSel.has(s.adset.id)) : (scaleFor ? [scaleFor] : [])
-        const totalNow = targets.reduce((t, s) => t + (s.adset.budget || 0), 0)
+        // Ang CBO campaign na hinahati ng dalawang napiling ad set ay BINIBILANG
+        // NANG ISA — kung hindi, doble ang ipapakitang kabuuan.
+        const seen = new Set<string>()
+        const totalNow = targets.reduce((t, s) => {
+          const bt = budgetTarget(s.adset)
+          if (bt.level === "none") return t
+          const key = `${bt.level}:${bt.id}`
+          if (seen.has(key)) return t
+          seen.add(key)
+          return t + bt.amount
+        }, 0)
+        const cboShared = targets.filter(s => budgetTarget(s.adset).level === "campaign").length > seen.size
+          ? targets.length - seen.size : 0
         return (
           <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => { setScaleFor(null); setBulkScale(false) }}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()}>
@@ -882,13 +982,21 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
                 This raises the <b>daily budget on Facebook</b> and records the step so the scale count stays accurate.
                 Current total: <b>{peso(totalNow)}</b>.
               </p>
+              {cboShared > 0 && (
+                <p className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+                  {cboShared} of these share a CBO campaign budget with another selected ad set —
+                  that campaign is raised <b>once</b>, not per ad set.
+                </p>
+              )}
               <div className="max-h-32 overflow-y-auto text-[11px] text-slate-500 bg-slate-50 rounded-md p-2 space-y-0.5">
-                {targets.map(s => (
+                {targets.map(s => { const bt = budgetTarget(s.adset); return (
                   <p key={s.adset.id} className="truncate">
-                    {s.adset.name} — {s.adset.budget > 0 ? peso(s.adset.budget) : "no ad-set budget (CBO)"}
-                    {s.reg && s.reg.scales.length > 0 ? ` · would be scale #${s.reg.scales.length + 1}` : " · first scale"}
+                    {s.adset.name} — {bt.level === "none" ? "no budget anywhere"
+                      : bt.level === "campaign" ? `CBO ${peso(bt.amount)} → ${peso(Math.round(bt.amount * 1.2))} (campaign)`
+                        : `${peso(bt.amount)} (ad set)`}
+                    {s.reg && s.reg.scales.length > 0 ? ` · scale #${s.reg.scales.length + 1}` : " · first scale"}
                   </p>
-                ))}
+                ) })}
               </div>
               <div className="flex gap-2 pt-1">
                 {[10, 20].map(pct => (
