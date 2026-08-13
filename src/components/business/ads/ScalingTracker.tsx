@@ -2,11 +2,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
-  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check,
+  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
 import { cachedJson } from "@/lib/pancake-cache"
+import { useScalingRegistry, type Registration, type ScaleEvent } from "@/lib/scaling-registry-store"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCALING TRACKER — nasa loob ng Facebook Ads tab.
@@ -60,6 +61,10 @@ type Signal = {
   kind: "scale" | "kill" | "watch"
   rule: string; reason: string; streak: number
   todaySpend: number; todayNet: number
+  // Naka-set lang sa mga inirehistro (Scaling tab): ang resulta MULA sa petsa ng
+  // rehistro, at ang kasaysayan ng pag-scale.
+  reg?: Registration
+  sinceReg?: { days: number; spend: number; value: number; netRoas: number; purchases: number }
 }
 type FatigueRow = {
   adId: string; adName: string; adsetName: string; account: FBAccount
@@ -150,8 +155,20 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[]; onSignals?: (n: number) => void }) {
+// ── DALAWANG MODE, ISANG ENGINE ──────────────────────────────────────────────
+//   mode="monitoring" → awtomatikong iniiskan ang LAHAT ng ad set: kill, watch,
+//                       fatigue. Walang rehistro. Ito ang buwanang bantay.
+//   mode="scaling"    → ang mga INIREHISTRO lang. Mula sa petsa ng rehistro,
+//                       sinusundan ang 3/7/15/30-araw na resulta, at bawat
+//                       pag-scale (10%/20%) ay naitatala — kaya makikita kung
+//                       pang-ilang scale na at mula saang budget nagsimula.
+// Isang engine para hindi maghiwalay ang net-ROAS math sa dalawang lugar.
+export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
+  accounts: FBAccount[]; onSignals?: (n: number) => void; mode?: "scaling" | "monitoring"
+}) {
   const allPages = useActivePages()
+  const registry = useScalingRegistry()
+  const isScaling = mode === "scaling"
   const [rules, setRules] = useState<Rules>(() => loadRules())
   const saveRules = (r: Rules) => { setRules(r); try { localStorage.setItem(RULES_KEY, JSON.stringify(r)) } catch {} }
 
@@ -300,14 +317,37 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
     const dates: string[] = []
     for (let i = 29; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); dates.push(dstr(d)) }
 
+    const regByAdset = new Map(registry.regs.map(r => [r.adset_id, r]))
+
     for (const m of adsets) {
+      const reg = regByAdset.get(m.id)
+      // Sa Scaling tab, ang INIREHISTRO LANG — iyon ang buong punto: malinis at
+      // pinili mo mismo. Sa Monitoring, lahat.
+      if (isScaling && !reg) continue
+
       const win = (n: number) => {
         let spend = 0, value = 0, purchases = 0
         for (const dt of dates.slice(-n)) { const d = m.dailies.get(dt); if (d) { spend += d.spend; value += d.purchaseValue; purchases += d.purchases } }
         return { spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate), grossRoas: spend > 0 ? value / (spend * VAT) : 0, cpp: purchases > 0 ? spend / purchases : 0 }
       }
       const windows: Windows = { w3: win(3), w7: win(7), w15: win(15), w30: win(30) }
-      if (windows.w30.spend === 0) continue   // walang gastos sa buwan — walang sasabihin
+      // Ang inirehistro ay pinapakita KAHIT walang gastos pa — iyon ang sagot sa
+      // "sinimulan kong i-monitor ngayon" (araw 0, wala pang datos).
+      if (windows.w30.spend === 0 && !reg) continue
+
+      // Resulta MULA sa petsa ng rehistro (hindi rolling window) — ito ang
+      // sinusukat mo kapag "sinimulan ko itong i-monitor ngayong araw".
+      let sinceReg: Signal["sinceReg"]
+      if (reg) {
+        let spend = 0, value = 0, purchases = 0, days = 0
+        for (const dt of dates) {
+          if (dt < reg.registered_at) continue
+          days++
+          const d = m.dailies.get(dt)
+          if (d) { spend += d.spend; value += d.purchaseValue; purchases += d.purchases }
+        }
+        sinceReg = { days, spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate) }
+      }
 
       const tD = m.dailies.get(today)
       const todaySpend = tD?.spend || 0
@@ -325,13 +365,27 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
       }
 
       const isActive = /active/i.test(m.status)
-      const base = { adset: m, windows, streak, todaySpend, todayNet }
+      const base = { adset: m, windows, streak, todaySpend, todayNet, reg, sinceReg }
+
+      // Pagkatapos mag-scale, may 48h na palugit: hindi pa dapat husgahan agad —
+      // nagre-relearn ang delivery. Tanda lang ito, hindi kill/scale.
+      const lastScale = reg?.scales[reg.scales.length - 1]
+      const hoursSinceScale = lastScale
+        ? (Date.now() - new Date(`${lastScale.date}T00:00:00`).getTime()) / 3600_000 : Infinity
+      if (reg && hoursSinceScale < 48) {
+        out.push({ ...base, kind: "watch", rule: "cooldown",
+          reason: `Scaled ${lastScale!.pct}% on ${lastScale!.date} (${peso(lastScale!.from)} → ${peso(lastScale!.to)}). `
+            + `Hold ${Math.max(1, Math.round(48 - hoursSinceScale))}h more before judging — delivery is relearning.` })
+        continue
+      }
 
       if (isActive && streak >= rules.scaleDays) {
         const cur = m.budget || 0
+        const n = (reg?.scales.length || 0) + 1
         out.push({ ...base, kind: "scale", rule: "ready_to_scale",
           reason: `Net ROAS ≥ ${rules.scaleRoas} for ${streak} straight days (7d: ${dec(windows.w7.netRoas)}).`
-            + (cur > 0 ? ` Raise budget 20–30% (${peso(cur)} → ${peso(cur * 1.25)}), then hold 48h.` : ` Raise budget 20–30%, then hold 48h.`) })
+            + (reg ? ` This would be scale #${n}.` : "")
+            + (cur > 0 ? ` Raise 20% → ${peso(cur * 1.2)}, or 10% → ${peso(cur * 1.1)}.` : ` Raise budget 10–20%.`) })
         continue
       }
       if (!isActive) continue   // paused na — walang iki-kill o iba-bantay
@@ -363,10 +417,20 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
           reason: streak >= 1
             ? `${streak}/${rules.scaleDays} days toward scale (needs ${rules.scaleDays - streak} more ≥ ${rules.scaleRoas}).`
             : `Today's net ${dec(todayNet)} is within 10% of the ${rules.killRoas} kill line.` })
+        continue
+      }
+      // Ang inirehistro ay LAGING may row kahit walang signal — kung hindi,
+      // mawawala ito sa Scaling tab at aakalain mong hindi na-monitor.
+      if (reg) {
+        out.push({ ...base, kind: "watch", rule: "monitoring",
+          reason: sinceReg && sinceReg.spend > 0
+            ? `Day ${sinceReg.days} since registered · net ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)}. `
+              + `Needs ${rules.scaleRoas}+ for ${rules.scaleDays} straight days to qualify (currently ${streak}).`
+            : `Registered ${reg.registered_at} — no spend recorded yet.` })
       }
     }
     return out
-  }, [adsets, rules, today])
+  }, [adsets, rules, today, registry.regs, isScaling])
 
   // Owner options galing sa REGISTRY (hindi sa loaded rows) para mapipili pa rin
   // ang owner na walang gastos sa buwan.
@@ -463,6 +527,64 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rules.autoMaster, loading, killRows.length])
 
+  // ── Rehistro: pumili ng ad set na susundan (Scaling tab lang) ──────────────
+  const [pickOpen, setPickOpen] = useState(false)
+  const [pickSel, setPickSel] = useState<Set<string>>(new Set())
+  const [pickQ, setPickQ] = useState("")
+  const [busy, setBusy] = useState("")
+  const regIds = useMemo(() => new Set(registry.regs.map(r => r.adset_id)), [registry.regs])
+  // Mapagpipilian: lahat ng ad set na may gastos sa buwan at hindi pa nakarehistro.
+  const pickable = useMemo(() => adsets
+    .filter(m => !regIds.has(m.id))
+    .filter(m => fOwner === "All" || m.account.owner === fOwner)
+    .filter(m => !pickQ || `${m.name} ${m.campaignName} ${m.account.name}`.toLowerCase().includes(pickQ.toLowerCase()))
+    .sort((a, b) => a.account.name.localeCompare(b.account.name) || a.name.localeCompare(b.name)),
+    [adsets, regIds, fOwner, pickQ])
+
+  async function doRegister() {
+    setBusy("register")
+    const items = pickable.filter(m => pickSel.has(m.id)).map(m => ({
+      adset_id: m.id, adset_name: m.name, campaign_name: m.campaignName,
+      account_name: m.account.name, owner: m.account.owner || "",
+      registered_at: today, starting_budget: m.budget || 0,
+    }))
+    const err = await registry.register(items)
+    if (err) setErrors(p => [...p, `Register failed — ${err}`])
+    setPickSel(new Set()); setPickOpen(false); setBusy("")
+  }
+
+  // ── Pag-scale: itinataas ang budget sa Meta, saka itinatala ────────────────
+  const [scaleFor, setScaleFor] = useState<Signal | null>(null)
+  const [bulkScale, setBulkScale] = useState(false)
+  const [scaleSel, setScaleSel] = useState<Set<string>>(new Set())
+
+  async function applyScale(targets: Signal[], pct: number) {
+    setBusy("scale")
+    for (const s of targets) {
+      const from = s.adset.budget || 0
+      const to = Math.round(from * (1 + pct / 100))
+      let applied = false
+      if (from > 0) {
+        try {
+          const j = await fetch("/api/fb/manage", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: s.adset.account.token, action: "update", id: s.adset.id, daily_budget: to }),
+          }).then(r => r.json())
+          applied = !!j.success
+          if (!j.success) setErrors(p => [...p, `${s.adset.name}: budget update failed — ${String(j.error).slice(0, 80)}`])
+        } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: ${String(e?.message).slice(0, 80)}`]) }
+      } else {
+        // CBO: nasa campaign ang budget, wala sa ad set — itinatala pa rin ang
+        // hakbang para tumugma ang bilang, pero malinaw na HINDI ito na-apply.
+        setErrors(p => [...p, `${s.adset.name}: no ad-set budget (CBO) — recorded the step, raise it on the campaign in Ads Manager.`])
+      }
+      const ev: ScaleEvent = { date: today, pct, from, to: applied ? to : from, applied }
+      if (s.reg) await registry.addScale(s.reg.adset_id, ev)
+      if (applied) setAdsets(prev => prev.map(m => m.id === s.adset.id ? { ...m, budget: to } : m))
+    }
+    setScaleFor(null); setBulkScale(false); setScaleSel(new Set()); setBusy("")
+  }
+
   // ── AI ─────────────────────────────────────────────────────────────────────
   const [aiOpen, setAiOpen] = useState<string>("")     // adset id na may bukas na opinion
   const [aiText, setAiText] = useState<Record<string, string>>({})
@@ -499,10 +621,36 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
   const Row = ({ s, accent }: { s: Signal; accent: string }) => (
     <div className={`border-l-4 ${accent} bg-white rounded-lg border border-slate-200 p-3 space-y-1.5`}>
       <div className="flex flex-wrap items-center gap-2">
+        {isScaling && s.reg && (
+          <input type="checkbox" checked={scaleSel.has(s.adset.id)}
+            onChange={e => setScaleSel(p => { const n = new Set(p); e.target.checked ? n.add(s.adset.id) : n.delete(s.adset.id); return n })} />
+        )}
         <span className="font-semibold text-slate-800 text-sm">{s.adset.name}</span>
         <span className="text-[11px] text-slate-400">{s.adset.campaignName} · {s.adset.account.name}</span>
         {s.adset.budget > 0 && <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">budget {peso(s.adset.budget)}</span>}
+        {/* Pang-ilang scale na + saan nagsimula — ito ang hinihinging kasaysayan. */}
+        {s.reg && s.reg.scales.length > 0 && (
+          <span className="text-[11px] bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
+            scale #{s.reg.scales.length} · {peso(s.reg.starting_budget)} → {peso(s.adset.budget || s.reg.scales[s.reg.scales.length - 1].to)}
+            {" "}(+{Math.round(((s.adset.budget || 0) / (s.reg.starting_budget || 1) - 1) * 100)}%)
+          </span>
+        )}
+        {s.reg && s.reg.scales.length === 0 && (
+          <span className="text-[11px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">not scaled yet</span>
+        )}
         <span className="ml-auto flex items-center gap-1.5">
+          {isScaling && s.reg && s.adset.budget > 0 && (
+            <button onClick={() => setScaleFor(s)} disabled={busy === "scale"}
+              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+              <TrendingUp className="w-3 h-3" /> Scale
+            </button>
+          )}
+          {isScaling && s.reg && (
+            <button onClick={() => { if (confirm(`Stop monitoring "${s.adset.name}"? History is kept.`)) registry.unregister(s.reg!.adset_id) }}
+              title="Stop monitoring" className="text-[11px] px-1.5 py-1 rounded-md border border-slate-300 text-slate-500 hover:bg-slate-50">
+              <X className="w-3 h-3" />
+            </button>
+          )}
           <button onClick={() => askAi("row", s)} disabled={aiBusy === s.adset.id}
             className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md border border-violet-200 text-violet-600 hover:bg-violet-50 disabled:opacity-50">
             <Sparkles className="w-3 h-3" /> {aiBusy === s.adset.id ? "…" : "AI opinion"}
@@ -532,6 +680,20 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
         })}
         <span className="text-slate-400">gross 7d: {dec(s.windows.w7.grossRoas)} · RTS rate {(s.adset.rtsRate * 100).toFixed(1)}%</span>
       </div>
+      {/* Resulta MULA sa rehistro + bawat hakbang ng pag-scale */}
+      {s.reg && (
+        <div className="text-[11px] text-slate-500 bg-slate-50 rounded-md px-2 py-1.5 space-y-0.5">
+          <p>
+            <b>Registered {s.reg.registered_at}</b>
+            {s.sinceReg && <> · day {s.sinceReg.days} · {peso(s.sinceReg.spend)} spent · net <b className={s.sinceReg.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.sinceReg.netRoas < rules.killRoas ? "text-rose-600" : ""}>{dec(s.sinceReg.netRoas)}</b> · {s.sinceReg.purchases} purchases</>}
+          </p>
+          {s.reg.scales.map((sc, i) => (
+            <p key={i} className={sc.applied ? "" : "text-amber-600"}>
+              #{i + 1} · {sc.date} · +{sc.pct}% · {peso(sc.from)} → {peso(sc.to)}{sc.applied ? "" : " (recorded only — CBO, raise on the campaign)"}
+            </p>
+          ))}
+        </div>
+      )}
       {aiOpen === s.adset.id && aiText[s.adset.id] && (
         <div className="text-[13px] bg-violet-50 border border-violet-200 rounded-md p-2.5 text-slate-700 whitespace-pre-wrap">{aiText[s.adset.id]}</div>
       )}
@@ -558,8 +720,11 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
       <div className="flex flex-wrap items-center gap-2">
         <div className="space-y-1">
           <p className="text-sm text-slate-500">
-            Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · window: last 30 days · ad-set level
+            {isScaling
+              ? <>Registered ad sets only · tracked from the day you register · scale 10% / 20% and every step is counted</>
+              : <>Auto-scan of every ad set · monthly performance, kills, and creative fatigue</>}
           </p>
+          <p className="text-[11px] text-slate-400">Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · ad-set level</p>
           {/* Legend — ang tatlong bilang sa account picker ay nasa ganitong pagkakasunod */}
           <p className="text-[11px] text-slate-400 flex items-center gap-2.5">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> scale</span>
@@ -579,6 +744,20 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
             className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 flex items-center gap-1.5 hover:bg-slate-50 whitespace-nowrap">
             ROAS {sortDir === "desc" ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />}
           </button>
+          {isScaling && (
+            <>
+              <button onClick={() => setPickOpen(true)} disabled={loading}
+                className="h-9 px-3 rounded-lg bg-blue-600 text-white text-sm flex items-center gap-1.5 hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap">
+                <Plus className="w-4 h-4" /> Register ad sets
+              </button>
+              {scaleSel.size > 0 && (
+                <button onClick={() => setBulkScale(true)}
+                  className="h-9 px-3 rounded-lg bg-emerald-600 text-white text-sm flex items-center gap-1.5 hover:bg-emerald-700 whitespace-nowrap">
+                  <TrendingUp className="w-4 h-4" /> Scale {scaleSel.size} selected
+                </button>
+              )}
+            </>
+          )}
           <button onClick={() => askAi("brief")} disabled={aiBusy === "brief" || loading}
             className="h-9 px-3 rounded-lg bg-violet-600 text-white text-sm flex items-center gap-1.5 hover:bg-violet-700 disabled:opacity-50">
             <Sparkles className="w-4 h-4" /> {aiBusy === "brief" ? "Thinking…" : "Morning brief"}
@@ -644,6 +823,87 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
           {errors.slice(0, 6).map((e, i) => <p key={i}>{e}</p>)}
         </div>
       )}
+      {registry.error && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-2.5 text-[13px] text-rose-700">{registry.error}</div>
+      )}
+
+      {/* ── Register picker ── */}
+      {pickOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setPickOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3.5 border-b border-slate-200">
+              <p className="font-bold text-slate-800">Register ad sets to monitor</p>
+              <p className="text-[12px] text-slate-500">Monitoring starts <b>today ({today})</b> — results are tracked from this date at 3 / 7 / 15 / 30 days. Only registered ad sets appear in Scaling.</p>
+            </div>
+            <div className="px-5 py-2 border-b border-slate-100">
+              <input value={pickQ} onChange={e => setPickQ(e.target.value)} placeholder="Search ad set / campaign / account…"
+                className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm" />
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 py-1 min-h-[200px]">
+              {pickable.length === 0
+                ? <p className="text-sm text-slate-400 italic p-4">{adsets.length === 0 ? "Still loading ad sets…" : "Nothing left to register — every ad set here is already registered."}</p>
+                : pickable.map(m => (
+                  <label key={m.id} className="flex items-start gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" className="mt-0.5" checked={pickSel.has(m.id)}
+                      onChange={e => setPickSel(p => { const n = new Set(p); e.target.checked ? n.add(m.id) : n.delete(m.id); return n })} />
+                    <span className="min-w-0">
+                      <span className="block text-sm text-slate-800 truncate">{m.name}</span>
+                      <span className="block text-[11px] text-slate-400 truncate">
+                        {m.campaignName} · {m.account.name} · {/active/i.test(m.status) ? "active" : m.status.toLowerCase()}
+                        {m.budget > 0 ? ` · budget ${peso(m.budget)}` : " · no ad-set budget (CBO)"}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-200 flex items-center gap-2">
+              <span className="text-[12px] text-slate-500">{pickSel.size} selected</span>
+              <span className="ml-auto flex gap-2">
+                <button onClick={() => setPickOpen(false)} className="h-9 px-3 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50">Cancel</button>
+                <button onClick={doRegister} disabled={pickSel.size === 0 || busy === "register"}
+                  className="h-9 px-4 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50">
+                  {busy === "register" ? "Registering…" : `Start monitoring ${pickSel.size}`}
+                </button>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Scale prompt: 10% o 20% ── */}
+      {(scaleFor || bulkScale) && (() => {
+        const targets = bulkScale ? view.filter(s => scaleSel.has(s.adset.id)) : (scaleFor ? [scaleFor] : [])
+        const totalNow = targets.reduce((t, s) => t + (s.adset.budget || 0), 0)
+        return (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => { setScaleFor(null); setBulkScale(false) }}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()}>
+              <p className="font-bold text-slate-800">Scale {targets.length === 1 ? "this ad set" : `${targets.length} ad sets`}?</p>
+              <p className="text-[13px] text-slate-500">
+                This raises the <b>daily budget on Facebook</b> and records the step so the scale count stays accurate.
+                Current total: <b>{peso(totalNow)}</b>.
+              </p>
+              <div className="max-h-32 overflow-y-auto text-[11px] text-slate-500 bg-slate-50 rounded-md p-2 space-y-0.5">
+                {targets.map(s => (
+                  <p key={s.adset.id} className="truncate">
+                    {s.adset.name} — {s.adset.budget > 0 ? peso(s.adset.budget) : "no ad-set budget (CBO)"}
+                    {s.reg && s.reg.scales.length > 0 ? ` · would be scale #${s.reg.scales.length + 1}` : " · first scale"}
+                  </p>
+                ))}
+              </div>
+              <div className="flex gap-2 pt-1">
+                {[10, 20].map(pct => (
+                  <button key={pct} onClick={() => applyScale(targets, pct)} disabled={busy === "scale"}
+                    className="flex-1 h-11 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50">
+                    {busy === "scale" ? "…" : <>Scale {pct}%<span className="block text-[11px] font-normal opacity-80">{peso(totalNow * (1 + pct / 100))}</span></>}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => { setScaleFor(null); setBulkScale(false) }}
+                className="w-full h-9 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50">Cancel</button>
+            </div>
+          </div>
+        )
+      })()}
 
       {loading ? (
         <div className="py-10 space-y-3">
@@ -658,12 +918,19 @@ export function ScalingTracker({ accounts, onSignals }: { accounts: FBAccount[];
         </div>
       ) : (
         <>
+          {isScaling && registry.regs.length === 0 && registry.loaded && !registry.error && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-[13px] text-blue-800">
+              <b>Nothing registered yet.</b> Click <b>Register ad sets</b> to pick the ones you want to follow —
+              monitoring starts on the day you register, then you scale 10% or 20% from here and every step is counted.
+              The <b>Monitoring</b> tab scans everything automatically if you want the full picture.
+            </div>
+          )}
           <Section title="Ready to Scale" icon={TrendingUp} color="text-emerald-600" accent="border-emerald-500" rows={scaleRows}
             empty={`None yet — needs net ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.`} />
           <Section title="Kill Suggestions" icon={Skull} color="text-rose-600" accent="border-rose-500" rows={killRows}
             empty="Nothing hits the kill rules right now." />
-          <Section title="Watch" icon={Eye} color="text-amber-600" accent="border-amber-400" rows={watchRows}
-            empty="Nothing within 10% of a threshold." />
+          <Section title={isScaling ? "Monitoring / Watch" : "Watch"} icon={Eye} color="text-amber-600" accent="border-amber-400" rows={watchRows}
+            empty={isScaling ? "No registered ad set is waiting." : "Nothing within 10% of a threshold."} />
 
           {/* Fatigue — kada AD */}
           <div className="space-y-2">
