@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
-  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X, LayoutGrid,
+  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X, LayoutGrid, Layers,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
@@ -516,6 +516,18 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     if (fAccount !== "ALL" && !accountItems.some(i => i.name === fAccount)) setFAccount("ALL")
   }, [accountItems, fAccount])
 
+  // ── ULILANG REHISTRO ────────────────────────────────────────────────────────
+  // Ang rehistro para sa antas na ito na WALANG katugmang object sa nahilang
+  // datos. Dating tahimik na nawawala — mukhang "hindi accurate ang laman".
+  // Napatunayan (Ago 14 2026): may campaign na naitala bilang level='adset' ng
+  // lumang build, kaya hindi ito lumalabas sa Testing (hindi ad set) at hindi rin
+  // sa Scaling (mali ang level). Ipinapakita na ngayon para maalis o maitama.
+  const orphans = useMemo(() => {
+    if (!registry.loaded || loading) return []
+    const ids = new Set(adsets.map(m => m.id))
+    return registry.regs.filter(r => r.level === level && !ids.has(r.adset_id))
+  }, [registry.regs, registry.loaded, adsets, level, loading])
+
   const scaleRows = view.filter(s => s.kind === "scale")
   const killRows = view.filter(s => s.kind === "kill")
   const watchRows = view.filter(s => s.kind === "watch")
@@ -579,7 +591,9 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   // hiwalay na gawain sa pagtingin ng resulta, at 100+ ad set ang pagpipilian.
   const [pickOwner, setPickOwner] = useState("All")
   const [pickAcct, setPickAcct] = useState("All")
-  const [pickActiveOnly, setPickActiveOnly] = useState(false)
+  // Naka-check by default: ang irerehistro ay ang tumatakbo, hindi ang libo-libong
+  // paused na luma. Pwede pa ring alisin kung hinahanap ang naka-pause.
+  const [pickActiveOnly, setPickActiveOnly] = useState(true)
   const [busy, setBusy] = useState("")
   const regIds = useMemo(() => new Set(registry.regs.filter(r => r.level === level).map(r => r.adset_id)), [registry.regs, level])
 
@@ -675,22 +689,25 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     spend: number; purchases: number; purchaseValue: number; netRoas: number
     cpp: number; ctr: number; frequency: number; impressions: number
   }
-  const [adsOpen, setAdsOpen] = useState<string>("")
+  // Aling antas ang bukas kada campaign: "" (sarado) / "adset" / "ad".
+  const [drillOpen, setDrillOpen] = useState<Record<string, "adset" | "ad" | "">>({})
   const [adRows, setAdRows] = useState<Record<string, AdRow[]>>({})
   const [adsBusy, setAdsBusy] = useState("")
 
-  async function loadAds(s: Signal) {
+  async function loadDrill(s: Signal, lvl: "adset" | "ad") {
     const cid = s.adset.campaignId
     if (!cid) return
-    if (adsOpen === cid) { setAdsOpen(""); return }
-    setAdsOpen(cid)
-    if (adRows[cid]) return
-    setAdsBusy(cid)
+    const key = `${cid}|${lvl}`
+    if (drillOpen[cid] === lvl) { setDrillOpen(p => ({ ...p, [cid]: "" })); return }
+    setDrillOpen(p => ({ ...p, [cid]: lvl }))
+    if (adRows[key]) return
+    setAdsBusy(key)
     try {
-      const j = await fetch(`/api/fb/insights?rich=1&level=ad&parent=${encodeURIComponent(cid)}`
+      // parent = campaign id sa dalawang antas: {campaign}/insights?level=adset|ad
+      const j = await fetch(`/api/fb/insights?rich=1&level=${lvl}&parent=${encodeURIComponent(cid)}`
         + `&token=${encodeURIComponent(s.adset.account.token)}&account_id=${encodeURIComponent(actId(s.adset.account.ad_account_id))}`
         + `&from=${from30}&to=${today}`).then(r => r.json())
-      if (!j.success) { setErrors(p => [...p, `${s.adset.name}: ads — ${String(j.error).slice(0, 80)}`]); setAdsBusy(""); return }
+      if (!j.success) { setErrors(p => [...p, `${s.adset.name}: ${lvl}s — ${String(j.error).slice(0, 80)}`]); setAdsBusy(""); return }
       const rts = s.adset.rtsRate
       // Sapat na hugis para sa table na ito — hindi buong RawCampaign.
       type MetaAd = {
@@ -708,7 +725,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           ctr: r.linkCtr || 0, frequency: r.frequency || 0, impressions: r.impressions || 0,
         }
       }).sort((x, y) => y.netRoas - x.netRoas || y.spend - x.spend)
-      setAdRows(p => ({ ...p, [cid]: rows }))
+      setAdRows(p => ({ ...p, [key]: rows }))
     } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: ${String(e?.message).slice(0, 80)}`]) }
     setAdsBusy("")
   }
@@ -781,12 +798,18 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
               <TrendingUp className="w-3 h-3" /> Scale
             </button>
           )}
-          {isCampaign && s.reg && (
-            <button onClick={() => loadAds(s)} disabled={adsBusy === s.adset.campaignId}
-              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md border border-violet-200 text-violet-600 hover:bg-violet-50 disabled:opacity-50">
-              <LayoutGrid className="w-3 h-3" /> {adsBusy === s.adset.campaignId ? "…" : adsOpen === s.adset.campaignId ? "Hide ads" : "View ads"}
-            </button>
-          )}
+          {isCampaign && s.reg && (["adset", "ad"] as const).map(lvl => {
+            const open = drillOpen[s.adset.campaignId] === lvl
+            const busyHere = adsBusy === `${s.adset.campaignId}|${lvl}`
+            return (
+              <button key={lvl} onClick={() => loadDrill(s, lvl)} disabled={busyHere}
+                className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-md border disabled:opacity-50 ${
+                  open ? "border-violet-400 bg-violet-50 text-violet-700" : "border-violet-200 text-violet-600 hover:bg-violet-50"}`}>
+                {lvl === "adset" ? <Layers className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
+                {busyHere ? "…" : open ? `Hide ${lvl === "adset" ? "ad sets" : "ads"}` : `View ${lvl === "adset" ? "ad sets" : "ads"}`}
+              </button>
+            )
+          })}
           {s.reg && (
             <button onClick={() => { if (confirm(`Stop monitoring "${s.adset.name}"? History is kept.`)) registry.unregister(s.reg!.adset_id) }}
               title="Stop monitoring" className="text-[11px] px-1.5 py-1 rounded-md border border-slate-300 text-slate-500 hover:bg-slate-50">
@@ -839,25 +862,29 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       {aiOpen === s.adset.id && aiText[s.adset.id] && (
         <div className="text-[13px] bg-violet-50 border border-violet-200 rounded-md p-2.5 text-slate-700 whitespace-pre-wrap">{aiText[s.adset.id]}</div>
       )}
-      {/* Per-ad breakdown — pinakamataas na net ROAS ang una */}
-      {isCampaign && adsOpen === s.adset.campaignId && (
+      {/* Drill-down: ad sets o ads sa loob ng campaign — net ROAS ang pagkakasunod */}
+      {isCampaign && drillOpen[s.adset.campaignId] && (() => {
+        const lvl = drillOpen[s.adset.campaignId] as "adset" | "ad"
+        const key = `${s.adset.campaignId}|${lvl}`
+        const rows = adRows[key] || []
+        return (
         <div className="border border-slate-200 rounded-lg overflow-hidden">
-          {adsBusy === s.adset.campaignId ? (
-            <p className="text-[12px] text-slate-400 p-3 flex items-center gap-2"><RefreshCw className="w-3 h-3 animate-spin" /> Pulling ads…</p>
-          ) : (adRows[s.adset.campaignId] || []).length === 0 ? (
-            <p className="text-[12px] text-slate-400 italic p-3">No ads with data in the last 30 days.</p>
+          {adsBusy === key ? (
+            <p className="text-[12px] text-slate-400 p-3 flex items-center gap-2"><RefreshCw className="w-3 h-3 animate-spin" /> Pulling {lvl === "adset" ? "ad sets" : "ads"}…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-[12px] text-slate-400 italic p-3">No {lvl === "adset" ? "ad sets" : "ads"} with data in the last 30 days.</p>
           ) : (
             <div className="overflow-x-auto scrollbar-dark">
               <table className="w-full text-[11px] min-w-[620px]">
                 <thead>
                   <tr className="bg-slate-50 text-slate-500 text-left">
-                    {["", "AD", "STATUS", "SPEND", "NET ROAS", "PURCH", "CPP", "CTR", "FREQ"].map(h => (
+                    {["", lvl === "adset" ? "AD SET" : "AD", "STATUS", "SPEND", "NET ROAS", "PURCH", "CPP", "CTR", "FREQ"].map(h => (
                       <th key={h} className="px-2 py-1.5 font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {(adRows[s.adset.campaignId] || []).map((r, i) => (
+                  {rows.map((r, i) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="px-2 py-1.5 text-slate-400 tabular-nums">
                         {/* Ang top 3 ay tinatatakan — iyon ang hinahanap sa 40+ creative */}
@@ -887,7 +914,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
             </div>
           )}
         </div>
-      )}
+        ) })()}
     </div>
   )
 
@@ -1016,6 +1043,25 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       )}
       {registry.error && (
         <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-2.5 text-[13px] text-rose-700">{registry.error}</div>
+      )}
+      {orphans.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[13px] text-amber-800 space-y-1">
+          <p className="font-semibold">
+            {orphans.length} registration{orphans.length === 1 ? "" : "s"} can&apos;t be matched to a live {unitLabel}
+          </p>
+          <p className="text-[12px]">
+            Usually the object was deleted, or it was registered at the wrong level by an older build
+            (a campaign saved as an ad set). Re-register it from the correct tab, or remove it here.
+          </p>
+          {orphans.map(o => (
+            <p key={o.adset_id} className="flex items-center gap-2 flex-wrap">
+              <span className="truncate">{o.adset_name || o.adset_id}</span>
+              <span className="text-[11px] text-amber-600">registered {o.registered_at}</span>
+              <button onClick={() => registry.unregister(o.adset_id)}
+                className="text-[11px] px-1.5 py-0.5 rounded border border-amber-300 hover:bg-amber-100">Remove</button>
+            </p>
+          ))}
+        </div>
       )}
 
       {/* ── Register picker ── */}
