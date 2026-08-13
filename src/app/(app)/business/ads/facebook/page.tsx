@@ -185,6 +185,12 @@ export default function FacebookAdsPage() {
         ))}
       </div>
 
+      {/* ⚠ Ang `key` sa dalawang ScalingTracker ay KAILANGAN. Parehong component
+          sila sa parehong posisyon ng tree, kaya ini-reuse ng React ang instance
+          kapag nagpalit ng tab — dala-dala ang `adsets` state ng dating tab, at
+          hindi tumatakbo muli ang load effect (hindi nagbabago ang liveKey). Kaya
+          ad sets ang lumalabas sa Scaling at mukhang "naka-sync" ang dalawang
+          picker (nahuli Ago 14 2026). Ang `key` ang pumipilit ng remount. */}
       {dataAccounts.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
           <Link2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
@@ -192,8 +198,8 @@ export default function FacebookAdsPage() {
         </div>
       ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} />
         : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
-          : tab === "testing" ? <ScalingTracker mode="testing" accounts={dataAccounts} onSignals={setTestingCount} />
-            : tab === "scaling" ? <ScalingTracker mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} />
+          : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} />
+            : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} />
               : <AdsManager fb={fb} from={from} to={to} />}
     </div>
   )

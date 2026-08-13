@@ -269,27 +269,42 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         const metaById = new Map<string, any>((meta.rows || []).map((r: any) => [r.id, r]))
         const campById = new Map<string, any>((camp.rows || []).map((r: any) => [r.id, r]))
         const byId = new Map<string, AdsetModel>()
+        const rts = rtsByPage.get(a.page_name) ?? 0
+        const mk = (id: string, name: string, campaignId: string, campaignName: string): AdsetModel => {
+          const mm = metaById.get(id) || {}
+          const cm = campById.get(campaignId) || {}
+          return {
+            id, name: name || mm.name || id,
+            // Ang rich meta rows ay walang campaign_name — kaya kinukuha sa
+            // campaign lookup. Kung hindi, blangko ang pangalan ng campaign para
+            // sa mga ad set na walang gastos (galing lang sa meta edge).
+            campaignName: isCampaign ? (name || mm.name || "") : (campaignName || cm.name || ""),
+            campaignId: isCampaign ? id : campaignId,
+            account: a, status: mm.status || "—",
+            // `ownBudget` LANG — ang `budget` ng rich mode ay maaaring minana o
+            // inipon mula sa ad sets, at hindi iyon ang maitataas nang direkta.
+            // Sa campaign level, ang sarili niyang budget ANG budget.
+            budget: isCampaign ? 0 : (mm.ownBudget || 0),
+            campaignBudget: isCampaign ? (mm.ownBudget || 0) : (cm.ownBudget || 0),
+            createdTime: mm.createdTime || "",
+            rtsRate: rts,
+            dailies: new Map(),
+          }
+        }
+
+        // ⚠ MULA SA META EDGE ANG LISTAHAN, HINDI SA INSIGHTS.
+        // Ang insights (series) ay nagbabalik LANG ng object na may GASTOS sa
+        // window. Kaya ang bagong gawa ngayong araw — ang eksaktong bagay na
+        // irerehistro sa Testing — ay wala sa listahan. Ganoon din ang naka-pause
+        // na walang gastos nitong 30 araw. Ang `meta.rows` ay may LAHAT (may
+        // zero-fill sa API), kaya doon nagsisimula; ang series ay pandagdag lang
+        // ng araw-araw na numero.
+        for (const r of meta.rows || []) {
+          byId.set(r.id, mk(r.id, r.name || "", isCampaign ? r.id : (r.campaignId || ""), r.campaignName || ""))
+        }
         for (const r of series.rows || []) {
           let m = byId.get(r.id)
-          if (!m) {
-            const mm = metaById.get(r.id) || {}
-            const cm = campById.get(r.campaignId) || {}
-            m = {
-              id: r.id, name: r.name,
-              campaignName: isCampaign ? r.name : (r.campaignName || ""),
-              campaignId: isCampaign ? r.id : (r.campaignId || ""),
-              account: a, status: mm.status || "—",
-              // `ownBudget` LANG — ang `budget` ng rich mode ay maaaring minana o
-              // inipon mula sa ad sets, at hindi iyon ang maitataas nang direkta.
-              // Sa campaign level, ang sarili niyang budget ANG budget.
-              budget: isCampaign ? 0 : (mm.ownBudget || 0),
-              campaignBudget: isCampaign ? (mm.ownBudget || 0) : (cm.ownBudget || 0),
-              createdTime: mm.createdTime || "",
-              rtsRate: rtsByPage.get(a.page_name) ?? 0,
-              dailies: new Map(),
-            }
-            byId.set(r.id, m)
-          }
+          if (!m) { m = mk(r.id, r.name, r.campaignId || "", r.campaignName || ""); byId.set(r.id, m) }
           m.dailies.set(r.date, { date: r.date, spend: r.spend, purchases: r.purchases, purchaseValue: r.purchaseValue, impressions: r.impressions, clicks: r.clicks })
         }
         models.push(...byId.values())
