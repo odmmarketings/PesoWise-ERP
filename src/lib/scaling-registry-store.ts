@@ -18,13 +18,17 @@ export interface ScaleEvent {
   to: number          // budget pagkatapos (pesos)
   applied: boolean    // true = na-update sa Meta via API; false = naitala lang (hal. CBO)
 }
+export type RegLevel = "adset" | "campaign"
+
 export interface Registration {
   id: string
+  /** Meta object id — ad set id kapag level="adset", campaign id kapag "campaign". */
   adset_id: string
   adset_name: string
   campaign_name: string
   account_name: string
   owner: string
+  level: RegLevel
   registered_at: string      // YYYY-MM-DD
   starting_budget: number
   scales: ScaleEvent[]
@@ -35,6 +39,7 @@ function rowToReg(r: any): Registration {
   return {
     id: r.id, adset_id: r.adset_id, adset_name: r.adset_name || "",
     campaign_name: r.campaign_name || "", account_name: r.account_name || "", owner: r.owner || "",
+    level: r.level === "campaign" ? "campaign" : "adset",
     registered_at: r.registered_at, starting_budget: Number(r.starting_budget) || 0,
     scales: Array.isArray(r.scales) ? r.scales : [],
     active: r.active !== false,
@@ -77,7 +82,7 @@ export function useScalingRegistry() {
     const { error } = await supabase.from("scaling_registry").upsert(items.map(i => ({
       business_id: businessId, adset_id: i.adset_id, adset_name: i.adset_name,
       campaign_name: i.campaign_name, account_name: i.account_name, owner: i.owner,
-      registered_at: i.registered_at, starting_budget: i.starting_budget,
+      level: i.level, registered_at: i.registered_at, starting_budget: i.starting_budget,
       scales: [], active: true, updated_at: new Date().toISOString(),
     })), { onConflict: "business_id,adset_id" })
     if (!error) await refresh()

@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
-  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X,
+  ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X, LayoutGrid,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
@@ -160,15 +160,11 @@ const dec = (n: number) => (isFinite(n) ? n : 0).toFixed(2)
 const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 const netOf = (value: number, spend: number, rts: number) => spend > 0 ? (value * (1 - rts)) / (spend * VAT) : 0
 
-/** "2h ago" / "3d ago" / "2026-07-18" — para makita kung bago nga ang nasa itaas. */
-function ago(iso: string): string {
+/** Ilang araw nang umiiral — pinapakita sa picker at sa registered rows. */
+function daysOld(iso: string): number {
   const t = new Date(iso).getTime()
-  if (!isFinite(t)) return ""
-  const h = (Date.now() - t) / 3600_000
-  if (h < 1) return "just now"
-  if (h < 24) return `${Math.round(h)}h ago`
-  const d = Math.round(h / 24)
-  return d <= 30 ? `${d}d ago` : iso.slice(0, 10)
+  if (!isFinite(t)) return 0
+  return Math.max(0, Math.floor((Date.now() - t) / 86400_000))
 }
 
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {
@@ -176,20 +172,25 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-// ── DALAWANG MODE, ISANG ENGINE ──────────────────────────────────────────────
-//   mode="monitoring" → awtomatikong iniiskan ang LAHAT ng ad set: kill, watch,
-//                       fatigue. Walang rehistro. Ito ang buwanang bantay.
-//   mode="scaling"    → ang mga INIREHISTRO lang. Mula sa petsa ng rehistro,
-//                       sinusundan ang 3/7/15/30-araw na resulta, at bawat
-//                       pag-scale (10%/20%) ay naitatala — kaya makikita kung
-//                       pang-ilang scale na at mula saang budget nagsimula.
+// ── DALAWANG TAB, ISANG ENGINE ───────────────────────────────────────────────
+//   mode="testing"  → AD SET level. Irehistro ang bagong testing ad set; mula sa
+//                     petsa ng rehistro, sinusundan ang 3/7/15/30-araw na resulta
+//                     hanggang umabot sa scale threshold.
+//   mode="scaling"  → CAMPAIGN level. Irehistro ang scaling campaign (1-1-40+
+//                     Andromeda). Dito ang Scale 10%/20% dahil sa CAMPAIGN
+//                     nakalagay ang CBO budget — hindi sa ad set. May per-ad na
+//                     view din para makita kung aling creative ang umaandar.
 // Isang engine para hindi maghiwalay ang net-ROAS math sa dalawang lugar.
-export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
-  accounts: FBAccount[]; onSignals?: (n: number) => void; mode?: "scaling" | "monitoring"
+export function ScalingTracker({ accounts, onSignals, mode }: {
+  accounts: FBAccount[]; onSignals?: (n: number) => void; mode: "testing" | "scaling"
 }) {
   const allPages = useActivePages()
   const registry = useScalingRegistry()
-  const isScaling = mode === "scaling"
+  const level: "adset" | "campaign" = mode === "scaling" ? "campaign" : "adset"
+  const isCampaign = level === "campaign"
+  const unitLabel = isCampaign ? "campaign" : "ad set"
+  // Pareho silang nakabatay sa rehistro — ang antas lang ang pinagkaiba.
+  const isScaling = true
   const [rules, setRules] = useState<Rules>(() => loadRules())
   const saveRules = (r: Rules) => { setRules(r); try { localStorage.setItem(RULES_KEY, JSON.stringify(r)) } catch {} }
 
@@ -253,11 +254,16 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
       try {
         const acct = actId(a.ad_account_id)
         const [series, meta, camp] = await Promise.all([
-          fetch(`/api/fb/insights?series=1&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
-          fetch(`/api/fb/insights?rich=1&level=adset&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
-          // 65% ng ad sets nila ay CBO (nasukat Ago 14 2026) — nasa CAMPAIGN ang
-          // budget, kaya kailangan ito para may maitaas.
-          fetch(`/api/fb/insights?rich=1&level=campaign&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
+          // Ang daily series ay sa ANTAS ng tab: adset para sa Testing, campaign
+          // para sa Scaling.
+          fetch(`/api/fb/insights?series=1&level=${level}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
+          fetch(`/api/fb/insights?rich=1&level=${level}&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
+          // Sa Testing (adset level) kailangan pa rin ang campaign budget: 65% ng
+          // ad sets nila ay CBO (nasukat Ago 14 2026). Sa Scaling, ang `meta` na
+          // mismo ang campaign — kaya hindi na kailangan ng pangalawang hila.
+          isCampaign
+            ? Promise.resolve({ success: true, rows: [] })
+            : fetch(`/api/fb/insights?rich=1&level=campaign&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
         ])
         if (!series.success) { errs.push(`${a.name}: ${String(series.error || "series failed").slice(0, 80)}`); return }
         const metaById = new Map<string, any>((meta.rows || []).map((r: any) => [r.id, r]))
@@ -269,13 +275,15 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
             const mm = metaById.get(r.id) || {}
             const cm = campById.get(r.campaignId) || {}
             m = {
-              id: r.id, name: r.name, campaignName: r.campaignName || "",
-              campaignId: r.campaignId || "",
+              id: r.id, name: r.name,
+              campaignName: isCampaign ? r.name : (r.campaignName || ""),
+              campaignId: isCampaign ? r.id : (r.campaignId || ""),
               account: a, status: mm.status || "—",
-              // `ownBudget` LANG — ang `budget` ng adset rich mode ay maaaring
-              // minana/inipon, at hindi iyon ang maitataas nang direkta.
-              budget: mm.ownBudget || 0,
-              campaignBudget: cm.ownBudget || 0,
+              // `ownBudget` LANG — ang `budget` ng rich mode ay maaaring minana o
+              // inipon mula sa ad sets, at hindi iyon ang maitataas nang direkta.
+              // Sa campaign level, ang sarili niyang budget ANG budget.
+              budget: isCampaign ? 0 : (mm.ownBudget || 0),
+              campaignBudget: isCampaign ? (mm.ownBudget || 0) : (cm.ownBudget || 0),
               createdTime: mm.createdTime || "",
               rtsRate: rtsByPage.get(a.page_name) ?? 0,
               dailies: new Map(),
@@ -349,7 +357,9 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
     const dates: string[] = []
     for (let i = 29; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); dates.push(dstr(d)) }
 
-    const regByAdset = new Map(registry.regs.map(r => [r.adset_id, r]))
+    // Ang bawat tab ay nakikita LANG ang sariling antas — kung hindi, lalabas ang
+    // mga campaign sa Testing at mga ad set sa Scaling.
+    const regByAdset = new Map(registry.regs.filter(r => r.level === level).map(r => [r.adset_id, r]))
 
     for (const m of adsets) {
       const reg = regByAdset.get(m.id)
@@ -464,7 +474,7 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
       }
     }
     return out
-  }, [adsets, rules, today, registry.regs, isScaling])
+  }, [adsets, rules, today, registry.regs, level])
 
   // Owner options galing sa REGISTRY (hindi sa loaded rows) para mapipili pa rin
   // ang owner na walang gastos sa buwan.
@@ -571,7 +581,7 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
   const [pickAcct, setPickAcct] = useState("All")
   const [pickActiveOnly, setPickActiveOnly] = useState(false)
   const [busy, setBusy] = useState("")
-  const regIds = useMemo(() => new Set(registry.regs.map(r => r.adset_id)), [registry.regs])
+  const regIds = useMemo(() => new Set(registry.regs.filter(r => r.level === level).map(r => r.adset_id)), [registry.regs, level])
 
   // Ang mga pagpipilian sa modal ay galing sa mga ad set na TALAGANG mapipili,
   // hindi sa buong registry — kaya walang opsyon na zero ang kinalalabasan.
@@ -604,8 +614,8 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
     setBusy("register")
     const items = pickable.filter(m => pickSel.has(m.id)).map(m => ({
       adset_id: m.id, adset_name: m.name, campaign_name: m.campaignName,
-      account_name: m.account.name, owner: m.account.owner || "",
-      registered_at: today, starting_budget: m.budget || 0,
+      account_name: m.account.name, owner: m.account.owner || "", level,
+      registered_at: today, starting_budget: budgetTarget(m).amount,
     }))
     const err = await registry.register(items)
     if (err) setErrors(p => [...p, `Register failed — ${err}`])
@@ -656,6 +666,53 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
     setScaleFor(null); setBulkScale(false); setScaleSel(new Set()); setBusy("")
   }
 
+  // ── Per-ad view (Scaling tab) ──────────────────────────────────────────────
+  // Sa 1-1-40+ na setup, ang campaign ay isang bloke lang — ang tunay na sagot
+  // ay nasa ANTAS NG AD: alin sa 40 creative ang umaandar. Hinihila kada
+  // campaign lang kapag binuksan (mabigat kung lahat sabay).
+  type AdRow = {
+    id: string; name: string; thumbnail: string; status: string
+    spend: number; purchases: number; purchaseValue: number; netRoas: number
+    cpp: number; ctr: number; frequency: number; impressions: number
+  }
+  const [adsOpen, setAdsOpen] = useState<string>("")
+  const [adRows, setAdRows] = useState<Record<string, AdRow[]>>({})
+  const [adsBusy, setAdsBusy] = useState("")
+
+  async function loadAds(s: Signal) {
+    const cid = s.adset.campaignId
+    if (!cid) return
+    if (adsOpen === cid) { setAdsOpen(""); return }
+    setAdsOpen(cid)
+    if (adRows[cid]) return
+    setAdsBusy(cid)
+    try {
+      const j = await fetch(`/api/fb/insights?rich=1&level=ad&parent=${encodeURIComponent(cid)}`
+        + `&token=${encodeURIComponent(s.adset.account.token)}&account_id=${encodeURIComponent(actId(s.adset.account.ad_account_id))}`
+        + `&from=${from30}&to=${today}`).then(r => r.json())
+      if (!j.success) { setErrors(p => [...p, `${s.adset.name}: ads — ${String(j.error).slice(0, 80)}`]); setAdsBusy(""); return }
+      const rts = s.adset.rtsRate
+      // Sapat na hugis para sa table na ito — hindi buong RawCampaign.
+      type MetaAd = {
+        id: string; name?: string; thumbnail?: string; status?: string
+        spend?: number; purchases?: number; purchaseValue?: number
+        linkCtr?: number; frequency?: number; impressions?: number
+      }
+      const rows: AdRow[] = ((j.rows || []) as MetaAd[]).map(r => {
+        const spend = r.spend || 0, purchases = r.purchases || 0
+        return {
+          id: r.id, name: r.name || "", thumbnail: r.thumbnail || "", status: r.status || "—",
+          spend, purchases, purchaseValue: r.purchaseValue || 0,
+          netRoas: netOf(r.purchaseValue || 0, spend, rts),
+          cpp: purchases > 0 ? spend / purchases : 0,
+          ctr: r.linkCtr || 0, frequency: r.frequency || 0, impressions: r.impressions || 0,
+        }
+      }).sort((x, y) => y.netRoas - x.netRoas || y.spend - x.spend)
+      setAdRows(p => ({ ...p, [cid]: rows }))
+    } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: ${String(e?.message).slice(0, 80)}`]) }
+    setAdsBusy("")
+  }
+
   // ── AI ─────────────────────────────────────────────────────────────────────
   const [aiOpen, setAiOpen] = useState<string>("")     // adset id na may bukas na opinion
   const [aiText, setAiText] = useState<Record<string, string>>({})
@@ -697,7 +754,10 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
             onChange={e => setScaleSel(p => { const n = new Set(p); e.target.checked ? n.add(s.adset.id) : n.delete(s.adset.id); return n })} />
         )}
         <span className="font-semibold text-slate-800 text-sm">{s.adset.name}</span>
-        <span className="text-[11px] text-slate-400">{s.adset.campaignName} · {s.adset.account.name}</span>
+        <span className="text-[11px] text-slate-400">
+          {!isCampaign && <>{s.adset.campaignName} · </>}{s.adset.account.name}
+          {s.adset.createdTime && <> · {daysOld(s.adset.createdTime)}d old</>}
+        </span>
         {(() => { const t = budgetTarget(s.adset); return t.level === "none" ? null : (
           <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
             {t.level === "campaign" ? "CBO budget" : "budget"} {peso(t.amount)}
@@ -721,7 +781,13 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
               <TrendingUp className="w-3 h-3" /> Scale
             </button>
           )}
-          {isScaling && s.reg && (
+          {isCampaign && s.reg && (
+            <button onClick={() => loadAds(s)} disabled={adsBusy === s.adset.campaignId}
+              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md border border-violet-200 text-violet-600 hover:bg-violet-50 disabled:opacity-50">
+              <LayoutGrid className="w-3 h-3" /> {adsBusy === s.adset.campaignId ? "…" : adsOpen === s.adset.campaignId ? "Hide ads" : "View ads"}
+            </button>
+          )}
+          {s.reg && (
             <button onClick={() => { if (confirm(`Stop monitoring "${s.adset.name}"? History is kept.`)) registry.unregister(s.reg!.adset_id) }}
               title="Stop monitoring" className="text-[11px] px-1.5 py-1 rounded-md border border-slate-300 text-slate-500 hover:bg-slate-50">
               <X className="w-3 h-3" />
@@ -773,6 +839,55 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
       {aiOpen === s.adset.id && aiText[s.adset.id] && (
         <div className="text-[13px] bg-violet-50 border border-violet-200 rounded-md p-2.5 text-slate-700 whitespace-pre-wrap">{aiText[s.adset.id]}</div>
       )}
+      {/* Per-ad breakdown — pinakamataas na net ROAS ang una */}
+      {isCampaign && adsOpen === s.adset.campaignId && (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          {adsBusy === s.adset.campaignId ? (
+            <p className="text-[12px] text-slate-400 p-3 flex items-center gap-2"><RefreshCw className="w-3 h-3 animate-spin" /> Pulling ads…</p>
+          ) : (adRows[s.adset.campaignId] || []).length === 0 ? (
+            <p className="text-[12px] text-slate-400 italic p-3">No ads with data in the last 30 days.</p>
+          ) : (
+            <div className="overflow-x-auto scrollbar-dark">
+              <table className="w-full text-[11px] min-w-[620px]">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 text-left">
+                    {["", "AD", "STATUS", "SPEND", "NET ROAS", "PURCH", "CPP", "CTR", "FREQ"].map(h => (
+                      <th key={h} className="px-2 py-1.5 font-semibold whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(adRows[s.adset.campaignId] || []).map((r, i) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="px-2 py-1.5 text-slate-400 tabular-nums">
+                        {/* Ang top 3 ay tinatatakan — iyon ang hinahanap sa 40+ creative */}
+                        {i < 3 && r.netRoas > 0 ? ["🥇", "🥈", "🥉"][i] : i + 1}
+                      </td>
+                      <td className="px-2 py-1.5 max-w-[220px]">
+                        <span className="flex items-center gap-1.5">
+                          {r.thumbnail && <img src={r.thumbnail} alt="" className="w-6 h-6 rounded object-cover shrink-0" />}
+                          <span className="truncate text-slate-700">{r.name}</span>
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        <span className={`px-1.5 py-0.5 rounded-full ${/active/i.test(r.status) ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                          {r.status.toLowerCase().replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums whitespace-nowrap">{peso(r.spend)}</td>
+                      <td className={`px-2 py-1.5 tabular-nums font-bold ${r.netRoas >= rules.scaleRoas ? "text-emerald-600" : r.netRoas < rules.killRoas ? "text-rose-600" : "text-amber-600"}`}>{dec(r.netRoas)}</td>
+                      <td className="px-2 py-1.5 tabular-nums">{r.purchases}</td>
+                      <td className="px-2 py-1.5 tabular-nums whitespace-nowrap">{r.purchases > 0 ? peso(r.cpp) : "—"}</td>
+                      <td className="px-2 py-1.5 tabular-nums">{r.ctr.toFixed(2)}%</td>
+                      <td className={`px-2 py-1.5 tabular-nums ${r.frequency >= 2.5 ? "text-amber-600 font-semibold" : ""}`}>{dec(r.frequency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 
@@ -796,9 +911,9 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
       <div className="flex flex-wrap items-center gap-2">
         <div className="space-y-1">
           <p className="text-sm text-slate-500">
-            {isScaling
-              ? <>Registered ad sets only · tracked from the day you register · scale 10% / 20% and every step is counted</>
-              : <>Auto-scan of every ad set · monthly performance, kills, and creative fatigue</>}
+            {isCampaign
+              ? <>Registered <b>campaigns</b> · scale 10% / 20% on the campaign budget · open <b>View ads</b> for per-creative results</>
+              : <>Registered <b>ad sets</b> · tracked from the day you register at 3 / 7 / 15 / 30 days</>}
           </p>
           <p className="text-[11px] text-slate-400">Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · ad-set level</p>
           {/* Legend — ang tatlong bilang sa account picker ay nasa ganitong pagkakasunod */}
@@ -824,7 +939,7 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
             <>
               <button onClick={() => setPickOpen(true)} disabled={loading}
                 className="h-9 px-3 rounded-lg bg-blue-600 text-white text-sm flex items-center gap-1.5 hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap">
-                <Plus className="w-4 h-4" /> Register ad sets
+                <Plus className="w-4 h-4" /> Register {isCampaign ? "campaigns" : "ad sets"}
               </button>
               {scaleSel.size > 0 && (
                 <button onClick={() => setBulkScale(true)}
@@ -908,8 +1023,11 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setPickOpen(false)}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-3.5 border-b border-slate-200">
-              <p className="font-bold text-slate-800">Register ad sets to monitor</p>
-              <p className="text-[12px] text-slate-500">Monitoring starts <b>today ({today})</b> — results are tracked from this date at 3 / 7 / 15 / 30 days. Only registered ad sets appear in Scaling.</p>
+              <p className="font-bold text-slate-800">Register {isCampaign ? "campaigns" : "ad sets"} to monitor</p>
+              <p className="text-[12px] text-slate-500">
+                Monitoring starts <b>today ({today})</b> — results are tracked from this date at 3 / 7 / 15 / 30 days.
+                {isCampaign ? " Only registered campaigns appear in Scaling." : " Only registered ad sets appear in Testing."}
+              </p>
             </div>
             <div className="px-5 py-2 border-b border-slate-100 space-y-2">
               <div className="flex flex-wrap gap-2">
@@ -945,11 +1063,17 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
                     <span className="min-w-0">
                       <span className="block text-sm text-slate-800 truncate">{m.name}</span>
                       <span className="block text-[11px] text-slate-400 truncate">
-                        {m.campaignName} · {m.account.name} · {/active/i.test(m.status) ? "active" : m.status.toLowerCase()}
+                        {!isCampaign && <>{m.campaignName} · </>}{m.account.name} · {/active/i.test(m.status) ? "active" : m.status.toLowerCase()}
                         {(() => { const t = budgetTarget(m); return t.level === "adset" ? ` · budget ${peso(t.amount)}`
                           : t.level === "campaign" ? ` · CBO ${peso(t.amount)}` : " · no budget" })()}
-                        {m.createdTime && <> · created {ago(m.createdTime)}</>}
                       </span>
+                      {/* Ilang araw na — mahalaga ito kapag pumipili: bago ba o
+                          matagal nang tumatakbo? */}
+                      {m.createdTime && (
+                        <span className={`block text-[11px] font-semibold ${daysOld(m.createdTime) <= 7 ? "text-emerald-600" : daysOld(m.createdTime) <= 30 ? "text-slate-500" : "text-slate-400"}`}>
+                          {daysOld(m.createdTime)}d old · created {m.createdTime.slice(0, 10)}
+                        </span>
+                      )}
                     </span>
                   </label>
                 ))}
@@ -1046,19 +1170,21 @@ export function ScalingTracker({ accounts, onSignals, mode = "scaling" }: {
         </div>
       ) : (
         <>
-          {isScaling && registry.regs.length === 0 && registry.loaded && !registry.error && (
+          {view.length === 0 && registry.loaded && !registry.error && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-[13px] text-blue-800">
-              <b>Nothing registered yet.</b> Click <b>Register ad sets</b> to pick the ones you want to follow —
-              monitoring starts on the day you register, then you scale 10% or 20% from here and every step is counted.
-              The <b>Monitoring</b> tab scans everything automatically if you want the full picture.
+              <b>Nothing registered yet.</b> Click <b>Register {isCampaign ? "campaigns" : "ad sets"}</b> to pick what to follow —
+              monitoring starts the day you register.
+              {isCampaign
+                ? <> Scale 10% or 20% from here (it raises the campaign budget), and open <b>View ads</b> to see which creative is carrying the campaign.</>
+                : <> Use this for new tests; once one earns it, register the campaign in the <b>Scaling</b> tab.</>}
             </div>
           )}
           <Section title="Ready to Scale" icon={TrendingUp} color="text-emerald-600" accent="border-emerald-500" rows={scaleRows}
             empty={`None yet — needs net ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.`} />
           <Section title="Kill Suggestions" icon={Skull} color="text-rose-600" accent="border-rose-500" rows={killRows}
             empty="Nothing hits the kill rules right now." />
-          <Section title={isScaling ? "Monitoring / Watch" : "Watch"} icon={Eye} color="text-amber-600" accent="border-amber-400" rows={watchRows}
-            empty={isScaling ? "No registered ad set is waiting." : "Nothing within 10% of a threshold."} />
+          <Section title="Monitoring / Watch" icon={Eye} color="text-amber-600" accent="border-amber-400" rows={watchRows}
+            empty={`No registered ${unitLabel} is waiting.`} />
 
           {/* Fatigue — kada AD */}
           <div className="space-y-2">

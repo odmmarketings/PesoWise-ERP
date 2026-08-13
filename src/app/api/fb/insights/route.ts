@@ -115,17 +115,24 @@ export async function GET(req: NextRequest) {
     // ma-a-aggregate mula sa daily rows (dedup ng reach); sa fatigue check
     // (rich level=ad) iyon nakukuha nang tama mula kay Meta mismo.
     if (sp.get("series")) {
-      const ck = `series|adset|${accountId}|${from}|${to}|${tokenKey}`
+      // level=adset (Testing tab) o campaign (Scaling tab — dito ang CBO budget)
+      const lvl = sp.get("level") === "campaign" ? "campaign" : "adset"
+      const ck = `series|${lvl}|${accountId}|${from}|${to}|${tokenKey}`
       const c = cached(ck); if (c) return NextResponse.json({ success: true, rows: c, cached: true })
-      const fields = `adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,actions,action_values`
-      let url = `${accountId}/insights?level=adset&fields=${fields}&time_range=${tr}&time_increment=1${attr}&limit=500&access_token=${enc}`
+      const idF = lvl === "campaign" ? "campaign_id" : "adset_id"
+      const nameF = lvl === "campaign" ? "campaign_name" : "adset_name"
+      const parentF = lvl === "campaign" ? "" : ",campaign_id,campaign_name"
+      const fields = `${idF},${nameF}${parentF},spend,impressions,clicks,actions,action_values`
+      let url = `${accountId}/insights?level=${lvl}&fields=${fields}&time_range=${tr}&time_increment=1${attr}&limit=500&access_token=${enc}`
       const rows: any[] = []
       while (url) {
         const j = await fbGet(url)
         for (const r of j.data || []) {
           const a = parseActions(r.actions, r.action_values, undefined)
           rows.push({
-            id: r.adset_id, name: r.adset_name, campaignId: r.campaign_id, campaignName: r.campaign_name,
+            id: r[idF], name: r[nameF],
+            campaignId: lvl === "campaign" ? r.campaign_id : (r.campaign_id || ""),
+            campaignName: lvl === "campaign" ? r.campaign_name : (r.campaign_name || ""),
             date: r.date_start, spend: Number(r.spend || 0),
             impressions: Number(r.impressions || 0), clicks: Number(r.clicks || 0),
             purchases: a.purchases, purchaseValue: a.purchaseValue,
