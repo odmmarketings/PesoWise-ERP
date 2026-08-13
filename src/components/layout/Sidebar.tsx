@@ -9,7 +9,8 @@ import {
   Activity, Store, PieChart, ShoppingCart, FlaskConical,
   Shield, Calculator, Boxes, BookOpen, ChevronDown, Banknote, Droplet,
   ClipboardList, Factory, Warehouse, Undo2,
-  Megaphone, Link2, BarChart3, Award, Coins, CreditCard, Repeat
+  Megaphone, Link2, BarChart3, Award, Coins, CreditCard, Repeat,
+  Truck, Wrench, Headset, PhoneOutgoing, Clock3, ScrollText
 } from "lucide-react"
 import type { Plan } from "@/lib/types"
 import { useState, useEffect, useMemo } from "react"
@@ -80,6 +81,26 @@ export const businessNav: NavSection[] = [
     ],
   },
   {
+    section: "TELEMARKETING",
+    items: [
+      {
+        href: "/business/telemarketing", icon: Headset, label: "Telemarketing Ops",
+        children: [
+          // Ang parent row ay nag-e-expand lang, kaya sariling link ang dashboard.
+          { href: "/business/telemarketing", label: "Dashboard" },
+          { href: "/business/telemarketing/operations", label: "Sales Operations" },
+          { href: "/business/telemarketing/leads", label: "Customers / Leads" },
+          { href: "/business/telemarketing/performance", label: "Agent Performance" },
+          { href: "/business/telemarketing/hourly", label: "Hourly Sales" },
+        ],
+      },
+      { href: "/business/telemarketing/reports", icon: FileText, label: "Reports" },
+      { href: "/business/telemarketing/scripts", icon: ScrollText, label: "Scripts" },
+      { href: "/business/telemarketing/tools", icon: Wrench, label: "Tools & Integrations" },
+      { href: "/business/telemarketing/settings", icon: Settings, label: "Settings" },
+    ],
+  },
+  {
     section: "PROBLEM MANAGEMENT",
     items: [
       { href: "/business/board", icon: ClipboardList, label: "Problem Cost Solution" },
@@ -128,6 +149,24 @@ export const businessNav: NavSection[] = [
       },
       { href: "/business/logistics/rts", icon: Undo2, label: "RTS Items" },
       { href: "/business/logistics/settings", icon: Settings, label: "Settings" },
+    ],
+  },
+  {
+    section: "LOGISTICS & DELIVERY OPS",
+    items: [
+      {
+        href: "/business/delivery", icon: Truck, label: "Delivery Ops",
+        children: [
+          // Ang parent row ay nag-e-expand lang, kaya sariling link ang dashboard.
+          { href: "/business/delivery", label: "Logistics Dashboard" },
+          { href: "/business/delivery/operations", label: "Delivery Operations" },
+          { href: "/business/delivery/problematic", label: "Problematic / RTS Ops" },
+          { href: "/business/delivery/performance", label: "Agent Performance" },
+        ],
+      },
+      { href: "/business/delivery/scripts", icon: BookOpen, label: "Scripts" },
+      { href: "/business/delivery/tools", icon: Wrench, label: "Tools & Imports" },
+      { href: "/business/delivery/settings", icon: Settings, label: "Settings" },
     ],
   },
   {

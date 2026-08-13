@@ -278,6 +278,15 @@ function mapOrderRow(o: any) {
     retention_by: retentionByName,  // staff who encoded a retention order (when Retention tag present)
     reserve_date: reserveDate,      // date the Reserve tag was added (blank if not exposed)
     is_upsell: !!upsellTag,         // order has an Upsell tag → eligible for the upsell-delta calc
+    // Courier timeline (Delivery Ops detail screen) — bawat status change ng courier na may
+    // PH timestamp, pinakabago muna. `partner` ay nasa ROW_FIELDS na, kaya walang dagdag na cost.
+    status_history: extUpdates
+      .map(e => ({
+        status: PARTNER_STATUS_LABEL[String(e?.status || "")] || String(e?.status || ""),
+        at: toPHDateTime(String(e?.update_at || e?.updated_at || "")),
+      }))
+      .filter(h => h.status)
+      .sort((a, b) => b.at.localeCompare(a.at)),
   }
 }
 
