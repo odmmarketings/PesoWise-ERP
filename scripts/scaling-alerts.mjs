@@ -31,7 +31,9 @@ const phNow = new Date(Date.now() + PH_OFFSET)
 const phHour = phNow.getUTCHours()
 const dstr = (d) => d.toISOString().slice(0, 10)
 const today = dstr(phNow)
-const from30 = dstr(new Date(phNow.getTime() - 29 * 86400_000))
+// 31 araw, katulad ng tracker sa UI (Ago 14 2026) — para pareho ang haba ng
+// streak na nakikita mo sa Discord at sa Testing/Scaling na tab.
+const from31 = dstr(new Date(phNow.getTime() - 30 * 86400_000))
 const peso = (n) => "₱" + Math.round(n).toLocaleString("en-PH")
 const dec = (n) => (isFinite(n) ? n : 0).toFixed(2)
 
@@ -53,7 +55,7 @@ function parsed(actions = [], values = []) {
 // RTS rate kada page (returning+returned ÷ total) — kapareho ng tracker
 async function rtsRates(pages) {
   const out = new Map()
-  const fromTs = Math.floor(Date.parse(`${from30}T00:00:00+08:00`) / 1000)
+  const fromTs = Math.floor(Date.parse(`${from31}T00:00:00+08:00`) / 1000)
   const toTs = Math.floor(Date.now() / 1000)
   for (const pg of pages) {
     const SHOP = pg.pancake_page_id || pg.shop_id
@@ -88,7 +90,7 @@ for (const a of accounts) {
   const acct = actId(a.ad_account_id)
   const rate = rts.get(a.page_name) ?? 0
   const net = (v, s) => s > 0 ? (v * (1 - rate)) / (s * VAT) : 0
-  const tr = encodeURIComponent(JSON.stringify({ since: from30, until: today }))
+  const tr = encodeURIComponent(JSON.stringify({ since: from31, until: today }))
   let url = `https://graph.facebook.com/v21.0/${acct}/insights?level=adset&fields=adset_id,adset_name,spend,actions,action_values&time_range=${tr}&time_increment=1&limit=500&access_token=${encodeURIComponent(a.token)}`
   const byId = new Map()
   try {
@@ -106,7 +108,7 @@ for (const a of accounts) {
   } catch { continue }
 
   const dates = []
-  for (let i = 29; i >= 0; i--) dates.push(dstr(new Date(phNow.getTime() - i * 86400_000)))
+  for (let i = 30; i >= 0; i--) dates.push(dstr(new Date(phNow.getTime() - i * 86400_000)))
   for (const [, m] of byId) {
     const tD = m.days.get(today) || { spend: 0, purchases: 0, purchaseValue: 0 }
     const w3 = dates.slice(-3).reduce((s, d) => { const x = m.days.get(d); if (x) { s.spend += x.spend; s.value += x.purchaseValue } return s }, { spend: 0, value: 0 })

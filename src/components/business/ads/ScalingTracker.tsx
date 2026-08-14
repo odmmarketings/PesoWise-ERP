@@ -16,7 +16,7 @@ import { useScalingRegistry, type Registration, type ScaleEvent } from "@/lib/sc
 // MGA DESISYON NG MAY-ARI (Ago 14 2026):
 //   • Suggest-only ang default; may auto-pause na maaaring buksan kada rule.
 //   • NET ROAS ang batayan: value × (1 − RTS rate ng page) ÷ (spend × 1.12).
-//     Ang RTS rate ay kada PAGE sa parehong 30-araw na window (hindi kada ad
+//     Ang RTS rate ay kada PAGE sa parehong 31-araw na window (hindi kada ad
 //     set — walang per-adset RTS ang Pancake; hayagang sinasabi ito sa UI).
 //   • AD SET ang antas ng scale/kill; kada AD ang fatigue.
 //   • Ready to scale = net ROAS ≥ 3.9 sa 3+ magkakasunod na araw na may spend.
@@ -66,7 +66,7 @@ function budgetTarget(m: AdsetModel): { level: "adset" | "campaign" | "none"; id
   if (m.campaignBudget > 0) return { level: "campaign", id: m.campaignId, amount: m.campaignBudget }
   return { level: "none", id: "", amount: 0 }
 }
-type Windows = Record<"w3" | "w7" | "w15" | "w30", { spend: number; value: number; purchases: number; netRoas: number; grossRoas: number; cpp: number }>
+type Windows = Record<"w3" | "w7" | "w15" | "w31", { spend: number; value: number; purchases: number; netRoas: number; grossRoas: number; cpp: number }>
 type Signal = {
   adset: AdsetModel; windows: Windows
   kind: "scale" | "kill" | "watch"
@@ -219,7 +219,7 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
 
 // ── TATLONG TAB, ISANG ENGINE ────────────────────────────────────────────────
 //   mode="testing"    → AD SET level. Irehistro ang bagong testing ad set; mula
-//                       sa petsa ng rehistro, sinusundan ang 3/7/15/30-araw na
+//                       sa petsa ng rehistro, sinusundan ang 3/7/15/31-araw na
 //                       resulta hanggang umabot sa scale threshold.
 //   mode="scaling"    → CAMPAIGN level. Irehistro ang scaling campaign (1-1-40+
 //                       Andromeda). Dito ang Scale 10%/20% dahil sa CAMPAIGN
@@ -266,26 +266,27 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
   const liveRef = useRef(live);      liveRef.current = live
   const pagesRef = useRef(allPages); pagesRef.current = allPages
 
-  // ── 30-araw na saklaw (PHT — lokal na orasan ng user) ──────────────────────
+  // ── 31-ARAW NA SAKLAW (PHT — lokal na orasan ng user) ──────────────────────
+  // 31, hindi 30 (hiling ng may-ari, Ago 14 2026): iyon ang haba ng pinakamahabang
+  // buwan, kaya laging sakop ng gulong na ito ang buong kasalukuyang buwan.
   const today = dstr(new Date())
   const monthStart = useMemo(() => { const d = new Date(); return dstr(new Date(d.getFullYear(), d.getMonth(), 1)) }, [])
-  const from30 = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - 29)
+  const from31 = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30)   // 30 pabalik + ngayon = 31 araw
     const rolling = dstr(d)
-    // Sa Monitoring ay BUONG BUWAN ang tinitingnan, kaya kapag mas maaga ang
-    // unang araw ng buwan kaysa sa 30-araw na gulong (nangyayari sa ika-31),
-    // lawakan — kung hindi, kulang ng isang araw ang buwanang kabuuan.
+    // Panatag na sa 31 araw ang buong buwan, pero nananatili ang lawak na ito
+    // bilang panangga kung sakaling paikliin muli ang gulong balang-araw.
     return isMonitoring && monthStart < rolling ? monthStart : rolling
   }, [isMonitoring, monthStart])
   const last3From = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 2); return dstr(d) }, [])
   const prev7From = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 9); return dstr(d) }, [])
   const prev7To = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 3); return dstr(d) }, [])
 
-  const cacheKey = `${level}|${liveKey}|${from30}|${today}`
+  const cacheKey = `${level}|${liveKey}|${from31}|${today}`
 
   // ── SINISIMULAN MULA SA CACHE, HINDI SA SPINNER ────────────────────────────
   // Dating `useState(true)` ang `loading`, kaya kahit tumatama ang cache ay may
-  // isang pinta pa ring "Pulling 30 days…" bago tumakbo ang effect. Ang bumabalik
+  // isang pinta pa ring "Pulling 31 days…" bago tumakbo ang effect. Ang bumabalik
   // sa tab ay dapat WALANG makitang spinner. Isang beses lang ito binabasa (mount).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const boot = useMemo(() => freshCache(cacheKey), [])
@@ -377,7 +378,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       try {
         const j = await cachedJson(
           `/api/pancake/orders?api_key=${encodeURIComponent(pg.api_key)}&page_id=${encodeURIComponent(pg.pancake_page_id || pg.shop_id)}`
-          + `&from=${from30}&to=${today}&phase=fast${force ? "&nocache=1" : ""}`)
+          + `&from=${from31}&to=${today}&phase=fast${force ? "&nocache=1" : ""}`)
         const s = j.statusSales || {}
         const total = Number(s.total || 0)
         if (total > 0) rtsByPage.set(name, Math.min(0.9, (Number(s.returning || 0) + Number(s.returned || 0)) / total))
@@ -392,14 +393,14 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         const [series, meta, camp] = await Promise.all([
           // Ang daily series ay sa ANTAS ng tab: adset para sa Testing, campaign
           // para sa Scaling.
-          fetch(`/api/fb/insights?series=1&level=${level}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
-          fetch(`/api/fb/insights?rich=1&level=${level}&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
+          fetch(`/api/fb/insights?series=1&level=${level}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from31}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
+          fetch(`/api/fb/insights?rich=1&level=${level}&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from31}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
           // Sa Testing (adset level) kailangan pa rin ang campaign budget: 65% ng
           // ad sets nila ay CBO (nasukat Ago 14 2026). Sa Scaling, ang `meta` na
           // mismo ang campaign — kaya hindi na kailangan ng pangalawang hila.
           isCampaign
             ? Promise.resolve({ success: true, rows: [] })
-            : fetch(`/api/fb/insights?rich=1&level=campaign&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from30}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
+            : fetch(`/api/fb/insights?rich=1&level=campaign&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from31}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
         ])
         if (!series.success) { errs.push(`${a.name}: ${String(series.error || "series failed").slice(0, 80)}`); return }
         const metaById = new Map<string, any>((meta.rows || []).map((r: any) => [r.id, r]))
@@ -464,7 +465,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       ts: Date.now(), adsets: models, errors: errs, loadedAccounts: ok,
       fatigue: prev?.fatigue ?? [], fatigueTs: prev?.fatigueTs ?? 0,
     })
-  }, [from30, today, cacheKey])
+  }, [from31, today, cacheKey])
 
   // 3. Fatigue kada AD: huling 3 araw vs naunang 7 (frequency mula kay Meta mismo).
   const loadFatigue = useCallback(async (force = false) => {
@@ -563,7 +564,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     const now = new Date()
     const hour = now.getHours()
     const dates: string[] = []
-    for (let i = 29; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); dates.push(dstr(d)) }
+    for (let i = 30; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); dates.push(dstr(d)) }
 
     // Ang bawat tab ay nakikita LANG ang sariling antas — kung hindi, lalabas ang
     // mga campaign sa Testing at mga ad set sa Scaling.
@@ -586,10 +587,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         for (const dt of dates.slice(-n)) { const d = m.dailies.get(dt); if (d) { spend += d.spend; value += d.purchaseValue; purchases += d.purchases } }
         return { spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate), grossRoas: spend > 0 ? value / (spend * VAT) : 0, cpp: purchases > 0 ? spend / purchases : 0 }
       }
-      const windows: Windows = { w3: win(3), w7: win(7), w15: win(15), w30: win(30) }
+      const windows: Windows = { w3: win(3), w7: win(7), w15: win(15), w31: win(31) }
       // Ang inirehistro ay pinapakita KAHIT walang gastos pa — iyon ang sagot sa
       // "sinimulan kong i-monitor ngayon" (araw 0, wala pang datos).
-      if (windows.w30.spend === 0 && !reg) continue
+      if (windows.w31.spend === 0 && !reg) continue
 
       // Resulta MULA sa petsa ng rehistro (hindi rolling window) — ito ang
       // sinusukat mo kapag "sinimulan ko itong i-monitor ngayong araw".
@@ -752,7 +753,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     (t, i) => ({ scale: t.scale + i.scale, kill: t.kill + i.kill, watch: t.watch + i.watch }),
     { scale: 0, kill: 0, watch: 0 }), [accountItems])
 
-  // Filter + sort ayon sa 7-day net ROAS (ang default na 30-araw na sukat).
+  // Filter + sort ayon sa 7-day net ROAS (ang default na 31-araw na sukat).
   const view = useMemo(() => {
     const f = fAccount === "ALL" ? ownerScoped : ownerScoped.filter(s => s.adset.account.name === fAccount)
     return [...f].sort((a, b) => sortDir === "desc"
@@ -1005,7 +1006,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     try {
       const j = await fetch(`/api/fb/insights?rich=1&level=${lvl}&parent=${encodeURIComponent(cid)}`
         + `&token=${encodeURIComponent(s.adset.account.token)}&account_id=${encodeURIComponent(actId(s.adset.account.ad_account_id))}`
-        + `&from=${from30}&to=${today}`).then(r => r.json())
+        + `&from=${from31}&to=${today}`).then(r => r.json())
       if (!j.success) { setErrors(p => [...p, `${s.adset.name}: ${lvl}s — ${String(j.error).slice(0, 80)}`]); setAdsBusy(""); return }
       const rts = s.adset.rtsRate
       // Sapat na hugis para sa table na ito — hindi buong RawCampaign.
@@ -1134,7 +1135,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     d3: { spend: Math.round(s.windows.w3.spend), netRoas: +dec(s.windows.w3.netRoas), cpp: Math.round(s.windows.w3.cpp) },
     d7: { spend: Math.round(s.windows.w7.spend), netRoas: +dec(s.windows.w7.netRoas) },
     d15: { spend: Math.round(s.windows.w15.spend), netRoas: +dec(s.windows.w15.netRoas) },
-    d30: { spend: Math.round(s.windows.w30.spend), netRoas: +dec(s.windows.w30.netRoas) },
+    d31: { spend: Math.round(s.windows.w31.spend), netRoas: +dec(s.windows.w31.netRoas) },
   })
   async function askAi(mode: "row" | "brief" | "ask", s?: Signal) {
     const key = mode === "row" && s ? s.adset.id : mode
@@ -1181,8 +1182,16 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         )}
         <span className="text-[11px] text-slate-400">
           {!isCampaign && <>{s.adset.campaignName} · </>}{s.adset.account.name}
-          {s.adset.createdTime && <> · {daysOld(s.adset.createdTime)}d old</>}
         </span>
+        {/* EDAD — hiwalay at berde. Nakalubog dati sa kulay-abong linya ng
+            account at halos hindi mabasa; ito ang unang tinitingnan kapag
+            hinuhusgahan kung bago pa o matagal nang tumatakbo. */}
+        {s.adset.createdTime && (
+          <span title={`Created ${s.adset.createdTime.slice(0, 10)}`}
+            className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+            {daysOld(s.adset.createdTime)}d old
+          </span>
+        )}
         {(() => { const t = budgetTarget(s.adset); return t.level === "none" ? null : (
           <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
             {t.level === "campaign" ? "CBO budget" : "budget"} {peso(t.amount)}
@@ -1262,9 +1271,9 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       </div>
       <p className="text-[13px] text-slate-600">{s.reason}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 tabular-nums">
-        {(["w3", "w7", "w15", "w30"] as const).map((w, i) => {
+        {(["w3", "w7", "w15", "w31"] as const).map((w, i) => {
           const win = s.windows[w]
-          const prev = i < 3 ? s.windows[(["w7", "w15", "w30"] as const)[i]] : null
+          const prev = i < 3 ? s.windows[(["w7", "w15", "w31"] as const)[i]] : null
           const up = prev ? win.netRoas >= prev.netRoas : true
           return (
             <span key={w}>
@@ -1322,7 +1331,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
           {adsBusy === key ? (
             <p className="text-[12px] text-slate-400 p-3 flex items-center gap-2"><RefreshCw className="w-3 h-3 animate-spin" /> Pulling {lvl === "adset" ? "ad sets" : "ads"}…</p>
           ) : rows.length === 0 ? (
-            <p className="text-[12px] text-slate-400 italic p-3">No {lvl === "adset" ? "ad sets" : "ads"} with data in the last 30 days.</p>
+            <p className="text-[12px] text-slate-400 italic p-3">No {lvl === "adset" ? "ad sets" : "ads"} with data in the last 31 days.</p>
           ) : (
             <div className="overflow-x-auto scrollbar-dark">
               <table className="w-full text-[11px] min-w-[620px]">
@@ -1421,7 +1430,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
               ? <>Every <b>campaign</b> with spend this month — nothing to register · month-to-date results · <b>Kill</b> is the only action</>
               : isCampaign
                 ? <>Registered <b>campaigns</b> · scale 10% / 20% on the campaign budget · open <b>View ads</b> for per-creative results</>
-                : <>Registered <b>ad sets</b> · tracked from the day you register at 3 / 7 / 15 / 30 days</>}
+                : <>Registered <b>ad sets</b> · tracked from the day you register at 3 / 7 / 15 / 31 days</>}
           </p>
           <p className="text-[11px] text-slate-400">Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · {unitLabel} level</p>
           {/* Legend — ang tatlong bilang sa account picker ay nasa ganitong pagkakasunod */}
@@ -1552,7 +1561,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
             <div className="px-5 py-3.5 border-b border-slate-200">
               <p className="font-bold text-slate-800">Register {isCampaign ? "campaigns" : "ad sets"} to monitor</p>
               <p className="text-[12px] text-slate-500">
-                Monitoring starts <b>today ({today})</b> — results are tracked from this date at 3 / 7 / 15 / 30 days.
+                Monitoring starts <b>today ({today})</b> — results are tracked from this date at 3 / 7 / 15 / 31 days.
                 {isCampaign ? " Only registered campaigns appear in Scaling." : " Only registered ad sets appear in Testing."}
               </p>
             </div>
@@ -1597,8 +1606,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
                       {/* Ilang araw na — mahalaga ito kapag pumipili: bago ba o
                           matagal nang tumatakbo? */}
                       {m.createdTime && (
-                        <span className={`block text-[11px] font-semibold ${daysOld(m.createdTime) <= 7 ? "text-emerald-600" : daysOld(m.createdTime) <= 30 ? "text-slate-500" : "text-slate-400"}`}>
-                          {daysOld(m.createdTime)}d old · created {m.createdTime.slice(0, 10)}
+                        <span className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            {daysOld(m.createdTime)}d old
+                          </span>
+                          <span className="text-[11px] text-slate-400">created {m.createdTime.slice(0, 10)}</span>
                         </span>
                       )}
                     </span>
@@ -1709,7 +1721,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         <div className="py-10 space-y-3">
           <p className="text-sm text-slate-400 flex items-center gap-2 justify-center">
             <RefreshCw className="w-4 h-4 animate-spin" />
-            Pulling {isMonitoring ? "this month's" : "30 days of"} {isCampaign ? "campaign" : "ad-set"} data — {progress.done}/{progress.total} accounts
+            Pulling {isMonitoring ? "this month's" : "31 days of"} {isCampaign ? "campaign" : "ad-set"} data — {progress.done}/{progress.total} accounts
           </p>
           <div className="mx-auto w-64 h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div className="h-full bg-blue-500 rounded-full transition-[width] duration-300"
