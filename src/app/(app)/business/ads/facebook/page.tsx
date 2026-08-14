@@ -1,5 +1,5 @@
 "use client"
-import { useState, useMemo, useEffect, useCallback } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import {
   Megaphone, RefreshCw, Wallet, TrendingUp, ShoppingCart, Target, MessageSquare,
   LayoutDashboard, CalendarDays, Settings2, ChevronDown, Search, Play, Pause, Link2,
@@ -86,6 +86,22 @@ type Obj = "All" | "Conversions" | "Messaging" | "Other"
 // Lets us tell a real refresh apart from leaving the section and coming back.
 let fbTabMounted = false
 
+// ── CACHE NG DASHBOARD / DAILY AD SPEND ─────────────────────────────────────
+// Tatlong request kada ad account (rich + trend + byDate) — 63 sa 21 account.
+// Tumatakbo ito sa BAWAT pagpasok sa pahina, kaya ang paglabas at pagbalik sa
+// Facebook Ads ay laging bagong 63-request na hila. Kada ACCOUNT ang yunit
+// (tulad ng Ads Manager) kaya ang bahaging nahila na ay hindi na inuulit,
+// at pinagdurugtong lang sa pagpapakita. Ang Refresh ang pumipilit.
+type DashPart = {
+  rows: Row[]
+  trend: { date: string; spend: number; sales: number }[]
+  daily: { date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]
+  spendByDate: Record<string, number>
+}
+const DASH_CACHE = new Map<string, { ts: number; part: DashPart }>()
+const DASH_INFLIGHT = new Map<string, Promise<DashPart>>()
+const DASH_TTL = 5 * 60_000
+
 export default function FacebookAdsPage() {
   const fb = useFBAccounts()
   const pages = useActivePages()
@@ -108,11 +124,33 @@ export default function FacebookAdsPage() {
   const [from, setFrom] = useState(defaultDateA())
   const [to, setTo] = useState(defaultDateB())
 
-  const [rows, setRows] = useState<Row[]>([])
+  // Sariwa pa ba ang huling hila? Ilagay agad — kung hindi, isang pintang
+  // blangkong dashboard (puro zero) ang makikita bago tumakbo ang effect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const dashBoot = useMemo(() => {
+    const now = Date.now()
+    const parts = fb.accounts
+      .filter(a => !a.archived && a.ad_account_id && a.token)
+      .map(a => DASH_CACHE.get(`${a.id}|${from}|${to}`))
+      .filter(h => !!h && now - h.ts < DASH_TTL)
+      .map(h => h!.part)
+    const trendByDate: Record<string, { spend: number; sales: number }> = {}
+    for (const p of parts) for (const d of p.trend) {
+      trendByDate[d.date] = trendByDate[d.date] || { spend: 0, sales: 0 }
+      trendByDate[d.date].spend += d.spend; trendByDate[d.date].sales += d.sales
+    }
+    return {
+      rows: parts.flatMap(p => p.rows),
+      trend: Object.entries(trendByDate).map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date)),
+      daily: parts.flatMap(p => p.daily).sort((a, b) => a.date.localeCompare(b.date) || a.accountName.localeCompare(b.accountName)),
+    }
+  }, [])
+
+  const [rows, setRows] = useState<Row[]>(dashBoot.rows)
   const [scalingCount, setScalingCount] = useState(0)
   const [testingCount, setTestingCount] = useState(0)
-  const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>([])
-  const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>([])
+  const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>(dashBoot.trend)
+  const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>(dashBoot.daily)
   const [loading, setLoading] = useState(false)
 
   const pageIdByName = useMemo(() => Object.fromEntries(pages.map(p => [p.name, p.id])), [pages])
@@ -120,39 +158,74 @@ export default function FacebookAdsPage() {
   // account that's spending but marked Paused / In-review isn't dropped from the totals.
   const dataAccounts = useMemo(() => fb.accounts.filter(a => !a.archived && a.ad_account_id && a.token), [fb.accounts])
 
-  const load = useCallback(async () => {
-    if (dataAccounts.length === 0) { setRows([]); setTrend([]); setDaily([]); return }
-    setLoading(true)
-    const allRows: Row[] = [], trendByDate: Record<string, { spend: number; sales: number }> = {}, dailyRows: typeof daily = []
-    const sums: Record<string, Record<string, number>> = {}
-    await mapLimit(dataAccounts, 4, async (a: FBAccount) => {
-      const q = `token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`
-      try {
-        const [rc, tr, db] = await Promise.all([
-          fetch(`/api/fb/insights?rich=1&${q}`).then(r => r.json()),
-          fetch(`/api/fb/insights?trend=1&${q}`).then(r => r.json()),
-          fetch(`/api/fb/insights?${q}`).then(r => r.json()),
-        ])
-        const acctBudget = (rc.campaigns || []).filter((c: any) => /active/i.test(c.status)).reduce((s: number, c: any) => s + (c.budget || 0), 0)
-        if (rc.success) for (const c of rc.campaigns) allRows.push(toRow(c, a.id, a.name, a.owner))
-        if (tr.success) for (const d of tr.trend) { trendByDate[d.date] = trendByDate[d.date] || { spend: 0, sales: 0 }; trendByDate[d.date].spend += d.spend; trendByDate[d.date].sales += d.sales }
-        if (db.success) {
-          for (const [d, amt] of Object.entries(db.byDate || {})) {
-            dailyRows.push({ date: d, accountName: a.name, owner: a.owner, status: a.status, budget: acctBudget, spend: amt as number })
-            const pid = pageIdByName[a.page_name]; if (pid) { sums[pid] = sums[pid] || {}; sums[pid][d] = (sums[pid][d] || 0) + (amt as number) }
-          }
-        }
-      } catch {}
-    })
+  // Pinagdurugtong ang bawat naka-cache na account tungo sa apat na hugis na
+  // ginagamit ng Dashboard at Daily Ad Spend.
+  const applyDash = useCallback((accts: FBAccount[]) => {
+    const allRows: Row[] = [], trendByDate: Record<string, { spend: number; sales: number }> = {}, dailyRows: DashPart["daily"] = []
+    for (const a of accts) {
+      const part = DASH_CACHE.get(`${a.id}|${from}|${to}`)?.part
+      if (!part) continue
+      allRows.push(...part.rows)
+      for (const d of part.trend) { trendByDate[d.date] = trendByDate[d.date] || { spend: 0, sales: 0 }; trendByDate[d.date].spend += d.spend; trendByDate[d.date].sales += d.sales }
+      dailyRows.push(...part.daily)
+    }
     setRows(allRows)
     setTrend(Object.entries(trendByDate).map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date)))
     setDaily(dailyRows.sort((a, b) => a.date.localeCompare(b.date) || a.accountName.localeCompare(b.accountName)))
+  }, [from, to])
+
+  const load = useCallback(async (fresh = false) => {
+    if (dataAccounts.length === 0) { setRows([]); setTrend([]); setDaily([]); return }
+    const now = Date.now()
+    const key = (a: FBAccount) => `${a.id}|${from}|${to}`
+    const missing = fresh ? dataAccounts
+      : dataAccounts.filter(a => { const h = DASH_CACHE.get(key(a)); return !(h && now - h.ts < DASH_TTL) })
+    if (missing.length === 0) { applyDash(dataAccounts); setLoading(false); return }
+
+    applyDash(dataAccounts)      // ipakita agad ang alam na natin
+    setLoading(true)
+    const sums: Record<string, Record<string, number>> = {}
+    await mapLimit(missing, 4, async (a: FBAccount) => {
+      const k = key(a)
+      if (!fresh) {
+        const running = DASH_INFLIGHT.get(k)
+        if (running) { await running.catch(() => null); applyDash(dataAccounts); return }
+      }
+      const run = (async (): Promise<DashPart> => {
+        const q = `token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`
+        const [rc, tr, db] = await Promise.all([
+          fetch(`/api/fb/insights?rich=1&${q}${fresh ? "&nocache=1" : ""}`).then(r => r.json()),
+          fetch(`/api/fb/insights?trend=1&${q}${fresh ? "&nocache=1" : ""}`).then(r => r.json()),
+          fetch(`/api/fb/insights?${q}${fresh ? "&nocache=1" : ""}`).then(r => r.json()),
+        ])
+        const acctBudget = (rc.campaigns || []).filter((c: any) => /active/i.test(c.status)).reduce((s: number, c: any) => s + (c.budget || 0), 0)
+        const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {} }
+        if (rc.success) for (const c of rc.campaigns) part.rows.push(toRow(c, a.id, a.name, a.owner))
+        if (tr.success) for (const d of tr.trend) part.trend.push({ date: d.date, spend: d.spend, sales: d.sales })
+        if (db.success) for (const [d, amt] of Object.entries(db.byDate || {})) {
+          part.daily.push({ date: d, accountName: a.name, owner: a.owner, status: a.status, budget: acctBudget, spend: amt as number })
+          part.spendByDate[d] = amt as number
+        }
+        DASH_CACHE.set(k, { ts: Date.now(), part })
+        return part
+      })()
+      DASH_INFLIGHT.set(k, run)
+      try {
+        const part = await run
+        // Ang adspent sync ay para lang sa BAGONG hinilang account — ang muling
+        // pagsusulat ng parehong halaga kada pagbukas ng pahina ay basura.
+        const pid = pageIdByName[a.page_name]
+        if (pid) for (const [d, amt] of Object.entries(part.spendByDate)) { sums[pid] = sums[pid] || {}; sums[pid][d] = (sums[pid][d] || 0) + amt }
+      } catch { /* laktawan ang account na bumigo */ }
+      finally { DASH_INFLIGHT.delete(k); applyDash(dataAccounts) }
+    })
+    applyDash(dataAccounts)
     // Auto-sync adspent (summed per page) → ROAS / Income Statement
     const entries: { pageId: string; date: string; value: number }[] = []
     for (const [pid, byDate] of Object.entries(sums)) for (const [d, val] of Object.entries(byDate)) entries.push({ pageId: pid, date: d, value: val })
-    adspentStore.setMany(entries)
+    if (entries.length > 0) adspentStore.setMany(entries)
     setLoading(false)
-  }, [dataAccounts, from, to, pageIdByName, adspentStore])
+  }, [dataAccounts, from, to, pageIdByName, adspentStore, applyDash])
 
   useEffect(() => { load() /* eslint-disable-next-line */ }, [fb.accounts.length, from, to])
 
@@ -164,7 +237,7 @@ export default function FacebookAdsPage() {
         <div className="flex items-center gap-2">
           <DateRangePicker a={from} b={to} variant="header"
             onApply={(a, b) => { setFrom(a || defaultDateA()); setTo(b || defaultDateB()) }} placeholder="Today" />
-          <button onClick={load} className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
+          <button onClick={() => load(true)} className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
         </div>
       </div>
 
@@ -775,11 +848,17 @@ const PREVIEW_FORMATS = [
 // ── CACHE NG ADS MANAGER ────────────────────────────────────────────────────
 // Ang tab na ito ay ini-UNMOUNT kapag lumipat ka (ternary sa itaas), kaya ang
 // pagbalik ay dating bagong hila ng bawat ad account — "Loading…" kahit kanina
-// mo lang binuksan (iniulat Ago 14 2026). Kaparehong lunas ng ScalingTracker:
-// itinatabi ang resulta AT ang tumatakbong promise, kada (level, accounts,
-// petsa). Ang pumapasok na mount habang may hilang tumatakbo ay SUMASAKAY —
-// hindi nagsisimula ng pangalawa, kaya hindi na naaabot ang FB #17 rate limit.
-// Ang `load(true)` (pagkatapos ng tunay na pagbabago sa Meta) ang naglilinis.
+// mo lang binuksan (iniulat Ago 14 2026).
+//
+// ANG YUNIT AY ISANG AD ACCOUNT, hindi ang napiling hanay. Ito ang buong punto:
+// ang mga row ng isang account ay SUBSET ng "All ad accounts", kaya kapag
+// nahila na ang All, LIBRE na ang pagpili ng kahit aling account at ang
+// pag-filter ng owner — pinagdurugtong lang natin ang mga entry na hawak na.
+// Kung naka-key ito sa buong hanay (unang bersyon), bawat pagpindot sa dropdown
+// ay bagong key at bagong 21-account na hila para sa datos na nasa kamay na.
+// `MGR_INFLIGHT` = sumasakay ang pangalawang humihingi sa tumatakbo nang hila,
+// kaya hindi naaabot ang FB #17 rate limit. `load(true)` (pagkatapos ng tunay
+// na pagbabago sa Meta) ang naglilinis ng LAHAT.
 type MgrCached = { ts: number; rows: any[] }
 const MGR_CACHE = new Map<string, MgrCached>()
 const MGR_INFLIGHT = new Map<string, Promise<any[]>>()
@@ -809,8 +888,11 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
   // (Sa mount, "campaign" palagi ang `level`.)
   const [rows, setRows] = useState<any[]>(() => {
     const accts = isAll ? visibleAccounts : (account ? [account] : [])
-    const hit = MGR_CACHE.get(`${level}|${from}|${to}|${accts.map(a => a.id).join(",")}`)
-    return hit && Date.now() - hit.ts < MGR_TTL ? hit.rows : []
+    const now = Date.now()
+    return accts.flatMap(a => {
+      const h = MGR_CACHE.get(`${level}|${from}|${to}|${a.id}`)
+      return h && now - h.ts < MGR_TTL ? h.rows : []
+    })
   })
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState("")
@@ -842,45 +924,59 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
   // Lazy-load ONLY the level being viewed (keeps API calls low → avoids FB #17 rate limits).
   // Cross-level filtering uses each row's own campaignId / adsetId, so other levels needn't load.
   // Uses the 5-min server cache by default; pass fresh=true after an edit to force a refetch.
-  const mgrKey = useMemo(() => {
-    const accts = isAll ? visibleAccounts : (account ? [account] : [])
-    return `${level}|${from}|${to}|${accts.map(a => a.id).join(",")}`
-  }, [isAll, visibleAccounts, account, level, from, to])
+  // ⚠ KADA AD ACCOUNT ANG CACHE, HINDI KADA HANAY NG ACCOUNT. Ang unang bersyon
+  // ay naka-key sa buong set (`level|from|to|LAHAT ng id`), kaya bawat pagpili ng
+  // ibang account — at bawat pagpalit ng Owner filter — ay BAGONG key at buong
+  // bagong hila, kahit nahila na ang datos na iyon kanina bilang bahagi ng "All
+  // ad accounts". Ang mga row ng isang account ay SUBSET lang naman ng "All".
+  // Kaya kada account ang entry ngayon at pinagdurugtong sa pagpapakita: ang
+  // pagpili ng account, pag-filter ng owner, at pagbalik sa All ay ZERO request.
+  const accKey = useCallback((a: FBAccount) => `${level}|${from}|${to}|${a.id}`, [level, from, to])
+  // Aling view ang pinapakita ngayon — para hindi maisulat ng natapos na hila
+  // ang resulta nito sa ibang account na pinili mo na habang naghihintay.
+  const viewSigRef = useRef("")
 
   const load = useCallback(async (fresh = false) => {
     const accts = isAll ? visibleAccounts : (account ? [account] : [])
-    if (accts.length === 0) { setRows([]); return }
+    if (accts.length === 0) { setRows([]); setLoading(false); return }
+    const sig = `${level}|${from}|${to}|${accts.map(a => a.id).join(",")}`
+    viewSigRef.current = sig
+    const assemble = () => accts.flatMap(a => MGR_CACHE.get(accKey(a))?.rows ?? [])
+    const show = () => { if (viewSigRef.current === sig) setRows(assemble()) }
+
     if (fresh) {
       // Binago natin ang Meta — wala nang mapagkakatiwalaan ANG KAHIT ALING
       // antas (ang pag-pause ng campaign ay nagpapabago sa ad sets nito).
       MGR_CACHE.clear()
-    } else {
-      const hit = MGR_CACHE.get(mgrKey)
-      if (hit && Date.now() - hit.ts < MGR_TTL) { setRows(hit.rows); setLoading(false); return }
-      const running = MGR_INFLIGHT.get(mgrKey)
-      if (running) {
-        setLoading(true)
-        const shared = await running.catch(() => null)
-        if (shared) setRows(shared)
-        setLoading(false)
-        return
-      }
     }
+    const now = Date.now()
+    const missing = fresh ? accts
+      : accts.filter(a => { const h = MGR_CACHE.get(accKey(a)); return !(h && now - h.ts < MGR_TTL) })
+    if (missing.length === 0) { show(); setLoading(false); return }
+
+    // May naka-cache nang bahagi? Ipakita agad — huwag itago ang alam na natin
+    // sa likod ng spinner habang hinihintay ang natitira.
+    show()
     setLoading(true)
-    const run = (async () => {
-      const out: any[] = []
-      await mapLimit(accts, 3, async (a: FBAccount) => {
-        try {
-          const j = await fetch(`/api/fb/insights?rich=1${fresh ? "&nocache=1" : ""}&level=${level}&parent=${encodeURIComponent(actId(a.ad_account_id))}&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`).then(r => r.json())
-          if (j.success) for (const r of j.rows) out.push({ ...r, __accId: a.id })
-        } catch {}
-      })
-      MGR_CACHE.set(mgrKey, { ts: Date.now(), rows: out })
-      return out
-    })()
-    MGR_INFLIGHT.set(mgrKey, run)
-    try { setRows(await run) } catch {} finally { MGR_INFLIGHT.delete(mgrKey); setLoading(false) }
-  }, [isAll, account, visibleAccounts, level, from, to, mgrKey])
+    await mapLimit(missing, 3, async (a: FBAccount) => {
+      const key = accKey(a)
+      if (!fresh) {
+        const running = MGR_INFLIGHT.get(key)
+        if (running) { await running.catch(() => null); show(); return }
+      }
+      const run = (async () => {
+        const j = await fetch(`/api/fb/insights?rich=1${fresh ? "&nocache=1" : ""}&level=${level}&parent=${encodeURIComponent(actId(a.ad_account_id))}&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`).then(r => r.json())
+        const rows = j.success ? (j.rows || []).map((r: any) => ({ ...r, __accId: a.id })) : []
+        MGR_CACHE.set(key, { ts: Date.now(), rows })
+        return rows
+      })()
+      MGR_INFLIGHT.set(key, run)
+      try { await run } catch { /* laktawan ang account na bumigo */ }
+      finally { MGR_INFLIGHT.delete(key); show() }   // dumadagdag ang row habang dumarating
+    })
+    show()
+    if (viewSigRef.current === sig) setLoading(false)
+  }, [isAll, account, visibleAccounts, level, from, to, accKey])
   useEffect(() => { load() }, [load])
   // Account change resets the view + all selections.
   useEffect(() => { setLevel("campaign"); setSelCampaigns(new Set()); setSelAdsets(new Set()); setSelAds(new Set()) }, [accId])
