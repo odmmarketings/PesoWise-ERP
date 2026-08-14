@@ -1,5 +1,5 @@
 "use client"
-import { useState, useMemo, useEffect, useCallback, useRef } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react"
 import {
   Megaphone, RefreshCw, Wallet, TrendingUp, ShoppingCart, Target, MessageSquare,
   LayoutDashboard, CalendarDays, Settings2, ChevronDown, Search, Play, Pause, Link2,
@@ -1626,7 +1626,7 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
 
       <AutomatedRules accounts={mgrAccounts} currentAccountId={isAll ? "" : accId} level={level}
         selectedRows={levelRows.filter(r => curSel.has(r.id)).map(r => ({ id: r.id, accId: r.accountId }))}
-        view={rulesView} setView={setRulesView} notify={flash} />
+        view={rulesView} setView={setRulesView} notify={flash} from={from} to={to} />
     </div>
   )
 }
@@ -1689,9 +1689,17 @@ const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"]   // FB days: 0 = Sunday
 type RuleCond = { metric: string; op: string; v1: string; v2: string }
 const blankCond = (): RuleCond => ({ metric: "cost_per", op: "GREATER_THAN", v1: "", v2: "" })
 
-function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view, setView, notify }: {
+// Mga object na mapipili sa scope panel ng isang rule (campaign/adset/ad kada
+// ad account). Module-level tulad ng iba — ang pagbukas-sara ng listahan ng
+// rules ay hindi dapat maghila ulit.
+type ScopeObj = { id: string; name: string; status: string }
+const RULE_OBJ_CACHE = new Map<string, { ts: number; rows: ScopeObj[] }>()
+const RULE_OBJ_TTL = 5 * 60_000
+
+function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view, setView, notify, from, to }: {
   accounts: FBAccount[]; currentAccountId: string; level: MgrLevel; selectedRows: { id: string; accId: string }[]
   view: RulesView; setView: (v: RulesView) => void; notify: (m: string) => void
+  from: string; to: string
 }) {
   const selectedIds = selectedRows.map(r => r.id)
   // ── Create-form state ──
@@ -1730,6 +1738,14 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
   // ── Apply-existing state ──
   const [applySel, setApplySel] = useState("")
   const [applying, setApplying] = useState(false)
+  // ── Scope panel: alin ang nakatakda sa rule na ito (tulad ng Ads Manager) ──
+  const [scopeOpen, setScopeOpen] = useState("")            // rule id na bukas
+  const [scopeRows, setScopeRows] = useState<ScopeObj[]>([])
+  const [scopeSel, setScopeSel] = useState<Set<string>>(new Set())
+  const [scopeQ, setScopeQ] = useState("")
+  const [scopeBusy, setScopeBusy] = useState(false)
+  const [scopeSaving, setScopeSaving] = useState(false)
+  const [scopeErr, setScopeErr] = useState("")
 
   const acct = accounts.find(a => a.id === acctId) || accounts.find(a => a.id === currentAccountId) || accounts[0] || null
   const entity = editing ? (editEntity || "CAMPAIGN") : (applyTo === "SELECTED" ? LEVEL_ENTITY[level] : applyTo)
@@ -1917,6 +1933,12 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
   // Apply an existing rule to the checked rows: merge their ids into the rule's <entity>.id scope filter.
   // Only ids from the rule's OWN ad account can be added (FB rules are per-account).
   const entityOfRule = (r: FBRule) => String((r.evaluation_spec?.filters || []).find((f: any) => f.field === "entity_type")?.value || "")
+  /** Ang mga id na SAKOP ng rule ngayon. Blangko = buong ad account. */
+  const scopedIdsOf = (r: FBRule): string[] => {
+    const f = (r.evaluation_spec?.filters || []).find((x: any) => x.field === "id" || /\.id$/.test(x.field))
+    if (!f) return []
+    return (Array.isArray(f.value) ? f.value : [f.value]).map(String)
+  }
   const applicableIds = (r: FBRule) => selectedRows.filter(sr => sr.accId === r.__accId).map(sr => sr.id)
   const ruleHasIdScope = (r: FBRule) => (r.evaluation_spec?.filters || []).some((f: any) => f.field === "id" || /\.id$/.test(f.field))
   async function applyRule() {
@@ -1939,6 +1961,65 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
       notify(`Rule "${r.name}" applied to ${ids.length} ${ENTITY_WORD[ent][ids.length === 1 ? 0 : 1]}.`)
     } catch (e: any) { setErr(e?.message || "Failed to apply the rule") }
     setApplying(false)
+  }
+
+  // ── Scope panel ────────────────────────────────────────────────────────────
+  // Ang hinihiling: pindutin ang rule, makita kung ANO ang naka-set dito — naka-
+  // check — at mabago iyon. Ang mga naka-check ay ang id filter ng rule; ang mga
+  // hindi ay ang natitirang object ng parehong antas sa parehong ad account.
+  async function toggleScope(r: FBRule) {
+    if (scopeOpen === r.id) { setScopeOpen(""); return }
+    const ent = entityOfRule(r) || "CAMPAIGN"
+    const lvl = ent === "ADSET" ? "adset" : ent === "AD" ? "ad" : "campaign"
+    const a = accounts.find(x => x.id === r.__accId)
+    setScopeOpen(r.id); setScopeQ(""); setScopeErr("")
+    setScopeSel(new Set(scopedIdsOf(r)))
+    if (!a) { setScopeRows([]); setScopeErr("This rule's ad account isn't connected here."); return }
+
+    const key = `${a.id}|${lvl}`
+    const hit = RULE_OBJ_CACHE.get(key)
+    if (hit && Date.now() - hit.ts < RULE_OBJ_TTL) { setScopeRows(hit.rows); return }
+    setScopeRows([]); setScopeBusy(true)
+    try {
+      const acct = actId(a.ad_account_id)
+      const j = await fetch(`/api/fb/insights?rich=1&level=${lvl}&parent=${encodeURIComponent(acct)}`
+        + `&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(acct)}&from=${from}&to=${to}`).then(x => x.json())
+      if (!j.success) throw new Error(j.error || "Failed to load")
+      const rows: ScopeObj[] = (j.rows || []).map((x: any) => ({ id: String(x.id), name: x.name || x.id, status: x.status || "—" }))
+        .sort((x: ScopeObj, y: ScopeObj) => x.name.localeCompare(y.name))
+      RULE_OBJ_CACHE.set(key, { ts: Date.now(), rows })
+      setScopeRows(rows)
+    } catch (e: any) { setScopeErr(e?.message || "Failed to load") }
+    setScopeBusy(false)
+  }
+
+  /** Isinusulat ang bagong saklaw sa rule. `null` = alisin ang id filter (buong account). */
+  async function saveScope(r: FBRule, ids: string[] | null) {
+    const token = accounts.find(a => a.id === r.__accId)?.token || ""
+    if (!token) { setScopeErr("No token for this rule's ad account."); return }
+    const ent = entityOfRule(r) || "CAMPAIGN"
+    const idField = `${ent.toLowerCase()}.id`
+    // Kopya — huwag baguhin ang nasa listahan bago pa sumagot si Meta.
+    const fs: any[] = JSON.parse(JSON.stringify(r.evaluation_spec?.filters || []))
+    const rest = fs.filter(f => f.field !== "id" && !/\.id$/.test(f.field))
+    const next = ids === null ? rest : [...rest, { field: idField, value: ids, operator: "IN" }]
+    setScopeSaving(true); setScopeErr("")
+    try {
+      const j = await post({
+        token, action: "rule_update", id: r.id,
+        rule: { evaluation_spec: { ...(r.evaluation_spec || {}), evaluation_type: r.evaluation_spec?.evaluation_type || "SCHEDULE", filters: next } },
+      })
+      if (!j.success) throw new Error(j.error || "Failed")
+      // Sa listahan din isinusulat para hindi na kailangang mag-refresh nang buo.
+      setRules(rs => rs.map(x => x.id === r.id
+        ? { ...x, evaluation_spec: { ...(x.evaluation_spec || {}), filters: next } } : x))
+      const w = ENTITY_WORD[ent] || ENTITY_WORD.CAMPAIGN
+      notify(ids === null
+        ? `"${r.name}" now applies to all active ${w[1]}.`
+        : `"${r.name}" is now set on ${ids.length} ${w[ids.length === 1 ? 0 : 1]}.`)
+      setScopeOpen("")
+    } catch (e: any) { setScopeErr(e?.message || "Failed to save") }
+    setScopeSaving(false)
   }
 
   // Human-readable summary of a fetched rule (manage list).
@@ -2316,25 +2397,40 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                     {rules.map(r => {
                       const h = humanRule(r)
                       const on = r.status === "ENABLED"
+                      const scoped = scopedIdsOf(r)
+                      const open = scopeOpen === r.id
+                      const entW = ENTITY_WORD[h.ent] || ENTITY_WORD.CAMPAIGN
                       return (
-                        <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/60">
-                          <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px]"><span className="block truncate" title={r.name}>{r.name}</span>
-                            {r.created_time && <span className="text-[10px] text-slate-400">{fmtD(r.created_time)}</span>}</td>
+                        <Fragment key={r.id}>
+                        <tr onClick={() => toggleScope(r)}
+                          title={`Show what this rule is set on`}
+                          className={`border-b border-slate-100 cursor-pointer ${open ? "bg-blue-50/60" : "hover:bg-slate-50/60"}`}>
+                          <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px]">
+                            <span className="flex items-center gap-1.5">
+                              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+                              <span className="block truncate" title={r.name}>{r.name}</span>
+                            </span>
+                            {r.created_time && <span className="text-[10px] text-slate-400 pl-5">{fmtD(r.created_time)}</span>}</td>
                           {!currentAccountId && <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.__accName}</td>}
-                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap capitalize">{ENTITY_WORD[h.ent]?.[1] || h.ent.toLowerCase() || "—"}</td>
+                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                            {/* Ang bilang ang unang tanong: "ilan ba ang naka-set dito?" */}
+                            {scoped.length > 0
+                              ? <span className="text-blue-700 font-semibold">{scoped.length} {entW[scoped.length === 1 ? 0 : 1]}</span>
+                              : <span className="capitalize">All active {entW[1]}</span>}
+                          </td>
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{h.actionL || "—"}</td>
                           <td className="px-4 py-3 text-slate-600 max-w-[260px]">
                             <span className="block truncate" title={h.condL.join(" · ")}>{h.condL.join(" · ") || "—"}</span>
                             {h.time && <span className="text-[10px] text-slate-400">{h.time}</span>}
                           </td>
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{h.schedL || "—"}</td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                             <button onClick={() => mutateRule(r, "rule_status", on ? "DISABLED" : "ENABLED")} disabled={ruleBusy === r.id} title={on ? "Disable rule" : "Enable rule"}
                               className={`relative w-9 h-5 rounded-full transition-colors ${on ? "bg-emerald-500" : "bg-slate-300"} ${ruleBusy === r.id ? "opacity-60" : ""}`}>
                               <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
                             </button>
                           </td>
-                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                          <td className="px-4 py-3 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
                             {confirmDel === r.id ? (
                               <span className="inline-flex items-center gap-1.5 text-xs">
                                 <button onClick={() => mutateRule(r, "rule_delete")} disabled={ruleBusy === r.id} className="px-2 py-1 rounded bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50">Delete</button>
@@ -2349,6 +2445,85 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                             )}
                           </td>
                         </tr>
+                        {open && (() => {
+                          const shown = scopeRows.filter(o => !scopeQ || o.name.toLowerCase().includes(scopeQ.toLowerCase()))
+                          // Ang naka-set na hindi na mahanap sa account (binura na
+                          // ang object) ay ipinapakita pa rin — kung hindi, tahimik
+                          // itong mabubura sa unang Save.
+                          const missing = Array.from(scopeSel).filter(id => !scopeRows.some(o => o.id === id))
+                          const dirty = scopeSel.size !== scoped.length || scoped.some(id => !scopeSel.has(id))
+                          return (
+                          <tr className="border-b border-slate-200 bg-blue-50/40">
+                            <td colSpan={currentAccountId ? 7 : 8} className="px-4 py-3">
+                              <div className="space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[13px] font-bold text-slate-800">What this rule is set on</span>
+                                  <span className="text-[12px] text-slate-500">
+                                    {scoped.length > 0
+                                      ? <>{scoped.length} {entW[scoped.length === 1 ? 0 : 1]} checked</>
+                                      : <>nothing specific — it runs on <b>all active {entW[1]}</b> in {r.__accName}</>}
+                                  </span>
+                                  <input value={scopeQ} onChange={e => setScopeQ(e.target.value)} placeholder={`Search ${entW[1]}…`}
+                                    className="ml-auto h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] min-w-[180px]" />
+                                </div>
+
+                                {scopeBusy ? (
+                                  <p className="text-[12px] text-slate-400 py-3 flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading {entW[1]}…</p>
+                                ) : (
+                                  <div className="max-h-56 overflow-y-auto scrollbar-dark rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                                    {missing.map(id => (
+                                      <label key={id} className="flex items-center gap-2 px-3 py-1.5 text-[13px]">
+                                        <input type="checkbox" checked onChange={() => setScopeSel(p => { const n = new Set(p); n.delete(id); return n })} />
+                                        <span className="text-amber-700">{id} — not in this account any more</span>
+                                      </label>
+                                    ))}
+                                    {shown.length === 0 && missing.length === 0 ? (
+                                      <p className="px-3 py-3 text-[12px] text-slate-400 italic">
+                                        {scopeErr ? scopeErr : scopeQ ? "Nothing matches that search." : `No ${entW[1]} with data in this range.`}
+                                      </p>
+                                    ) : shown.map(o => (
+                                      <label key={o.id} className="flex items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-slate-50 cursor-pointer">
+                                        <input type="checkbox" checked={scopeSel.has(o.id)}
+                                          onChange={e => setScopeSel(p => { const n = new Set(p); e.target.checked ? n.add(o.id) : n.delete(o.id); return n })} />
+                                        <span className="truncate text-slate-700">{o.name}</span>
+                                        <span className={`ml-auto text-[11px] px-1.5 py-0.5 rounded-full shrink-0 ${statusColor(o.status)}`}>{statusLabel(o.status)}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {scopeErr && <p className="text-[12px] text-rose-600">⚠ {scopeErr}</p>}
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[12px] text-slate-500">{scopeSel.size} checked</span>
+                                  {shown.length > 0 && (
+                                    <>
+                                      <button onClick={() => setScopeSel(p => { const n = new Set(p); shown.forEach(o => n.add(o.id)); return n })}
+                                        className="text-[12px] text-blue-600 hover:underline">select all shown</button>
+                                      <button onClick={() => setScopeSel(new Set())} className="text-[12px] text-slate-500 hover:underline">clear</button>
+                                    </>
+                                  )}
+                                  {/* Ang walang laman ay HINDI "buong account" — magkaibang bagay
+                                      iyon, at hayagang pipiliin. */}
+                                  <button onClick={() => saveScope(r, null)} disabled={scopeSaving || scoped.length === 0}
+                                    title={scoped.length === 0 ? "It already runs on everything active" : `Drop the list and run on all active ${entW[1]}`}
+                                    className="text-[12px] px-2 py-1 rounded-lg border border-slate-300 hover:bg-white disabled:opacity-40">
+                                    Run on all active {entW[1]}
+                                  </button>
+                                  <span className="ml-auto flex items-center gap-2">
+                                    <button onClick={() => setScopeOpen("")} className="text-[12px] px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-white">Close</button>
+                                    <button onClick={() => saveScope(r, Array.from(scopeSel))} disabled={scopeSaving || !dirty || scopeSel.size === 0}
+                                      title={scopeSel.size === 0 ? "Pick at least one, or use “Run on all active”" : ""}
+                                      className="text-[12px] px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-40">
+                                      {scopeSaving ? "Saving…" : `Save (${scopeSel.size})`}
+                                    </button>
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                          )
+                        })()}
+                        </Fragment>
                       )
                     })}
                   </tbody>
