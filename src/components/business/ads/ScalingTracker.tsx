@@ -901,12 +901,18 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           </span>
         ) })()}
         {/* Pang-ilang scale na + saan nagsimula — ito ang hinihinging kasaysayan. */}
-        {s.reg && s.reg.scales.length > 0 && (
+        {s.reg && s.reg.scales.length > 0 && (() => {
+          // Ang kasalukuyang budget ay nasa CAMPAIGN kapag CBO — `s.adset.budget`
+          // ay LAGING 0 sa Scaling tab (tingnan ang `budget: isCampaign ? 0`),
+          // kaya -100% ang lumalabas dito dati. Sa budgetTarget kunin, hindi doon.
+          const now = budgetTarget(s.adset).amount || s.reg!.scales[s.reg!.scales.length - 1].to
+          const start = s.reg!.starting_budget || 0
+          return (
           <span className="text-[11px] bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
-            scale #{s.reg.scales.length} · {peso(s.reg.starting_budget)} → {peso(s.adset.budget || s.reg.scales[s.reg.scales.length - 1].to)}
-            {" "}(+{Math.round(((s.adset.budget || 0) / (s.reg.starting_budget || 1) - 1) * 100)}%)
+            scale #{s.reg!.scales.length} · {peso(start)} → {peso(now)}
+            {start > 0 && <>{" "}(+{Math.round((now / start - 1) * 100)}%)</>}
           </span>
-        )}
+        ) })()}
         {s.reg && s.reg.scales.length === 0 && (
           <span className="text-[11px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">not scaled yet</span>
         )}
