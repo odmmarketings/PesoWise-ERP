@@ -685,6 +685,8 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   const [scaleFor, setScaleFor] = useState<Signal | null>(null)
   const [bulkScale, setBulkScale] = useState(false)
   const [scaleSel, setScaleSel] = useState<Set<string>>(new Set())
+  // Hakbang 2 ng scale modal: napiling % na hinihintay ng kumpirmasyon.
+  const [confirmPct, setConfirmPct] = useState<number | null>(null)
 
   async function applyScale(targets: Signal[], pct: number) {
     setBusy("scale")
@@ -722,7 +724,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           // CBO: bawat ad set ng campaign na iyon ay nakikita ang bagong budget
           : (m.campaignId === t.id ? { ...m, campaignBudget: to } : m)))
     }
-    setScaleFor(null); setBulkScale(false); setScaleSel(new Set()); setBusy("")
+    setScaleFor(null); setBulkScale(false); setScaleSel(new Set()); setConfirmPct(null); setBusy("")
   }
 
   // ── Per-ad view (Scaling tab) ──────────────────────────────────────────────
@@ -802,6 +804,38 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       setAdRows(p => ({ ...p, [key]: (p[key] || []).map(r => r.id === ad.id ? { ...r, status: "PAUSED" } : r) }))
     } catch (e: any) { setErrors(p => [...p, `${ad.name}: kill failed — ${String(e?.message).slice(0, 80)}`]) }
     setAdActBusy("")
+  }
+
+  // ── Undo ng HULING scale (aksidenteng pindot) ──────────────────────────────
+  // Ibinabalik ang budget sa Meta sa `from` ng step (kung na-apply ito) at
+  // tinatanggal ang record — kaya bumabalik din ang "scale #N" na bilang.
+  // Huling step LANG: ang pagbunot sa gitna ay sisira sa kasaysayan.
+  const [undoBusy, setUndoBusy] = useState("")
+  async function undoScale(s: Signal) {
+    if (!s.reg || s.reg.scales.length === 0) return
+    const last = s.reg.scales[s.reg.scales.length - 1]
+    const t = budgetTarget(s.adset)
+    if (!confirm(`Undo scale #${s.reg.scales.length} (+${last.pct}%)?`
+      + (last.applied ? ` This sets the ${t.level} budget back to ${peso(last.from)} on Facebook.` : ` This only removes the recorded step.`))) return
+    setUndoBusy(s.adset.id)
+    try {
+      if (last.applied) {
+        // Ibalik ang budget sa Meta BAGO tanggalin ang record — kung pumalya ang
+        // API, mananatili ang record at walang nagsisinungaling na kasaysayan.
+        const j = await fetch("/api/fb/manage", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: s.adset.account.token, action: "update", id: t.id, daily_budget: last.from }),
+        }).then(r => r.json())
+        if (!j.success) throw new Error(String(j.error || "budget revert failed").slice(0, 90))
+      }
+      const removed = await registry.undoLastScale(s.reg.adset_id)
+      if (!removed) throw new Error("could not remove the step from the registry")
+      if (last.applied) setAdsets(prev => prev.map(m =>
+        t.level === "adset"
+          ? (m.id === s.adset.id ? { ...m, budget: last.from } : m)
+          : (m.campaignId === t.id ? { ...m, campaignBudget: last.from } : m)))
+    } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: undo — ${String(e?.message).slice(0, 90)}`]) }
+    setUndoBusy("")
   }
 
   async function markMoved(s: Signal, ad: { id: string; name: string }) {
@@ -953,8 +987,16 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
             {s.sinceReg && <> · day {s.sinceReg.days} · {peso(s.sinceReg.spend)} spent · net <b className={s.sinceReg.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.sinceReg.netRoas < rules.killRoas ? "text-rose-600" : ""}>{dec(s.sinceReg.netRoas)}</b> · {s.sinceReg.purchases} purchases</>}
           </p>
           {s.reg.scales.map((sc, i) => (
-            <p key={i} className={sc.applied ? "" : "text-amber-600"}>
-              #{i + 1} · {sc.date} · +{sc.pct}% · {peso(sc.from)} → {peso(sc.to)}{sc.applied ? "" : " (recorded only — CBO, raise on the campaign)"}
+            <p key={i} className={`flex items-center gap-2 flex-wrap ${sc.applied ? "" : "text-amber-600"}`}>
+              <span>#{i + 1} · {sc.date} · +{sc.pct}% · {peso(sc.from)} → {peso(sc.to)}{sc.applied ? "" : " (recorded only — CBO, raise on the campaign)"}</span>
+              {/* Undo sa HULING step lang — aksidenteng pindot ang tinatarget nito */}
+              {isScaling && i === s.reg!.scales.length - 1 && (
+                <button onClick={() => undoScale(s)} disabled={undoBusy === s.adset.id}
+                  title={sc.applied ? `Reverts the budget to ${peso(sc.from)} on Facebook and removes this step` : "Removes this recorded step"}
+                  className="text-[10px] flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+                  <Undo2 className="w-2.5 h-2.5" /> {undoBusy === s.adset.id ? "…" : "Undo"}
+                </button>
+              )}
             </p>
           ))}
         </div>
@@ -1286,7 +1328,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         const cboShared = targets.filter(s => budgetTarget(s.adset).level === "campaign").length > seen.size
           ? targets.length - seen.size : 0
         return (
-          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => { setScaleFor(null); setBulkScale(false) }}>
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => { setScaleFor(null); setBulkScale(false); setConfirmPct(null) }}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()}>
               <p className="font-bold text-slate-800">Scale {targets.length === 1 ? "this ad set" : `${targets.length} ad sets`}?</p>
               <p className="text-[13px] text-slate-500">
@@ -1309,16 +1351,37 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
                   </p>
                 ) })}
               </div>
-              <div className="flex gap-2 pt-1">
-                {[10, 20].map(pct => (
-                  <button key={pct} onClick={() => applyScale(targets, pct)} disabled={busy === "scale"}
-                    className="flex-1 h-11 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50">
-                    {busy === "scale" ? "…" : <>Scale {pct}%<span className="block text-[11px] font-normal opacity-80">{peso(totalNow * (1 + pct / 100))}</span></>}
-                  </button>
-                ))}
-              </div>
-              <button onClick={() => { setScaleFor(null); setBulkScale(false) }}
-                className="w-full h-9 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50">Cancel</button>
+              {/* DALAWANG HAKBANG: pumili ng % muna, saka kumpirmahin — tunay na
+                  pera ito at madaling mapindot nang aksidente. */}
+              {confirmPct === null ? (
+                <>
+                  <div className="flex gap-2 pt-1">
+                    {[10, 20].map(pct => (
+                      <button key={pct} onClick={() => setConfirmPct(pct)}
+                        className="flex-1 h-11 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700">
+                        Scale {pct}%<span className="block text-[11px] font-normal opacity-80">{peso(totalNow * (1 + pct / 100))}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => { setScaleFor(null); setBulkScale(false); setConfirmPct(null) }}
+                    className="w-full h-9 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50">Cancel</button>
+                </>
+              ) : (
+                <>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-[13px] text-emerald-800">
+                    Confirm <b>scale {confirmPct}%</b>: {peso(totalNow)} → <b>{peso(totalNow * (1 + confirmPct / 100))}</b>
+                    {targets.length > 1 ? ` across ${targets.length} ad sets` : ""}. This changes the budget on Facebook now.
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => setConfirmPct(null)} disabled={busy === "scale"}
+                      className="flex-1 h-11 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-50">Back</button>
+                    <button onClick={() => applyScale(targets, confirmPct)} disabled={busy === "scale"}
+                      className="flex-1 h-11 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50">
+                      {busy === "scale" ? "Applying…" : `Confirm scale ${confirmPct}%`}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )

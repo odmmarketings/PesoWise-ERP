@@ -114,5 +114,24 @@ export function useScalingRegistry() {
     await refresh()
   }, [regs, refresh])
 
-  return { regs, loaded, error, refresh, register, unregister, addScale }
+  // Ang HULING scale step lang ang natatanggal — ang pagbunot sa gitna ay
+  // sisira sa kasaysayan (ang `from` ng bawat step ay ang `to` ng nauna).
+  // Ibinabalik nito ang tinanggal na event para maibalik ng caller ang budget
+  // sa Meta kung na-apply iyon.
+  const undoLastScale = useCallback(async (adsetId: string): Promise<ScaleEvent | null> => {
+    const businessId = await getBusinessId()
+    if (!businessId) return null
+    const reg = regs.find(r => r.adset_id === adsetId)
+    if (!reg || reg.scales.length === 0) return null
+    const last = reg.scales[reg.scales.length - 1]
+    const supabase = createSupabaseBrowserClient()
+    const { error } = await supabase.from("scaling_registry")
+      .update({ scales: reg.scales.slice(0, -1), updated_at: new Date().toISOString() })
+      .eq("business_id", businessId).eq("adset_id", adsetId)
+    if (error) return null
+    await refresh()
+    return last
+  }, [regs, refresh])
+
+  return { regs, loaded, error, refresh, register, unregister, addScale, undoLastScale }
 }
