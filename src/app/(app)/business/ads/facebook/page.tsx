@@ -79,7 +79,7 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   let i = 0; await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-type Tab = "dashboard" | "daily" | "manager" | "testing" | "scaling"
+type Tab = "dashboard" | "daily" | "manager" | "testing" | "scaling" | "monitoring"
 type Obj = "All" | "Conversions" | "Messaging" | "Other"
 
 // Module-level flag: resets on a full page (re)load, but persists across in-app navigation.
@@ -116,7 +116,7 @@ export default function FacebookAdsPage() {
     let isReload = false
     try { isReload = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type === "reload" } catch {}
     if (firstMount && isReload) {
-      try { const t = localStorage.getItem("pesowise_fb_tab"); if (t === "daily" || t === "manager" || t === "testing" || t === "scaling") return t } catch {}
+      try { const t = localStorage.getItem("pesowise_fb_tab"); if (t === "daily" || t === "manager" || t === "testing" || t === "scaling" || t === "monitoring") return t } catch {}
     }
     return "dashboard"
   })
@@ -149,6 +149,7 @@ export default function FacebookAdsPage() {
   const [rows, setRows] = useState<Row[]>(dashBoot.rows)
   const [scalingCount, setScalingCount] = useState(0)
   const [testingCount, setTestingCount] = useState(0)
+  const [monitorCount, setMonitorCount] = useState(0)
   const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>(dashBoot.trend)
   const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>(dashBoot.daily)
   const [loading, setLoading] = useState(false)
@@ -246,7 +247,7 @@ export default function FacebookAdsPage() {
       </div>
 
       <div className="flex gap-1 border-b border-slate-200 overflow-x-auto scrollbar-dark">
-        {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["testing", "Testing", FlaskConical], ["scaling", "Scaling", TrendingUp]] as [Tab, string, any][]).map(([t, label, Icon]) => (
+        {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["testing", "Testing", FlaskConical], ["scaling", "Scaling", TrendingUp], ["monitoring", "Monitoring", Eye]] as [Tab, string, any][]).map(([t, label, Icon]) => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
             <Icon className="w-4 h-4" /> {label}
@@ -257,6 +258,9 @@ export default function FacebookAdsPage() {
             )}
             {t === "scaling" && scalingCount > 0 && (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded-full">{scalingCount}</span>
+            )}
+            {t === "monitoring" && monitorCount > 0 && (
+              <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">{monitorCount}</span>
             )}
           </button>
         ))}
@@ -277,6 +281,7 @@ export default function FacebookAdsPage() {
         : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
           : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} />
             : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} />
+              : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} />
               : <AdsManager fb={fb} from={from} to={to} />}
     </div>
   )

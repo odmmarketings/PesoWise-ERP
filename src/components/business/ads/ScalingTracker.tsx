@@ -75,6 +75,8 @@ type Signal = {
   // rehistro, at ang kasaysayan ng pag-scale.
   reg?: Registration
   sinceReg?: { days: number; spend: number; value: number; netRoas: number; purchases: number }
+  // Naka-set lang sa Monitoring: kabuuan mula sa unang araw ng buwan.
+  mtd?: { spend: number; value: number; purchases: number; netRoas: number }
 }
 type FatigueRow = {
   adId: string; adName: string; adsetName: string; account: FBAccount
@@ -214,25 +216,33 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-// ── DALAWANG TAB, ISANG ENGINE ───────────────────────────────────────────────
-//   mode="testing"  → AD SET level. Irehistro ang bagong testing ad set; mula sa
-//                     petsa ng rehistro, sinusundan ang 3/7/15/30-araw na resulta
-//                     hanggang umabot sa scale threshold.
-//   mode="scaling"  → CAMPAIGN level. Irehistro ang scaling campaign (1-1-40+
-//                     Andromeda). Dito ang Scale 10%/20% dahil sa CAMPAIGN
-//                     nakalagay ang CBO budget — hindi sa ad set. May per-ad na
-//                     view din para makita kung aling creative ang umaandar.
-// Isang engine para hindi maghiwalay ang net-ROAS math sa dalawang lugar.
+// ── TATLONG TAB, ISANG ENGINE ────────────────────────────────────────────────
+//   mode="testing"    → AD SET level. Irehistro ang bagong testing ad set; mula
+//                       sa petsa ng rehistro, sinusundan ang 3/7/15/30-araw na
+//                       resulta hanggang umabot sa scale threshold.
+//   mode="scaling"    → CAMPAIGN level. Irehistro ang scaling campaign (1-1-40+
+//                       Andromeda). Dito ang Scale 10%/20% dahil sa CAMPAIGN
+//                       nakalagay ang CBO budget — hindi sa ad set. May per-ad
+//                       na view din para makita kung aling creative ang umaandar.
+//   mode="monitoring" → CAMPAIGN level, WALANG rehistro (hiling ng may-ari,
+//                       Ago 14 2026: "automatic lahat na naka-select, walang
+//                       register something"). Lahat ng campaign na may gastos sa
+//                       buwan ay nandito, pang-tingin ng buong buwan. Kill lang
+//                       ang aksyon — walang Scale, walang Register. May View ad
+//                       sets / View ads pa rin.
+// Isang engine para hindi maghiwalay ang net-ROAS math sa tatlong lugar.
 export function ScalingTracker({ accounts, onSignals, mode }: {
-  accounts: FBAccount[]; onSignals?: (n: number) => void; mode: "testing" | "scaling"
+  accounts: FBAccount[]; onSignals?: (n: number) => void; mode: "testing" | "scaling" | "monitoring"
 }) {
   const allPages = useActivePages()
   const registry = useScalingRegistry()
-  const level: "adset" | "campaign" = mode === "scaling" ? "campaign" : "adset"
+  const level: "adset" | "campaign" = mode === "testing" ? "adset" : "campaign"
   const isCampaign = level === "campaign"
+  const isMonitoring = mode === "monitoring"
   const unitLabel = isCampaign ? "campaign" : "ad set"
-  // Pareho silang nakabatay sa rehistro — ang antas lang ang pinagkaiba.
-  const isScaling = true
+  // Ang Testing at Scaling ay nakabatay sa rehistro; ang Monitoring ay hindi —
+  // doon nagmumula ang "lahat nakikita" laban sa "ang pinili mo lang".
+  const isScaling = !isMonitoring
   const [rules, setRules] = useState<Rules>(() => loadRules())
   const saveRules = (r: Rules) => { setRules(r); try { localStorage.setItem(RULES_KEY, JSON.stringify(r)) } catch {} }
 
@@ -252,7 +262,15 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
 
   // ── 30-araw na saklaw (PHT — lokal na orasan ng user) ──────────────────────
   const today = dstr(new Date())
-  const from30 = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 29); return dstr(d) }, [])
+  const monthStart = useMemo(() => { const d = new Date(); return dstr(new Date(d.getFullYear(), d.getMonth(), 1)) }, [])
+  const from30 = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - 29)
+    const rolling = dstr(d)
+    // Sa Monitoring ay BUONG BUWAN ang tinitingnan, kaya kapag mas maaga ang
+    // unang araw ng buwan kaysa sa 30-araw na gulong (nangyayari sa ika-31),
+    // lawakan — kung hindi, kulang ng isang araw ang buwanang kabuuan.
+    return isMonitoring && monthStart < rolling ? monthStart : rolling
+  }, [isMonitoring, monthStart])
   const last3From = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 2); return dstr(d) }, [])
   const prev7From = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 9); return dstr(d) }, [])
   const prev7To = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 3); return dstr(d) }, [])
@@ -543,7 +561,13 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
 
     // Ang bawat tab ay nakikita LANG ang sariling antas — kung hindi, lalabas ang
     // mga campaign sa Testing at mga ad set sa Scaling.
-    const regByAdset = new Map(registry.regs.filter(r => r.level === level).map(r => [r.adset_id, r]))
+    // ⚠ Sa Monitoring ay SADYANG WALANG rehistro na ikinakabit, kahit pareho ang
+    // antas nito ng Scaling: kung hindi, ang campaign na nakarehistro sa Scaling
+    // ay magdadala ng Scale, Undo at unregister na buton dito — samantalang Kill
+    // lang ang aksyon sa tab na ito.
+    const regByAdset = isMonitoring
+      ? new Map<string, Registration>()
+      : new Map(registry.regs.filter(r => r.level === level).map(r => [r.adset_id, r]))
 
     for (const m of adsets) {
       const reg = regByAdset.get(m.id)
@@ -575,6 +599,21 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         sinceReg = { days, spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate) }
       }
 
+      // Buwanang kabuuan (mula unang araw ng buwan) — ito ang hinihinging
+      // "results ng buong month" sa Monitoring.
+      let mtd: Signal["mtd"]
+      if (isMonitoring) {
+        let spend = 0, value = 0, purchases = 0
+        for (const [dt, d] of m.dailies) {
+          if (dt < monthStart) continue
+          spend += d.spend; value += d.purchaseValue; purchases += d.purchases
+        }
+        mtd = { spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate) }
+      }
+      // Sa Monitoring ang tanong ay "ano ang tumakbo NGAYONG BUWAN" — ang
+      // gumastos lang noong nakaraang buwan ay ingay sa listahan ng buwan.
+      if (isMonitoring && (!mtd || mtd.spend === 0)) continue
+
       const tD = m.dailies.get(today)
       const todaySpend = tD?.spend || 0
       const todayNet = tD ? netOf(tD.purchaseValue, tD.spend, m.rtsRate) : 0
@@ -591,7 +630,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       }
 
       const isActive = /active/i.test(m.status)
-      const base = { adset: m, windows, streak, todaySpend, todayNet, reg, sinceReg }
+      const base = { adset: m, windows, streak, todaySpend, todayNet, reg, sinceReg, mtd }
 
       // Pagkatapos mag-scale, may 48h na palugit: hindi pa dapat husgahan agad —
       // nagre-relearn ang delivery. Tanda lang ito, hindi kill/scale.
@@ -623,9 +662,12 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         out.push({ ...base, kind: "scale", rule: "ready_to_scale",
           reason: `Net ROAS ≥ ${rules.scaleRoas} for ${streak} straight days (7d: ${dec(windows.w7.netRoas)}).`
             + (reg ? ` This would be scale #${n}.` : "")
-            + (bt.level !== "none"
-              ? ` Raise 20% → ${peso(bt.amount * 1.2)}, or 10% → ${peso(bt.amount * 1.1)}${bt.level === "campaign" ? " (campaign budget — CBO)" : ""}.`
-              : ` No budget found on the ad set or campaign — raise it in Ads Manager.`) })
+            + (isMonitoring
+              // Walang Scale na buton dito — huwag mangako ng aksyong wala rito.
+              ? ` Register it in the Scaling tab if you want to raise its budget from here.`
+              : bt.level !== "none"
+                ? ` Raise 20% → ${peso(bt.amount * 1.2)}, or 10% → ${peso(bt.amount * 1.1)}${bt.level === "campaign" ? " (campaign budget — CBO)" : ""}.`
+                : ` No budget found on the ad set or campaign — raise it in Ads Manager.`) })
         continue
       }
       if (!isActive) continue   // paused na — walang iki-kill o iba-bantay
@@ -661,16 +703,22 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       }
       // Ang inirehistro ay LAGING may row kahit walang signal — kung hindi,
       // mawawala ito sa Scaling tab at aakalain mong hindi na-monitor.
+      // Sa Monitoring, LAHAT ay may row: iyon ang buong punto ng tab.
       if (reg) {
         out.push({ ...base, kind: "watch", rule: "monitoring",
           reason: sinceReg && sinceReg.spend > 0
             ? `Day ${sinceReg.days} since registered · net ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)}. `
               + `Needs ${rules.scaleRoas}+ for ${rules.scaleDays} straight days to qualify (currently ${streak}).`
             : `Registered ${reg.registered_at} — no spend recorded yet.` })
+      } else if (isMonitoring) {
+        out.push({ ...base, kind: "watch", rule: "monitoring",
+          reason: mtd && mtd.spend > 0
+            ? `Month to date: net ${dec(mtd.netRoas)} on ${peso(mtd.spend)} across ${mtd.purchases} purchases. Nothing hits a rule right now.`
+            : `No spend this month yet.` })
       }
     }
     return out
-  }, [adsets, rules, today, registry.regs, level])
+  }, [adsets, rules, today, registry.regs, level, isMonitoring, monthStart])
 
   // Owner options galing sa REGISTRY (hindi sa loaded rows) para mapipili pa rin
   // ang owner na walang gastos sa buwan.
@@ -725,11 +773,13 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   // pagpalya ng API. Ang account na hindi nakarating ay LAKTAWAN, hindi tanungin.
   const okAccounts = useMemo(() => new Set(loadedAccounts), [loadedAccounts])
   const orphans = useMemo(() => {
-    if (!registry.loaded || loading) return []
+    // Walang rehistro sa Monitoring — ang mga ulila ng Scaling ay doon inaayos,
+    // parehong `level` man sila.
+    if (isMonitoring || !registry.loaded || loading) return []
     const ids = new Set(adsets.map(m => m.id))
     return registry.regs.filter(r =>
       r.level === level && !ids.has(r.adset_id) && okAccounts.has(r.account_name))
-  }, [registry.regs, registry.loaded, adsets, level, loading, okAccounts])
+  }, [registry.regs, registry.loaded, adsets, level, loading, okAccounts, isMonitoring])
 
   const scaleRows = view.filter(s => s.kind === "scale")
   const killRows = view.filter(s => s.kind === "kill")
@@ -794,7 +844,10 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     } catch (e: any) { setErrors(prev => [...prev, `${item.name}: undo failed — ${String(e?.message).slice(0, 80)}`]) }
   }
   useEffect(() => {
-    if (!rules.autoMaster || loading) return
+    // ⚠ WALANG AUTO-PAUSE SA MONITORING. Lahat ng campaign ang nakikita rito at
+    // walang pinili ang may-ari — ang pagpapatakbo ng auto-pause dito ay
+    // magpapapatay ng buong campaign nang hindi hiningi. Ang Kill ay pindot.
+    if (isMonitoring || !rules.autoMaster || loading) return
     // Kahapon pa ang log kung nakabukas ang tab magdamag — huwag itong bilangin
     // laban sa cap ngayong araw (at huwag ding gamiting "na-pause na" na tala).
     const log = autoLog.date === today ? autoLog : { date: today, items: [] }
@@ -1130,16 +1183,19 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
               <TrendingUp className="w-3 h-3" /> Scale
             </button>
           )}
-          {!isCampaign && s.reg && /active/i.test(s.adset.status) && (
-            <button onClick={() => { if (confirm(`Kill (pause) ad set "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
+          {/* Kill — Testing: ang inirehistrong ad set. Monitoring: kahit aling
+              aktibong campaign (walang rehistro doon, at iisa lang ang aksyon).
+              Scaling: "Pause now" sa ibaba, sa kill rows lang. */}
+          {(isMonitoring || (!isCampaign && s.reg)) && /active/i.test(s.adset.status) && (
+            <button onClick={() => { if (confirm(`Kill (pause) ${unitLabel} "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
               disabled={pausing === s.adset.id}
               className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
               <Pause className="w-3 h-3" /> {pausing === s.adset.id ? "…" : "Kill"}
             </button>
           )}
-          {/* Scaling: ad sets + ads sa ilalim ng campaign. Testing: ads lang sa
-              ilalim ng ad set (wala nang mas mababa). */}
-          {s.reg && (isCampaign ? (["adset", "ad"] as const) : (["ad"] as const)).map(lvl => {
+          {/* Scaling/Monitoring: ad sets + ads sa ilalim ng campaign. Testing:
+              ads lang sa ilalim ng ad set (wala nang mas mababa). */}
+          {(s.reg || isMonitoring) && (isCampaign ? (["adset", "ad"] as const) : (["ad"] as const)).map(lvl => {
             const open = drillOpen[drillParent(s)] === lvl
             const busyHere = adsBusy === `${drillParent(s)}|${lvl}`
             return (
@@ -1163,7 +1219,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           </button>
           {/* Sa Testing, ang bagong Kill button sa itaas na ang panpatay — doble
               kung isasama pa ito. Sa Scaling (campaign) lang ang Pause now. */}
-          {isCampaign && s.kind === "kill" && /active/i.test(s.adset.status) && (
+          {isCampaign && !isMonitoring && s.kind === "kill" && /active/i.test(s.adset.status) && (
             <button onClick={() => { if (confirm(`Pause campaign "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
               disabled={pausing === s.adset.id}
               className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
@@ -1188,6 +1244,17 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         })}
         <span className="text-slate-400">gross 7d: {dec(s.windows.w7.grossRoas)} · RTS rate {(s.adset.rtsRate * 100).toFixed(1)}%</span>
       </div>
+      {/* Buwanang kabuuan — ito ang tinitingnan sa Monitoring, hindi ang gulong. */}
+      {s.mtd && (
+        <p className="text-[11px] text-slate-500 bg-slate-50 rounded-md px-2 py-1.5 tabular-nums">
+          <b className="text-slate-600">This month ({monthStart.slice(5)} → {today.slice(5)})</b>
+          {" · "}spend {peso(s.mtd.spend)}
+          {" · "}value {peso(s.mtd.value)}
+          {" · "}net <b className={s.mtd.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.mtd.netRoas < rules.killRoas ? "text-rose-600" : "text-slate-700"}>{dec(s.mtd.netRoas)}</b>
+          {" · "}{s.mtd.purchases} purchases
+          {s.mtd.purchases > 0 && <> · CPP {peso(s.mtd.spend / s.mtd.purchases)}</>}
+        </p>
+      )}
       {/* Resulta MULA sa rehistro + bawat hakbang ng pag-scale */}
       {s.reg && (
         <div className="text-[11px] text-slate-500 bg-slate-50 rounded-md px-2 py-1.5 space-y-0.5">
@@ -1318,11 +1385,13 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       <div className="flex flex-wrap items-center gap-2">
         <div className="space-y-1">
           <p className="text-sm text-slate-500">
-            {isCampaign
-              ? <>Registered <b>campaigns</b> · scale 10% / 20% on the campaign budget · open <b>View ads</b> for per-creative results</>
-              : <>Registered <b>ad sets</b> · tracked from the day you register at 3 / 7 / 15 / 30 days</>}
+            {isMonitoring
+              ? <>Every <b>campaign</b> with spend this month — nothing to register · month-to-date results · <b>Kill</b> is the only action</>
+              : isCampaign
+                ? <>Registered <b>campaigns</b> · scale 10% / 20% on the campaign budget · open <b>View ads</b> for per-creative results</>
+                : <>Registered <b>ad sets</b> · tracked from the day you register at 3 / 7 / 15 / 30 days</>}
           </p>
-          <p className="text-[11px] text-slate-400">Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · ad-set level</p>
+          <p className="text-[11px] text-slate-400">Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · {unitLabel} level</p>
           {/* Legend — ang tatlong bilang sa account picker ay nasa ganitong pagkakasunod */}
           <p className="text-[11px] text-slate-400 flex items-center gap-2.5">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> scale</span>
@@ -1608,7 +1677,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         <div className="py-10 space-y-3">
           <p className="text-sm text-slate-400 flex items-center gap-2 justify-center">
             <RefreshCw className="w-4 h-4 animate-spin" />
-            Pulling 30 days of {isCampaign ? "campaign" : "ad-set"} data — {progress.done}/{progress.total} accounts
+            Pulling {isMonitoring ? "this month's" : "30 days of"} {isCampaign ? "campaign" : "ad-set"} data — {progress.done}/{progress.total} accounts
           </p>
           <div className="mx-auto w-64 h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div className="h-full bg-blue-500 rounded-full transition-[width] duration-300"
@@ -1617,7 +1686,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         </div>
       ) : (
         <>
-          {view.length === 0 && registry.loaded && !registry.error && (
+          {view.length === 0 && registry.loaded && !registry.error && !isMonitoring && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-[13px] text-blue-800">
               <b>Nothing registered yet.</b> Click <b>Register {isCampaign ? "campaigns" : "ad sets"}</b> to pick what to follow —
               monitoring starts the day you register.
@@ -1626,12 +1695,14 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
                 : <> Use this for new tests; once one earns it, register the campaign in the <b>Scaling</b> tab.</>}
             </div>
           )}
-          {Section({ title: "Ready to Scale", icon: TrendingUp, color: "text-emerald-600", accent: "border-emerald-500", rows: scaleRows,
+          {/* Sa Monitoring ay walang Scale na buton, kaya "Winning" ang tawag —
+              hindi "Ready to Scale", na nangangako ng aksyong wala rito. */}
+          {Section({ title: isMonitoring ? "Winning" : "Ready to Scale", icon: TrendingUp, color: "text-emerald-600", accent: "border-emerald-500", rows: scaleRows,
             empty: `None yet — needs net ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.` })}
           {Section({ title: "Kill Suggestions", icon: Skull, color: "text-rose-600", accent: "border-rose-500", rows: killRows,
             empty: "Nothing hits the kill rules right now." })}
-          {Section({ title: "Monitoring / Watch", icon: Eye, color: "text-amber-600", accent: "border-amber-400", rows: watchRows,
-            empty: `No registered ${unitLabel} is waiting.` })}
+          {Section({ title: isMonitoring ? "Everything else" : "Monitoring / Watch", icon: Eye, color: "text-amber-600", accent: "border-amber-400", rows: watchRows,
+            empty: isMonitoring ? `No ${unitLabel} spent this month.` : `No registered ${unitLabel} is waiting.` })}
 
           {/* Fatigue — kada AD */}
           <div className="space-y-2">
