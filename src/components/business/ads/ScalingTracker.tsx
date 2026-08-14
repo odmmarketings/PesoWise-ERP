@@ -234,6 +234,13 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
 // Isang engine para hindi maghiwalay ang net-ROAS math sa tatlong lugar.
 export type ManagerFocus = {
   accountId: string; level: "campaign" | "adset" | "ad"; id: string; name: string; campaignId?: string
+  owner?: string
+  note?: string
+}
+/** 1st, 2nd, 3rd, 4th… — para mabasa ang "pang-ilang scale na ito". */
+const ordinal = (n: number) => {
+  const s = ["th", "st", "nd", "rd"][(n % 100 - 20) % 10] ?? ["th", "st", "nd", "rd"][n % 100] ?? "th"
+  return `${n}${s}`
 }
 export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
   accounts: FBAccount[]; onSignals?: (n: number) => void; mode: "testing" | "scaling" | "monitoring"
@@ -941,6 +948,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     // ad set ng parehong campaign ang napili, ang dobleng pagtaas ng 20% ay
     // magiging 44% — hindi iyon ang hiningi. Isang beses kada campaign.
     const doneCampaigns = new Set<string>()
+    // Kapag ISA lang ang target, dinadala ka nito sa mismong campaign sa Ads
+    // Manager pagkatapos — doon mo ilalagay ang sarili mong rules. Itinatabi ang
+    // pang-ilang scale at ang tunay na galaw ng budget bago pa mag-refresh ang
+    // registry, dahil pagkatapos noon ay iba na ang bilang.
+    let jump: ManagerFocus | null = null
     for (const s of targets) {
       const t = budgetTarget(s.adset)
       let applied = false
@@ -970,8 +982,24 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
           ? (m.id === s.adset.id ? { ...m, budget: to } : m)
           // CBO: bawat ad set ng campaign na iyon ay nakikita ang bagong budget
           : (m.campaignId === t.id ? { ...m, campaignBudget: to } : m)))
+
+      if (targets.length === 1 && applied) {
+        const n = (s.reg?.scales.length ?? 0) + 1     // kasama na ang kagagawa lang
+        jump = {
+          accountId: s.adset.account.id,
+          owner: s.adset.account.owner || undefined,
+          level: isCampaign ? "campaign" : "adset",
+          id: s.adset.id,
+          name: s.adset.name,
+          campaignId: s.adset.campaignId || undefined,
+          note: `${ordinal(n)} scale · +${pct}% · ${peso(from)} → ${peso(to)}`,
+        }
+      }
     }
     setScaleFor(null); setBulkScale(false); setScaleSel(new Set()); setConfirmPct(null); setBusy("")
+    // Huling hakbang: dalhin siya doon. Sa bulk ay hindi — walang iisang
+    // campaign na mapupuntahan.
+    if (jump) onOpenInManager?.(jump)
   }
 
   // ── Per-ad view (Scaling tab) ──────────────────────────────────────────────
@@ -1701,6 +1729,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
                   <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-[13px] text-emerald-800">
                     Confirm <b>scale {confirmPct}%</b>: {peso(totalNow)} → <b>{peso(totalNow * (1 + confirmPct / 100))}</b>
                     {targets.length > 1 ? ` across ${targets.length} ad sets` : ""}. This changes the budget on Facebook now.
+                    {targets.length === 1 && <> Then it opens this {unitLabel} in <b>Ads Manager</b> so you can add your rules.</>}
                   </div>
                   <div className="flex gap-2 pt-1">
                     <button onClick={() => setConfirmPct(null)} disabled={busy === "scale"}

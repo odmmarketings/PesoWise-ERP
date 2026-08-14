@@ -889,7 +889,13 @@ type MgrLevel = "campaign" | "adset" | "ad"
 // Ang hinihinging "dalhin mo ako doon": galing sa isang row ng Testing /
 // Scaling / Monitoring papunta sa Ads Manager, nakapili na ang ad account,
 // nasa tamang antas, at ang mismong object ang nakikita.
-type MgrFocus = { accountId: string; level: MgrLevel; id: string; name: string; campaignId?: string }
+type MgrFocus = {
+  accountId: string; level: MgrLevel; id: string; name: string; campaignId?: string
+  /** Isinasabay ang Owner dropdown — "yung owner + ad account na yun lang ang naka-select". */
+  owner?: string
+  /** Bakit ka dinala rito, hal. "2nd scale · ₱1,000 → ₱1,100". Nasa banner. */
+  note?: string
+}
 type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
 // Ad-preview placement formats (mirrors Meta's preview switcher).
@@ -921,7 +927,10 @@ const MGR_TTL = 5 * 60_000   // katumbas ng 5-minutong server cache ng insights
 
 function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null }) {
   const [accId, setAccId] = useState(focus?.accountId || "all")   // default: All ad accounts
-  const [fOwner, setFOwner] = useState("All")
+  // Sinasabay ang Owner sa focus: kung ang ad account lang ang itatakda, ang
+  // dropdown ng Owner ay "All" pa rin at mukhang hindi naka-filter — samantalang
+  // ang hinihiling ay "yun lang ang naka-select".
+  const [fOwner, setFOwner] = useState(focus?.owner || "All")
   const [objMgr, setObjMgr] = useState<Obj>("All")
   const [fStatus, setFStatus] = useState("All")
   // Manageable accounts = any registered, credentialed, non-archived account.
@@ -1439,7 +1448,10 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
           <span>
             Showing one {focusOn.level === "campaign" ? "campaign" : focusOn.level === "adset" ? "ad set" : "ad"}:{" "}
             <b className="break-all">{focusOn.name}</b>
-            {focusOn.level === "campaign" && <> — open <b>Ad Sets</b> above to see what&apos;s inside it.</>}
+            {/* Galing sa Scale: ito ang pang-ilang scale at ang tunay na galaw ng
+                budget — kailangan mo iyon habang binubuo ang rule dito. */}
+            {focusOn.note && <> — <b className="text-emerald-700">{focusOn.note}</b>. Add your rules on it below.</>}
+            {!focusOn.note && focusOn.level === "campaign" && <> — open <b>Ad Sets</b> above to see what&apos;s inside it.</>}
           </span>
           <button onClick={() => setFocusOn(null)}
             className="ml-auto text-[12px] px-2 py-1 rounded-lg border border-blue-300 hover:bg-blue-100 whitespace-nowrap">
