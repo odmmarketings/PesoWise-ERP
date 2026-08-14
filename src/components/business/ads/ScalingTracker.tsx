@@ -793,9 +793,17 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
   const fatigueView = useMemo(() => fatigue.filter(f =>
     (fOwner === "All" || f.account.owner === fOwner) && (fAccount === "ALL" || f.account.name === fAccount)),
     [fatigue, fOwner, fAccount])
-  // Ang badge sa tab ay hindi naka-filter — ang KABUUAN ang gusto mong makita,
+  // ── ANG BILANG SA TAB ──────────────────────────────────────────────────────
+  // Hiling ng may-ari (Ago 14 2026): hindi ito bilang ng signal kundi ang LAMAN
+  // ng tab. Testing at Scaling → ilan ang inirehistro mo na BUHAY pa (aktibo);
+  // Monitoring → lahat ng nakikita. Dating scale+kill+fatigue ang binibilang,
+  // kaya "4" ang Scaling kahit tatlo lang ang nakarehistro doon.
+  // Hindi ito naka-filter sa owner/account — ang KABUUAN ang gusto mong makita,
   // hindi ang bahagi ng napiling owner.
-  const totalSignals = signals.filter(s => s.kind !== "watch").length + fatigue.length
+  const totalSignals = useMemo(() => isMonitoring
+    ? signals.length
+    : signals.filter(s => s.reg && /active/i.test(s.adset.status)).length,
+    [signals, isMonitoring])
   useEffect(() => { onSignals?.(totalSignals) }, [totalSignals, onSignals])
 
   // ── Auto-pause (kapag naka-ON ang master + ang rule) ───────────────────────

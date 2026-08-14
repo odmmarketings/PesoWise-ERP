@@ -264,16 +264,18 @@ export default function FacebookAdsPage() {
           <button key={t} onClick={() => { setMgrFocus(null); setTab(t) }}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
             <Icon className="w-4 h-4" /> {label}
-            {/* Bilang ng scale+kill+fatigue signals — lumalabas matapos madalaw ang tab
-                (doon lang nagkakarga ang datos; sinadya, mabigat ang 30-araw na hila). */}
+            {/* Ang bilang ay ang LAMAN ng tab, hindi bilang ng signal: ilang
+                inirehistro ang aktibo (Testing/Scaling), at lahat ng nakikita
+                (Monitoring). Lumalabas matapos madalaw ang tab — doon lang
+                nagkakarga ang datos (sinadya, mabigat ang 30-araw na hila). */}
             {t === "testing" && testingCount > 0 && (
-              <span className="text-[10px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded-full">{testingCount}</span>
+              <span title="Active registered ad sets" className="text-[10px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded-full">{testingCount}</span>
             )}
             {t === "scaling" && scalingCount > 0 && (
-              <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded-full">{scalingCount}</span>
+              <span title="Active registered campaigns" className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded-full">{scalingCount}</span>
             )}
             {t === "monitoring" && monitorCount > 0 && (
-              <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">{monitorCount}</span>
+              <span title="Campaigns with spend this month" className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">{monitorCount}</span>
             )}
           </button>
         ))}
