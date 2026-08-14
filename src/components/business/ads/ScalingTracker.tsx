@@ -193,6 +193,10 @@ const FATIGUE_INFLIGHT = new Map<string, Promise<void>>()
 // ang mount na sumakay sa hila ng iba (hindi nito natatanggap ang setState nito).
 const MODEL_PROGRESS = new Map<string, { done: number; total: number }>()
 const MODEL_TTL = 10 * 60_000
+// Ang binuksang drill-down (View ad sets / View ads) ay nasa component state
+// dati, kaya nawawala kapag lumipat ka ng tab — muling hihila sa susunod mong
+// pagbukas ng parehong campaign. Sa module na ito nakatira ngayon.
+const DRILL_CACHE = new Map<string, { ts: number; rows: any[] }>()
 const freshCache = (key: string): Cached | null => {
   const hit = MODEL_CACHE.get(key)
   return hit && Date.now() - hit.ts < MODEL_TTL ? hit : null
@@ -284,9 +288,24 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
 
   const load = useCallback(async (force = false) => {
     if (!force) {
-      // Sariwa pa ang cache? Ibalik agad — walang spinner, walang hila.
-      const hit = freshCache(cacheKey)
-      if (hit) { applyCached(hit); return }
+      // ⚠ ANG SPINNER AY PARA LANG SA WALANG MAIPAPAKITA. Kapag may naipakita
+      // na tayo dati, ang tamang asal ay: ilabas AGAD ang huling alam, at kung
+      // luma na ito, tahimik na palitan sa likod. Ang muling pagtatago ng datos
+      // sa likod ng "Pulling…" ay pagbawi ng bagay na nasa kamay na — iyon ang
+      // nararamdamang "nag-loloading ulit" (iniulat Ago 14 2026).
+      const any = MODEL_CACHE.get(cacheKey)
+      if (any) {
+        applyCached(any)
+        if (Date.now() - any.ts < MODEL_TTL) return
+        // Luma na — pag-refresh nang WALANG spinner. Papalitan lang ang mga
+        // numero kapag dumating; hindi mawawala ang listahan habang naghihintay.
+        if (!MODEL_INFLIGHT.has(cacheKey)) {
+          const bg = runLoad(false)
+          MODEL_INFLIGHT.set(cacheKey, bg)
+          bg.catch(() => {}).finally(() => MODEL_INFLIGHT.delete(cacheKey))
+        }
+        return
+      }
       // Tumatakbo na ito ngayon (naiwan ng dating tab, o mabilis kang nagpalit)?
       // SUMAKAY — huwag magsimula ng pangalawang 21-account na hila. Ito mismo
       // ang dahilan kung bakit hindi natatapos ang 0/21 dati.
@@ -430,8 +449,16 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       // ⚠ `fatigueTs` ang batayan, HINDI ang `fatigue.length`. Ang walang laman
       // ay tamang sagot din ("walang pagod na ad") at iyon ang karaniwan — dating
       // muling humihila ng 42 request kada pagbukas ng tab dahil dito.
-      if (hit?.fatigueTs && Date.now() - hit.fatigueTs < MODEL_TTL) {
-        setFatigue(hit.fatigue); setFatigueLoading(false); return
+      if (hit?.fatigueTs) {
+        setFatigue(hit.fatigue); setFatigueLoading(false)
+        if (Date.now() - hit.fatigueTs < MODEL_TTL) return
+        // Luma na — tahimik na palitan, walang umiikot na spinner.
+        if (!FATIGUE_INFLIGHT.has(cacheKey)) {
+          const bg = runFatigue(false)
+          FATIGUE_INFLIGHT.set(cacheKey, bg)
+          bg.catch(() => {}).finally(() => FATIGUE_INFLIGHT.delete(cacheKey))
+        }
+        return
       }
       const running = FATIGUE_INFLIGHT.get(cacheKey)
       if (running) {
@@ -890,7 +917,10 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   }
   // Aling antas ang bukas kada campaign: "" (sarado) / "adset" / "ad".
   const [drillOpen, setDrillOpen] = useState<Record<string, "adset" | "ad" | "">>({})
-  const [adRows, setAdRows] = useState<Record<string, AdRow[]>>({})
+  // Buhay pa ang nahila kanina kahit nag-tab-switch ka — walang "Pulling ads…"
+  // sa pangalawang pagbukas ng parehong campaign.
+  const [adRows, setAdRows] = useState<Record<string, AdRow[]>>(
+    () => Object.fromEntries(Array.from(DRILL_CACHE, ([k, v]) => [k, v.rows as AdRow[]])))
   const [adsBusy, setAdsBusy] = useState("")
 
   // Ang parent ng drill-down: campaign sa Scaling, ang AD SET mismo sa Testing.
@@ -927,6 +957,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           ctr: r.linkCtr || 0, frequency: r.frequency || 0, impressions: r.impressions || 0,
         }
       }).sort((x, y) => y.netRoas - x.netRoas || y.spend - x.spend)
+      DRILL_CACHE.set(key, { ts: Date.now(), rows })
       setAdRows(p => ({ ...p, [key]: rows }))
     } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: ${String(e?.message).slice(0, 80)}`]) }
     setAdsBusy("")
@@ -953,7 +984,12 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       }).then(r => r.json())
       if (!j.success) throw new Error(j.error || "pause failed")
       const key = `${drillParent(s)}|ad`
-      setAdRows(p => ({ ...p, [key]: (p[key] || []).map(r => r.id === ad.id ? { ...r, status: "PAUSED" } : r) }))
+      const flip = (rows: AdRow[]) => rows.map(r => r.id === ad.id ? { ...r, status: "PAUSED" } : r)
+      setAdRows(p => ({ ...p, [key]: flip(p[key] || []) }))
+      // Isulat din sa module cache — kung hindi, babalik ang "active" pagkatapos
+      // mong lumipat ng tab at buksan muli ang parehong campaign.
+      const cached = DRILL_CACHE.get(key)
+      if (cached) DRILL_CACHE.set(key, { ...cached, rows: flip(cached.rows) })
     } catch (e: any) { setErrors(p => [...p, `${ad.name}: kill failed — ${String(e?.message).slice(0, 80)}`]) }
     setAdActBusy("")
   }

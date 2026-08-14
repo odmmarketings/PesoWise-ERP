@@ -178,14 +178,18 @@ export default function FacebookAdsPage() {
     if (dataAccounts.length === 0) { setRows([]); setTrend([]); setDaily([]); return }
     const now = Date.now()
     const key = (a: FBAccount) => `${a.id}|${from}|${to}`
-    const missing = fresh ? dataAccounts
-      : dataAccounts.filter(a => { const h = DASH_CACHE.get(key(a)); return !(h && now - h.ts < DASH_TTL) })
-    if (missing.length === 0) { applyDash(dataAccounts); setLoading(false); return }
+    const absent = dataAccounts.filter(a => !DASH_CACHE.has(key(a)))
+    const stale = dataAccounts.filter(a => { const h = DASH_CACHE.get(key(a)); return !!h && now - h.ts >= DASH_TTL })
+    const toPull = fresh ? dataAccounts : [...absent, ...stale]
 
     applyDash(dataAccounts)      // ipakita agad ang alam na natin
-    setLoading(true)
+    if (toPull.length === 0) { setLoading(false); return }
+    // ⚠ SPINNER PARA LANG SA WALANG MAIPAPAKITA — ang luma ay tahimik na
+    // pinapalitan. Ang Refresh ay hindi nagpapakita ng skeleton: nakatayo ang
+    // dashboard habang pumapasok ang bagong numero.
+    if (absent.length > 0 && !fresh) setLoading(true)
     const sums: Record<string, Record<string, number>> = {}
-    await mapLimit(missing, 4, async (a: FBAccount) => {
+    await mapLimit(toPull, 4, async (a: FBAccount) => {
       const k = key(a)
       if (!fresh) {
         const running = DASH_INFLIGHT.get(k)
@@ -947,18 +951,24 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
     if (fresh) {
       // Binago natin ang Meta — wala nang mapagkakatiwalaan ANG KAHIT ALING
       // antas (ang pag-pause ng campaign ay nagpapabago sa ad sets nito).
-      MGR_CACHE.clear()
+      // MARKAHANG LUMA, huwag burahin: ipapakita pa rin ang huling alam habang
+      // dumarating ang bago, kaya hindi nagbubukas ng butas ang talahanayan.
+      MGR_CACHE.forEach(v => { v.ts = 0 })
     }
     const now = Date.now()
-    const missing = fresh ? accts
-      : accts.filter(a => { const h = MGR_CACHE.get(accKey(a)); return !(h && now - h.ts < MGR_TTL) })
-    if (missing.length === 0) { show(); setLoading(false); return }
+    const absent = accts.filter(a => !MGR_CACHE.has(accKey(a)))
+    const stale = accts.filter(a => { const h = MGR_CACHE.get(accKey(a)); return !!h && now - h.ts >= MGR_TTL })
+    const toPull = fresh ? accts : [...absent, ...stale]
 
     // May naka-cache nang bahagi? Ipakita agad — huwag itago ang alam na natin
     // sa likod ng spinner habang hinihintay ang natitira.
     show()
-    setLoading(true)
-    await mapLimit(missing, 3, async (a: FBAccount) => {
+    if (toPull.length === 0) { setLoading(false); return }
+    // ⚠ SPINNER PARA LANG SA WALANG MAIPAPAKITA. Ang luma ay tahimik na
+    // pinapalitan — kapag nakita mo na ang Ad Sets minsan, hindi ka na dapat
+    // makakita ng "Loading…" doon kailanman, kahit lumipas na ang TTL.
+    if (absent.length > 0 && !fresh) setLoading(true)
+    await mapLimit(toPull, 3, async (a: FBAccount) => {
       const key = accKey(a)
       if (!fresh) {
         const running = MGR_INFLIGHT.get(key)
