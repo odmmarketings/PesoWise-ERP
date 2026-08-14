@@ -171,6 +171,25 @@
 .dark [class~="hover:bg-rose-100"]:hover, .dark [class~="hover:bg-red-100"]:hover {
   background-color: color-mix(in srgb, currentColor 22%, var(--dk-surface));
 }
+
+/* ⚠ ANG MAY-KULAY NA TINT NA MAY SLASH-OPACITY ay ibang token din — hindi
+   tinatamaan ng `[class~="bg-blue-50"]` sa itaas ang `bg-blue-50/40`. Ito ang
+   kulay ng HOVER NG HALOS BAWAT TALAHANAYAN sa app (`hover:bg-blue-50/40`, nasa
+   18 pahina), kaya sa madilim na tema ay kumikislap ng mapusyaw na asul ang
+   bawat row na dinadaanan ng mouse — at kulay-abo ang bagong panel ng rules
+   (nahuli ng may-ari, Ago 14 2026). Ang parehong `color-mix` na pormula, pero
+   may alpha para manatiling banayad ang tint gaya ng orihinal na disenyo.
+   Isa-isang isinusulat ang mga antas na TALAGANG ginagamit — walang `*=`. */
+.dark [class~="bg-blue-50/40"], .dark [class~="bg-blue-50/50"], .dark [class~="bg-blue-50/60"],
+.dark [class~="bg-red-50/60"], .dark [class~="bg-amber-50/40"] {
+  background-color: color-mix(in srgb, currentColor 16%, var(--dk-surface));
+}
+.dark [class~="hover:bg-blue-50/30"]:hover, .dark [class~="hover:bg-blue-50/40"]:hover {
+  background-color: color-mix(in srgb, currentColor 20%, var(--dk-surface));
+}
+.dark [class~="hover:bg-slate-50/60"]:hover, .dark [class~="hover:bg-slate-50/70"]:hover {
+  background-color: var(--dk-raised);
+}
 .dark .text-emerald-700, .dark .text-emerald-600 { color: #4ade80; }
 .dark .text-green-700, .dark .text-green-600 { color: #4ade80; }
 .dark .text-teal-700, .dark .text-teal-600 { color: #2dd4bf; }
