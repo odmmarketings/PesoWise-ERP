@@ -1331,11 +1331,25 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
             <b>Registered {s.reg.registered_at}</b>
             {s.sinceReg && <> · day {s.sinceReg.days} · {peso(s.sinceReg.spend)} spent · net <b className={s.sinceReg.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.sinceReg.netRoas < rules.killRoas ? "text-rose-600" : ""}>{dec(s.sinceReg.netRoas)}</b> · {s.sinceReg.purchases} purchases</>}
           </p>
-          {s.reg.scales.map((sc, i) => (
+          {s.reg.scales.map((sc, i) => {
+          const isLast = i === s.reg!.scales.length - 1
+          // ⚠ HINDI TUGMA ANG TALA SA TOTOO. Kung ang buhay na budget ay iba sa
+          // `to` ng huling step, hindi na totoo ang kasaysayan — ibinalik sa Ads
+          // Manager, hindi tumalab ang pagtaas, o aksidente ang buong hakbang.
+          // Tahimik itong nangyari (₱1,000 sa Meta, ₱1,100 ang tala, at "+0%"
+          // ang badge — Ago 14 2026); dapat itong hayagang sabihin.
+          const live = budgetTarget(s.adset).amount
+          const drifted = isLast && sc.applied && live > 0 && live !== sc.to
+          return (
             <p key={i} className={`flex items-center gap-2 flex-wrap ${sc.applied ? "" : "text-amber-600"}`}>
               <span>#{i + 1} · {sc.date} · +{sc.pct}% · {peso(sc.from)} → {peso(sc.to)}{sc.applied ? "" : " (recorded only — CBO, raise on the campaign)"}</span>
+              {drifted && (
+                <span className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                  ⚠ the budget is {peso(live)} on Facebook now, not {peso(sc.to)} — this step no longer matches. Undo it if it wasn&apos;t you.
+                </span>
+              )}
               {/* Undo sa HULING step lang — aksidenteng pindot ang tinatarget nito */}
-              {isScaling && i === s.reg!.scales.length - 1 && (
+              {isScaling && isLast && (
                 <button onClick={() => undoScale(s)} disabled={undoBusy === s.adset.id}
                   title={sc.applied ? `Reverts the budget to ${peso(sc.from)} on Facebook and removes this step` : "Removes this recorded step"}
                   className="text-[10px] flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 disabled:opacity-50">
@@ -1343,7 +1357,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
                 </button>
               )}
             </p>
-          ))}
+          ) })}
         </div>
       )}
       {aiOpen === s.adset.id && aiText[s.adset.id] && (
