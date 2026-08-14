@@ -898,6 +898,18 @@ type MgrFocus = {
 }
 type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
+/** Ilang araw nang umiiral ang object — 0 kung walang petsa mula kay Meta. */
+const daysOldOf = (iso: string) => {
+  const t = new Date(iso).getTime()
+  if (!isFinite(t)) return 0
+  return Math.max(0, Math.floor((Date.now() - t) / 86400_000))
+}
+/** "today" / "3d ago" / "2mo ago" — pang-scan, hindi pang-eksaktong petsa. */
+const agoOf = (iso: string) => {
+  const d = daysOldOf(iso)
+  if (!iso) return ""
+  return d === 0 ? "today" : d === 1 ? "yesterday" : d < 30 ? `${d}d ago` : `${Math.floor(d / 30)}mo ago`
+}
 // Ad-preview placement formats (mirrors Meta's preview switcher).
 const PREVIEW_FORMATS = [
   { key: "MOBILE_FEED_STANDARD", label: "Mobile feed" },
@@ -1252,9 +1264,12 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
     k === "On" ? (/active/i.test(r.status) ? 1 : 0)
       : k === "Name" ? r.name.toLowerCase()
         : k === "Status" ? r.status
-          : k === "Created" ? r.createdTime
-            : k === "Last edited" ? r.updatedTime
-              : (cols.find(c => c.l === k)?.v(r) ?? 0)
+          // Ang Age ay BILANG, hindi teksto: ang pag-sort sa "79d old" bilang
+          // string ay maglalagay ng 100d bago ang 79d.
+          : k === "Age" ? daysOldOf(r.createdTime)
+            : k === "Started" ? r.createdTime
+              : k === "Last edited" ? r.updatedTime
+                : (cols.find(c => c.l === k)?.v(r) ?? 0)
   ), [levelRows, sort, cols])
   const mgrTotal = computeTotal(levelRows)
 
@@ -1530,14 +1545,20 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                     <th className="px-4 py-2.5 font-semibold text-slate-600 border-r border-slate-200">
                       <button onClick={() => setSort(s => nextSort(s, "Status"))} className="flex items-center gap-1 hover:text-blue-600">Status <SortArrow active={sort?.key === "Status"} dir={sort?.dir || "desc"} /></button>
                     </th>
-                    {cols.map(c => (
-                      <th key={c.l} className="px-4 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-right min-w-[110px] border-r border-slate-200">
-                        <button onClick={() => setSort(s => nextSort(s, c.l))} className="flex items-center gap-1 justify-end w-full hover:text-blue-600">{c.l} <SortArrow active={sort?.key === c.l} dir={sort?.dir || "desc"} /></button>
+                    {/* Ang buhay ng object — edad, kailan nagsimula, kailan huling
+                        ginalaw. Dating nasa DULO ng talahanayan, pagkatapos ng
+                        15 metric column: kailangan mong mag-scroll pahalang bago
+                        mo pa makita, kaya para na ring wala. Dito, katabi ng
+                        pangalan at status, kung saan mo naman talaga sila
+                        tinitingnan (hiling ng may-ari, Ago 14 2026). */}
+                    {["Age", "Started", "Last edited"].map(h => (
+                      <th key={h} className="px-4 py-2.5 font-semibold text-slate-600 whitespace-nowrap border-r border-slate-200">
+                        <button onClick={() => setSort(s => nextSort(s, h))} className="flex items-center gap-1 hover:text-blue-600">{h} <SortArrow active={sort?.key === h} dir={sort?.dir || "desc"} /></button>
                       </th>
                     ))}
-                    {["Created", "Last edited"].map(h => (
-                      <th key={h} className="px-4 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-right border-r border-slate-200 last:border-r-0">
-                        <button onClick={() => setSort(s => nextSort(s, h))} className="flex items-center gap-1 justify-end w-full hover:text-blue-600">{h} <SortArrow active={sort?.key === h} dir={sort?.dir || "desc"} /></button>
+                    {cols.map(c => (
+                      <th key={c.l} className="px-4 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-right min-w-[110px] border-r border-slate-200 last:border-r-0">
+                        <button onClick={() => setSort(s => nextSort(s, c.l))} className="flex items-center gap-1 justify-end w-full hover:text-blue-600">{c.l} <SortArrow active={sort?.key === c.l} dir={sort?.dir || "desc"} /></button>
                       </th>
                     ))}
                   </tr>
@@ -1574,6 +1595,25 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                           </div>
                         </td>
                         <td className="px-4 py-3 border-r border-slate-100"><span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${statusColor(r.status)}`}>{statusLabel(r.status)}</span></td>
+                        <td className="px-4 py-3 whitespace-nowrap border-r border-slate-100">
+                          {r.createdTime
+                            ? <span title={`Started ${fmtD(r.createdTime)}`}
+                                className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
+                                {daysOldOf(r.createdTime)}d old
+                              </span>
+                            : <span className="text-slate-400 text-xs">—</span>}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-slate-600 border-r border-slate-100">{fmtD(r.createdTime)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-slate-600 border-r border-slate-100">
+                          {r.updatedTime
+                            ? <span className="inline-flex flex-col">
+                                <span>{fmtD(r.updatedTime)}</span>
+                                {/* Ang "ilang araw na" ang tunay na tanong dito: kagagalaw
+                                    lang ba nito, o hindi na ginagalaw? */}
+                                <span className="text-[10px] text-slate-400">{agoOf(r.updatedTime)}</span>
+                              </span>
+                            : "—"}
+                        </td>
                         {cols.map(c => (
                           <td key={c.l} className="px-4 py-3 text-right tabular-nums whitespace-nowrap text-slate-700 border-r border-slate-100">
                             {c.l === "Budget" && level !== "ad" ? (
@@ -1597,8 +1637,6 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                             ) : c.l === "ROAS" ? <span className={`inline-block px-2 py-0.5 rounded-md font-semibold ${roasBg(r.roas)}`}>{c.f(r)}</span> : c.f(r)}
                           </td>
                         ))}
-                        <td className="px-4 py-3 text-right text-slate-500 whitespace-nowrap border-r border-slate-100">{fmtD(r.createdTime)}</td>
-                        <td className="px-4 py-3 text-right text-slate-500 whitespace-nowrap">{fmtD(r.updatedTime)}</td>
                       </tr>
                     )
                   })}
@@ -1609,13 +1647,15 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                     <td className="px-2 py-3 sticky left-[43px] z-10 bg-slate-100 border-l border-slate-200 w-[52px] min-w-[52px] max-w-[52px]" />
                     <td className="px-3 py-3 sticky left-[94px] z-10 bg-slate-100 min-w-[240px] border-l border-r border-slate-200">TOTAL <span className="font-normal text-slate-400">· {sortedRows.length} {nameHdr.toLowerCase()}{sortedRows.length === 1 ? "" : "s"}</span></td>
                     <td className="px-4 py-3 border-r border-slate-200" />
+                    {/* Status + Age + Started + Last edited — walang kabuuan ang mga ito */}
+                    <td className="px-4 py-3 border-r border-slate-200" />
+                    <td className="px-4 py-3 border-r border-slate-200" />
+                    <td className="px-4 py-3 border-r border-slate-200" />
                     {cols.map(c => (
-                      <td key={c.l} className="px-4 py-3 text-right tabular-nums whitespace-nowrap border-r border-slate-200">
+                      <td key={c.l} className="px-4 py-3 text-right tabular-nums whitespace-nowrap border-r border-slate-200 last:border-r-0">
                         {c.l === "ROAS" ? <span className={`inline-block px-2 py-0.5 rounded-md ${roasBg(mgrTotal.roas)}`}>{c.f(mgrTotal)}</span> : c.f(mgrTotal)}
                       </td>
                     ))}
-                    <td className="px-4 py-3 border-r border-slate-200" />
-                    <td className="px-4 py-3" />
                   </tr>
                 </tfoot>
               </table>
