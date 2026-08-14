@@ -866,6 +866,8 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         body: JSON.stringify({ token: item.token, action: "status", id: item.id, status: "ACTIVE" }),
       }).then(r => r.json())
       if (!j.success) throw new Error(j.error || "undo failed")
+      logAds({ action: "status", level, objectId: item.id, objectName: item.name,
+        accountName: "", surface: mode, summary: "Re-activated (undo of auto-pause)" })
       saveLog(prev => ({ ...prev, items: prev.items.filter(x => x.id !== item.id) }))
       setAdsets(prev => prev.map(m => m.id === item.id ? { ...m, status: "ACTIVE" } : m))
     } catch (e: any) { setErrors(prev => [...prev, `${item.name}: undo failed — ${String(e?.message).slice(0, 80)}`]) }

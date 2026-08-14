@@ -253,7 +253,7 @@ export default function FacebookAdsPage() {
       <div className="flex items-center justify-between flex-wrap gap-3 pb-4 mb-1 border-b border-slate-100">
         <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Megaphone className="w-5 h-5" /> FACEBOOK ADS</h1>
         <div className="flex items-center gap-2">
-          <DateRangePicker a={from} b={to} variant="header"
+          <DateRangePicker a={from} b={to} variant="header" withMax
             onApply={(a, b) => { setFrom(a || defaultDateA()); setTo(b || defaultDateB()) }} placeholder="Today" />
           <button onClick={() => load(true)} className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
         </div>
@@ -2094,6 +2094,10 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
     try {
       const j = await post({ token, action: "rule_update", id: r.id, rule: { evaluation_spec: { ...(r.evaluation_spec || {}), evaluation_type: r.evaluation_spec?.evaluation_type || "SCHEDULE", filters: fs } } })
       if (!j.success) throw new Error(j.error || "Failed")
+      logAds({ action: "rule_scope", level: "rule", objectId: r.id, objectName: r.name,
+        accountName: r.__accName, surface: "rules",
+        summary: `Applied to ${ids.length} more ${ENTITY_WORD[ent][ids.length === 1 ? 0 : 1]}`,
+        details: { added: ids } })
       setView("")
       notify(`Rule "${r.name}" applied to ${ids.length} ${ENTITY_WORD[ent][ids.length === 1 ? 0 : 1]}.`)
     } catch (e: any) { setErr(e?.message || "Failed to apply the rule") }

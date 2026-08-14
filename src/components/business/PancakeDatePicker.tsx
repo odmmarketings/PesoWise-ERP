@@ -23,6 +23,12 @@ const DATE_PRESETS: { l: string; range: () => { a: string; b: string } }[] = [
   { l: "This month", range: () => { const n = new Date(); return { a: pfmt(new Date(n.getFullYear(), n.getMonth(), 1)), b: pfmt(n) } } },
   { l: "Last month", range: () => { const n = new Date(); return { a: pfmt(new Date(n.getFullYear(), n.getMonth() - 1, 1)), b: pfmt(new Date(n.getFullYear(), n.getMonth(), 0)) } } },
 ]
+// "Maximum" — 37 buwan pabalik, ang pinakamalayong maibibigay ng Meta insights
+// (iyon mismo ang tawag dito ng Ads Manager ni Meta). OPT-IN kada picker
+// (`withMax`): ang parehong component ay ginagamit ng mga Pancake na pahina, at
+// ang 3-taóng hila sa Pancake orders API ay mag-ti-timeout lang — doon, walang
+// ganitong preset na dapat lumitaw.
+const MAX_PRESET = { l: "Maximum", range: () => { const n = new Date(); return { a: pfmt(new Date(n.getFullYear(), n.getMonth() - 37, n.getDate())), b: pfmt(n) } } }
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 function MonthGrid({ year, month, selA, selB, onPick }: { year: number; month: number; selA: string; selB: string; onPick: (d: string) => void }) {
@@ -59,9 +65,12 @@ function MonthGrid({ year, month, selA, selB, onPick }: { year: number; month: n
 
 const fmtFull = (ds: string) => { const d = new Date(ds); return `${MONTH_NAMES[d.getMonth()].toUpperCase()} ${String(d.getDate()).padStart(2, "0")}, ${d.getFullYear()}` }
 
-export function DateRangePicker({ a, b, onApply, placeholder = "All", variant = "compact" }: {
+export function DateRangePicker({ a, b, onApply, placeholder = "All", variant = "compact", withMax = false }: {
   a: string; b: string; onApply: (a: string, b: string) => void; placeholder?: string; variant?: "compact" | "header"
+  /** Isama ang "Maximum" (37 buwan — hangganan ng Meta insights). Para sa FB Ads lang. */
+  withMax?: boolean
 }) {
+  const presets = withMax ? [...DATE_PRESETS, MAX_PRESET] : DATE_PRESETS
   const [open, setOpen] = useState(false)
   const [selA, setSelA] = useState(a)
   const [selB, setSelB] = useState(b)
@@ -100,7 +109,7 @@ export function DateRangePicker({ a, b, onApply, placeholder = "All", variant = 
   const label = variant === "header"
     ? (a && b ? `${fmtFull(a)} - ${fmtFull(b)}` : placeholder)
     : a && b ? (a === b ? a : `${a.slice(5)} → ${b.slice(5)}`) : a ? `${a} →` : placeholder
-  const activePreset = DATE_PRESETS.find(p => { const r = p.range(); return r.a === selA && r.b === selB })?.l
+  const activePreset = presets.find(p => { const r = p.range(); return r.a === selA && r.b === selB })?.l
 
   return (
     <>
@@ -124,7 +133,7 @@ export function DateRangePicker({ a, b, onApply, placeholder = "All", variant = 
           <div ref={panelRef} className="fixed z-[95] bg-white border border-slate-200 rounded-xl shadow-2xl flex" style={{ left: pos.left, top: pos.top }}>
             {/* Preset rail */}
             <div className="w-[130px] border-r border-slate-100 py-2">
-              {DATE_PRESETS.map(p => (
+              {presets.map(p => (
                 <button key={p.l} type="button" onClick={() => { const r = p.range(); setSelA(r.a); setSelB(r.b); const d = new Date(r.a); setView({ y: d.getFullYear(), m: d.getMonth() }) }}
                   className={`w-full text-left px-4 py-1.5 text-[13px] ${activePreset === p.l ? "text-blue-600 font-semibold" : "text-slate-700 hover:bg-slate-50"}`}>
                   {p.l}
