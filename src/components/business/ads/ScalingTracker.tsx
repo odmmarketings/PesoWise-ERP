@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react"
 import {
-  TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
+  TrendingUp, Skull, Eye, Flame, RefreshCw, Settings,
   ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X, LayoutGrid, Layers,
   ExternalLink,
 } from "lucide-react"
@@ -1168,42 +1168,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     setAdActBusy("")
   }
 
-  // ── AI ─────────────────────────────────────────────────────────────────────
-  const [aiOpen, setAiOpen] = useState<string>("")     // adset id na may bukas na opinion
-  const [aiText, setAiText] = useState<Record<string, string>>({})
-  const [aiBusy, setAiBusy] = useState<string>("")
-  const [askQ, setAskQ] = useState("")
-  const [askA, setAskA] = useState("")
-
-  const compactRow = (s: Signal) => ({
-    adset: s.adset.name, campaign: s.adset.campaignName, account: s.adset.account.name,
-    signal: s.kind, rule: s.rule, streak: s.streak, status: s.adset.status,
-    // ⚠ `s.adset.budget` ay LAGING 0 sa Scaling tab (nasa campaign ang CBO), kaya
-    // "walang budget" ang sinasabi natin sa AI para sa BAWAT scaling campaign —
-    // at doon nakabatay ang payo nito sa morning brief. budgetTarget ang tama.
-    budget: budgetTarget(s.adset).amount,
-    budgetLevel: budgetTarget(s.adset).level,
-    rtsRate: +s.adset.rtsRate.toFixed(3),
-    today: { spend: Math.round(s.todaySpend), netRoas: +dec(s.todayNet) },
-    d3: { spend: Math.round(s.windows.w3.spend), netRoas: +dec(s.windows.w3.netRoas), cpp: Math.round(s.windows.w3.cpp) },
-    d7: { spend: Math.round(s.windows.w7.spend), netRoas: +dec(s.windows.w7.netRoas) },
-    d15: { spend: Math.round(s.windows.w15.spend), netRoas: +dec(s.windows.w15.netRoas) },
-    d31: { spend: Math.round(s.windows.w31.spend), netRoas: +dec(s.windows.w31.netRoas) },
-  })
-  async function askAi(mode: "row" | "brief" | "ask", s?: Signal) {
-    const key = mode === "row" && s ? s.adset.id : mode
-    setAiBusy(key)
-    try {
-      const rows = mode === "row" && s ? [compactRow(s)] : view.map(compactRow)
-      const j = await fetch("/api/ai/scaling", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, rows, question: mode === "ask" ? askQ : undefined }),
-      }).then(r => r.json())
-      const text = j.success ? j.text : `⚠ ${j.error}`
-      if (mode === "row" && s) { setAiText(p => ({ ...p, [s.adset.id]: text })); setAiOpen(s.adset.id) }
-      else setAskA(text)
-    } finally { setAiBusy("") }
-  }
+  // ── AI: INALIS (Ago 14 2026) ───────────────────────────────────────────────
+  // Nawala ang per-row na "AI opinion", ang "Morning brief", at ang "Ask AI" na
+  // kahon — pati ang `api/ai/scaling` na route at ang `compactRow` na
+  // tagapaghanda ng payload. Desisyon ng may-ari: hindi ikokonekta ang AI dito.
+  // Ang mga panuntunan (Rules panel) ang humahatol; walang AI sa daloy na ito.
 
   // ── UI ─────────────────────────────────────────────────────────────────────
   const Row = ({ s, accent }: { s: Signal; accent: string }) => (
@@ -1311,10 +1280,6 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
               <X className="w-3 h-3" />
             </button>
           )}
-          <button onClick={() => askAi("row", s)} disabled={aiBusy === s.adset.id}
-            className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md border border-violet-200 text-violet-600 hover:bg-violet-50 disabled:opacity-50">
-            <Sparkles className="w-3 h-3" /> {aiBusy === s.adset.id ? "…" : "AI opinion"}
-          </button>
           {/* Sa Testing, ang bagong Kill button sa itaas na ang panpatay — doble
               kung isasama pa ito. Sa Scaling (campaign) lang ang Pause now. */}
           {isCampaign && !isMonitoring && s.kind === "kill" && /active/i.test(s.adset.status) && (
@@ -1388,9 +1353,6 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
             </p>
           ) })}
         </div>
-      )}
-      {aiOpen === s.adset.id && aiText[s.adset.id] && (
-        <div className="text-[13px] bg-violet-50 border border-violet-200 rounded-md p-2.5 text-slate-700 whitespace-pre-wrap">{aiText[s.adset.id]}</div>
       )}
       {/* Drill-down: ad sets/ads sa campaign (Scaling) o ads sa ad set (Testing) */}
       {drillOpen[drillParent(s)] && (() => {
@@ -1537,10 +1499,6 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
               )}
             </>
           )}
-          <button onClick={() => askAi("brief")} disabled={aiBusy === "brief" || loading}
-            className="h-9 px-3 rounded-lg bg-violet-600 text-white text-sm flex items-center gap-1.5 hover:bg-violet-700 disabled:opacity-50">
-            <Sparkles className="w-4 h-4" /> {aiBusy === "brief" ? "Thinking…" : "Morning brief"}
-          </button>
           <button onClick={() => setSettingsOpen(o => !o)} className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 flex items-center gap-1.5 hover:bg-slate-50">
             <Settings className="w-4 h-4" /> Rules
           </button>
@@ -1840,20 +1798,6 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
               ))}
           </div>
 
-          {/* Ask AI */}
-          <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
-            <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-violet-600" /> Ask AI <span className="font-normal text-slate-400">— context: the {view.length} signal rows shown{fOwner !== "All" ? ` (${fOwner})` : ""}</span></p>
-            <div className="flex gap-2">
-              <input value={askQ} onChange={e => setAskQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && askQ.trim()) askAi("ask") }}
-                placeholder="e.g. why did Lumyra Katarata drop the last 3 days?"
-                className="flex-1 h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-              <button onClick={() => askAi("ask")} disabled={!askQ.trim() || aiBusy === "ask"}
-                className="h-10 px-4 rounded-lg bg-violet-600 text-white text-sm flex items-center gap-1.5 hover:bg-violet-700 disabled:opacity-50">
-                <Send className="w-4 h-4" /> {aiBusy === "ask" ? "…" : "Ask"}
-              </button>
-            </div>
-            {askA && <div className="text-[13px] bg-violet-50 border border-violet-200 rounded-md p-3 text-slate-700 whitespace-pre-wrap">{askA}</div>}
-          </div>
         </>
       )}
     </div>

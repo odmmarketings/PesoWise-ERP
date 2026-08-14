@@ -127,6 +127,40 @@ export function useAdsActivity(limit = 500) {
   return { rows, loading, error, refresh }
 }
 
+/**
+ * Sinong PESOWISE user ang huling gumalaw sa bawat rule.
+ *
+ * ⚠ Hindi ito ang `created_by` ni Meta. Iisang Facebook token ang hawak ng
+ * tatlong buyer, kaya IISANG pangalan lang ang alam ni Meta — ang may-ari ng
+ * token. Walang saysay iyon sa tanong na "sino sa atin ang gumawa nito".
+ */
+export function useRuleEditors() {
+  const [byRule, setByRule] = useState<Record<string, { user: string; action: string; at: string }>>({})
+
+  const refresh = useCallback(async () => {
+    try {
+      const businessId = await getBusinessId()
+      if (!businessId) return
+      const supabase = createSupabaseBrowserClient()
+      const { data, error } = await supabase
+        .from("ads_activity_log").select("object_id,user_name,action,at")
+        .eq("business_id", businessId).eq("level", "rule")
+        .order("at", { ascending: false }).limit(1000)
+      if (error || !data) return
+      // Naka-sort na pababa, kaya ang UNA kada rule ang pinakahuli.
+      const m: Record<string, { user: string; action: string; at: string }> = {}
+      for (const r of data as any[]) {
+        if (!r.object_id || m[r.object_id]) continue
+        m[r.object_id] = { user: r.user_name || "", action: r.action || "", at: r.at }
+      }
+      setByRule(m)
+    } catch { /* walang log = walang ipapakita, hindi error */ }
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+  return { byRule, refresh }
+}
+
 /** Salitang nababasa ng tao para sa bawat aksyon. */
 export const ACTION_LABEL: Record<string, string> = {
   status: "Turned on / off",

@@ -4,7 +4,7 @@ import {
   Megaphone, RefreshCw, Wallet, TrendingUp, ShoppingCart, Target, MessageSquare,
   LayoutDashboard, CalendarDays, Settings2, ChevronDown, Search, Play, Pause, Link2,
   ArrowUp, ArrowDown, ArrowUpDown, ChevronRight, X, LayoutGrid, Layers, Pencil, Check, Trash2, CheckCircle2, Eye,
-  ExternalLink, Send, Wrench, Info, MoreHorizontal, Activity, FlaskConical,
+  ExternalLink, Send, Wrench, Info, MoreHorizontal, Activity, FlaskConical, Volume2, VolumeX,
 } from "lucide-react"
 import { format } from "date-fns"
 import {
@@ -15,7 +15,8 @@ import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { ScalingTracker } from "@/components/business/ads/ScalingTracker"
-import { logAds, logAdsMany } from "@/lib/ads-activity-store"
+import { logAds, logAdsMany, useRuleEditors, ACTION_LABEL } from "@/lib/ads-activity-store"
+import { playToggle, playError, sfxOn, setSfxOn } from "@/lib/ui-feedback"
 
 const VAT = 1.12
 // Default range = NGAYONG ARAW lang (hindi buong buwan). Iisang state lang ito kaya
@@ -988,6 +989,19 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
   // Status toggles are NOT drafted: they publish to Facebook immediately (see setStatusNow).
   const [drafts, setDrafts] = useState<Record<string, { id: string; name: string; accountId: string; budget?: number }>>({})
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())   // rows whose on/off is being applied on FB right now
+  // ⚠ ANG BASA PAGKATAPOS NG SULAT AY HULI SA META. Tinatanggap ni Meta ang
+  // pagbukas, pero ang kasunod na `load(true)` ay ibinabalik pa rin ang LUMANG
+  // configured_status — kaya nabubura ang optimistic flip at mukhang OFF pa rin
+  // ang kabubukas mo lang (iniulat ng may-ari, Ago 14 2026). Ang tinanggap na
+  // halaga ay hawak dito at ipinapatong sa anumang isinasagot ni Meta, hanggang
+  // sumang-ayon si Meta — o hanggang mag-expire (baka tinanggihan pala).
+  const [pendingStatus, setPendingStatus] = useState<Record<string, { to: "ACTIVE" | "PAUSED"; at: number }>>({})
+  const PENDING_TTL = 5 * 60_000
+  // Maikling kislap pagkatapos ng matagumpay na pagpalit — para may makita kang
+  // nangyari, hindi lang basta lumipat ang kulay.
+  const [flashOn, setFlashOn] = useState<Record<string, "ACTIVE" | "PAUSED">>({})
+  const [sfx, setSfx] = useState(true)
+  useEffect(() => { setSfx(sfxOn()) }, [])
   // Automated rules (Meta adrules_library): More ▾ → Create a new rule / Manage rules
   const [moreOpen, setMoreOpen] = useState(false)
   const [rulesView, setRulesView] = useState<RulesView>("")
@@ -1117,6 +1131,12 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
     try {
       const j = await fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "status", id: r.id, status }) }).then(rr => rr.json())
       if (!j.success) throw new Error(j.error || "Failed")
+      // Tinanggap ni Meta. Hawakan ang halagang ito kahit ano pa ang isagot ng
+      // susunod na hila — huli siya sa sarili niyang sulat.
+      setPendingStatus(p => ({ ...p, [r.id]: { to: status, at: Date.now() } }))
+      playToggle(status === "ACTIVE")
+      setFlashOn(f => ({ ...f, [r.id]: status }))
+      setTimeout(() => setFlashOn(f => { const n = { ...f }; delete n[r.id]; return n }), 700)
       setTogglingIds(s => { const n = new Set(s); n.delete(r.id); return n })
       logAds({ action: "status", level, objectId: r.id, objectName: r.name, accountName: r.accountName,
         summary: status === "ACTIVE" ? "Turned ON" : "Turned OFF", surface: "ads-manager",
@@ -1127,7 +1147,9 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
       setTimeout(() => setPublishToast(null), 6000)
     } catch (e: any) {
       setRows(rs => rs.map(x => x.id === r.id ? { ...x, ...prev } : x))   // revert the optimistic flip
+      setPendingStatus(p => { const n = { ...p }; delete n[r.id]; return n })
       setTogglingIds(s => { const n = new Set(s); n.delete(r.id); return n })
+      playError()
       flash("⚠ " + (e?.message || "Failed"))
     }
   }
@@ -1148,6 +1170,7 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
         const j = await fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "status", id: r.id, status }) }).then(rr => rr.json())
         if (!j.success) throw new Error(j.error || "Failed")
         ok.push({ name: r.name, change: status === "ACTIVE" ? "Turned on" : "Turned off" })
+        setPendingStatus(p => ({ ...p, [r.id]: { to: status, at: Date.now() } }))
         logged.push({ action: "status", level, objectId: r.id, objectName: r.name, accountName: r.accountName,
           summary: status === "ACTIVE" ? "Turned ON (bulk)" : "Turned OFF (bulk)", surface: "ads-manager",
           details: { from: r.status, to: status, bulkOf: targets.length } })
@@ -1156,6 +1179,7 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
     }
     // Isang insert para sa buong bulk — hindi 20 magkakahiwalay na round-trip.
     logAdsMany(logged)
+    if (ok.length) playToggle(status === "ACTIVE"); else if (failed) playError()
     await new Promise(res => setTimeout(res, 450))          // hold the final fill so it's visible
     setBusy(""); setPubProgress(null)
     await load(true)
@@ -1269,7 +1293,31 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
   // 45 lang ang lumalabas — 100 ang nakatago. Ang STATUS ay status; ang "With
   // spend" ang para sa gastos. Huwag paghaluin muli.
   const passStatus = (r: MgrRow) => fStatus === "All" || (fStatus === "Active" ? /active/i.test(r.status) : fStatus === "Paused" ? /paus/i.test(r.status) : r.spend > 0)
-  const levelRows = useMemo(() => rows.map(toMgr).filter(r => {
+  // Ipinapatong ang tinanggap-na-pero-hindi-pa-iniuulat na status.
+  const applyPending = (r: MgrRow): MgrRow => {
+    const p = pendingStatus[r.id]
+    if (!p) return r
+    return { ...r, status: p.to, configuredStatus: p.to }
+  }
+  // Sumang-ayon na ba si Meta? Alisin na. Nag-e-expire din para hindi
+  // magsinungaling nang habambuhay kung tinanggihan pala ang pagbabago.
+  useEffect(() => {
+    const ids = Object.keys(pendingStatus)
+    if (ids.length === 0) return
+    const raw = new Map(rows.map((r: any) => [String(r.id), String(r.configuredStatus || r.status || "")]))
+    const now = Date.now()
+    let changed = false
+    const next = { ...pendingStatus }
+    for (const id of ids) {
+      const cur = raw.get(id)
+      const agrees = cur != null && (pendingStatus[id].to === "ACTIVE" ? /active/i.test(cur) : /paus/i.test(cur))
+      if (agrees || now - pendingStatus[id].at > PENDING_TTL) { delete next[id]; changed = true }
+    }
+    if (changed) setPendingStatus(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows])
+
+  const levelRows = useMemo(() => rows.map(toMgr).map(applyPending).filter(r => {
     if (!passStatus(r)) return false
     // Galing sa Testing/Scaling/Monitoring: ang hinahanap mo lang muna ang
     // ipinapakita. May "Show all" na buton sa banner sa itaas.
@@ -1544,6 +1592,13 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                   <div className="w-24 h-1.5 rounded-full bg-slate-200 overflow-hidden"><div className="h-full bg-blue-600 transition-[width] duration-300 ease-out" style={{ width: `${Math.round((pubProgress.done / pubProgress.total) * 100)}%` }} /></div>
                 </div>
               )}
+              {/* Tunog ng on/off — nakabukas bilang default, pero hindi lahat ay
+                  nasa tahimik na kuwarto. Naaalala sa browser na ito. */}
+              <button onClick={() => { const n = !sfx; setSfx(n); setSfxOn(n); if (n) playToggle(true) }}
+                title={sfx ? "Click sounds are on" : "Click sounds are off"}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-slate-500 hover:bg-white">
+                {sfx ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+              </button>
               <button disabled={draftCount === 0 || busy === "publish"} onClick={() => setDiscardOpen(true)} className="flex items-center gap-1 px-2.5 py-1 rounded-md text-slate-600 hover:bg-white disabled:opacity-40 disabled:hover:bg-transparent"><Trash2 className="w-3.5 h-3.5" /> Discard drafts</button>
               <button disabled={draftCount === 0 || busy === "publish"} onClick={() => { setDraftErrors({}); setReviewOpen(true) }} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40"><Check className="w-4 h-4" /> Review and publish{draftCount ? ` (${draftCount})` : ""}</button>
             </div>
@@ -1595,9 +1650,18 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                       <tr key={r.id} className={`border-b border-slate-100 ${rowBg} hover:bg-blue-50/40`}>
                         <td className={`px-3 py-3 sticky left-0 z-10 ${rowBg} w-[44px] min-w-[44px] max-w-[44px]`}><input type="checkbox" checked={selected} onChange={() => toggleRow(r.id)} className="accent-blue-600" /></td>
                         <td className={`px-2 py-3 sticky left-[43px] z-10 ${rowBg} border-l border-slate-100 w-[52px] min-w-[52px] max-w-[52px]`}>
+                          {/* Ang knob ay gumagalaw nang may kaunting lampas (spring
+                              curve) at may kislap na singsing pagkatapos ng
+                              matagumpay na palit — dating basta nagpapalit lang ng
+                              kulay, kaya hindi mo alam kung tumalab ba. */}
                           <button onClick={() => setStatusNow(r, active ? "PAUSED" : "ACTIVE")} disabled={togglingIds.has(r.id)} title={active ? "Turn off" : "Turn on"}
-                            className={`relative w-9 h-5 rounded-full transition-colors ${active ? "bg-emerald-500" : "bg-slate-300"} ${togglingIds.has(r.id) ? "opacity-70" : ""}`}>
-                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all flex items-center justify-center ${active ? "left-[18px]" : "left-0.5"}`}>
+                            className={`relative w-10 h-[22px] rounded-full transition-colors duration-300 active:scale-90 transition-transform
+                              ${active ? "bg-emerald-500" : "bg-slate-300"}
+                              ${togglingIds.has(r.id) ? "opacity-80 cursor-wait" : ""}
+                              ${flashOn[r.id] === "ACTIVE" ? "ring-4 ring-emerald-300/70" : flashOn[r.id] === "PAUSED" ? "ring-4 ring-slate-300/70" : "ring-0 ring-transparent"}
+                              ring-offset-0 transition-[box-shadow,background-color,transform] duration-300`}>
+                            <span className={`absolute top-[3px] w-4 h-4 bg-white rounded-full shadow-sm flex items-center justify-center
+                              transition-[left] duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] ${active ? "left-[21px]" : "left-[3px]"}`}>
                               {togglingIds.has(r.id) && <RefreshCw className="w-3 h-3 animate-spin text-slate-500" />}
                             </span>
                           </button>
@@ -1801,6 +1865,8 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
   // ── Apply-existing state ──
   const [applySel, setApplySel] = useState("")
   const [applying, setApplying] = useState(false)
+  // Sinong PesoWise user ang huling gumalaw kada rule (galing sa activity log).
+  const { byRule: ruleEditors, refresh: refreshRuleEditors } = useRuleEditors()
   // ── Scope panel: alin ang nakatakda sa rule na ito (tulad ng Ads Manager) ──
   const [scopeOpen, setScopeOpen] = useState("")            // rule id na bukas
   const [scopeRows, setScopeRows] = useState<ScopeObj[]>([])
@@ -1902,7 +1968,7 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
     out.sort((a, b) => (b.created_time || "").localeCompare(a.created_time || ""))
     setRules(out); setRulesLoading(false)
   }, [accounts, currentAccountId])   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (view === "manage" || view === "apply") { setConfirmDel(""); setApplySel(""); setErr(""); loadRules() } }, [view, loadRules])
+  useEffect(() => { if (view === "manage" || view === "apply") { setConfirmDel(""); setApplySel(""); setErr(""); loadRules(); refreshRuleEditors() } }, [view, loadRules, refreshRuleEditors])
 
   const setCond = (i: number, patch: Partial<RuleCond>) => setConds(cs => cs.map((c, x) => x === i ? { ...c, ...patch } : c))
   const condComplete = (c: RuleCond) => c.v1 !== "" && (!/RANGE/.test(c.op) || c.v2 !== "")
@@ -2459,7 +2525,7 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                   <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
                     <tr className="text-left text-xs text-slate-500">
                       <th className="px-4 py-2.5 font-semibold">RULE NAME</th>
-                      <th className="px-4 py-2.5 font-semibold">CREATED BY</th>
+                      <th className="px-4 py-2.5 font-semibold" title="The PesoWise user who last created or edited this rule">LAST TOUCHED BY</th>
                       {!currentAccountId && <th className="px-4 py-2.5 font-semibold">AD ACCOUNT</th>}
                       <th className="px-4 py-2.5 font-semibold">APPLIED TO</th>
                       <th className="px-4 py-2.5 font-semibold">ACTION</th>
@@ -2487,12 +2553,17 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                               <span className="block truncate" title={r.name}>{r.name}</span>
                             </span>
                             {r.created_time && <span className="text-[10px] text-slate-400 pl-5">{fmtD(r.created_time)}</span>}</td>
-                          {/* Sinong Facebook user ang gumawa nito — kasama ang mga
-                              ginawa sa Ads Manager, hindi lang ang galing dito. */}
+                          {/* ⚠ SINONG PESOWISE USER, hindi ang `created_by` ni Meta.
+                              Iisang Facebook token ang hawak ng tatlong buyer, kaya
+                              iisang pangalan lang ang alam ni Meta (ang may-ari ng
+                              token) — wala iyong saysay sa "sino sa atin". */}
                           <td className="px-4 py-3 whitespace-nowrap">
-                            {r.created_by?.name
-                              ? <span className="text-[12px] font-semibold text-slate-700">{r.created_by.name}</span>
-                              : <span className="text-[12px] text-slate-400" title="Meta didn't report a creator for this rule">—</span>}
+                            {ruleEditors[r.id]
+                              ? <span className="inline-flex flex-col">
+                                  <span className="text-[12px] font-semibold text-slate-700">{ruleEditors[r.id].user || "Unknown user"}</span>
+                                  <span className="text-[10px] text-slate-400">{ACTION_LABEL[ruleEditors[r.id].action] || ruleEditors[r.id].action} · {fmtD(ruleEditors[r.id].at)}</span>
+                                </span>
+                              : <span className="text-[12px] text-slate-400" title="Nothing recorded in PesoWise — made straight in Ads Manager, or before the activity log existed">—</span>}
                           </td>
                           {!currentAccountId && <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.__accName}</td>}
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
