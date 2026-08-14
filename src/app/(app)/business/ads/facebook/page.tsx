@@ -15,6 +15,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { ScalingTracker } from "@/components/business/ads/ScalingTracker"
+import { logAds, logAdsMany } from "@/lib/ads-activity-store"
 
 const VAT = 1.12
 // Default range = NGAYONG ARAW lang (hindi buong buwan). Iisang state lang ito kaya
@@ -1117,6 +1118,9 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
       const j = await fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "status", id: r.id, status }) }).then(rr => rr.json())
       if (!j.success) throw new Error(j.error || "Failed")
       setTogglingIds(s => { const n = new Set(s); n.delete(r.id); return n })
+      logAds({ action: "status", level, objectId: r.id, objectName: r.name, accountName: r.accountName,
+        summary: status === "ACTIVE" ? "Turned ON" : "Turned OFF", surface: "ads-manager",
+        details: { from: prev.status, to: status } })
       await load(true)   // fresh pull so effective status/cache match FB
       setLastPublished([{ name: r.name, change: status === "ACTIVE" ? "Turned on" : "Turned off" }])
       setPublishToast({ count: 1, label: nameHdr })
@@ -1134,6 +1138,7 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
     setBusy("publish"); setPubProgress({ done: 0, total: targets.length })
     await new Promise(res => setTimeout(res, 30))           // let the empty bar paint first so it can animate
     const ok: { name: string; change: string }[] = []
+    const logged: Parameters<typeof logAdsMany>[0] = []
     let failed = 0
     for (let i = 0; i < targets.length; i++) {
       const r = targets[i]
@@ -1143,9 +1148,14 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
         const j = await fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "status", id: r.id, status }) }).then(rr => rr.json())
         if (!j.success) throw new Error(j.error || "Failed")
         ok.push({ name: r.name, change: status === "ACTIVE" ? "Turned on" : "Turned off" })
+        logged.push({ action: "status", level, objectId: r.id, objectName: r.name, accountName: r.accountName,
+          summary: status === "ACTIVE" ? "Turned ON (bulk)" : "Turned OFF (bulk)", surface: "ads-manager",
+          details: { from: r.status, to: status, bulkOf: targets.length } })
       } catch { failed++ }
       setPubProgress({ done: i + 1, total: targets.length })
     }
+    // Isang insert para sa buong bulk — hindi 20 magkakahiwalay na round-trip.
+    logAdsMany(logged)
     await new Promise(res => setTimeout(res, 450))          // hold the final fill so it's visible
     setBusy(""); setPubProgress(null)
     await load(true)
@@ -1162,17 +1172,27 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
     setBusy("publish"); setPubProgress({ done: 0, total: list.length })
     await new Promise(res => setTimeout(res, 30))           // let the empty bar paint first so it can animate
     const errs: Record<string, string> = {}
+    const budgetLogs: Parameters<typeof logAdsMany>[0] = []
     for (let i = 0; i < list.length; i++) {
       const dr = list[i]
       const token = accById(dr.accountId)?.token || ""
       const post = (body: any) => fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) }).then(r => r.json())
       try {
         if (!token) throw new Error("No token for this account")
-        if (dr.budget != null) { const j = await post({ action: "update", id: dr.id, daily_budget: dr.budget }); if (!j.success) throw new Error(j.error || "Failed") }
+        if (dr.budget != null) {
+          const j = await post({ action: "update", id: dr.id, daily_budget: dr.budget })
+          if (!j.success) throw new Error(j.error || "Failed")
+          const before = levelRows.find(x => x.id === dr.id)?.ownBudget ?? 0
+          budgetLogs.push({ action: "budget", level, objectId: dr.id, objectName: dr.name,
+            accountName: accById(dr.accountId)?.name || "",
+            summary: `${before > 0 ? peso(before) : "—"} → ${peso(dr.budget)}`,
+            surface: "ads-manager", details: { from: before, to: dr.budget, via: "published draft" } })
+        }
       } catch (e: any) { errs[dr.id] = e?.message || "Failed" }
       setPubProgress({ done: i + 1, total: list.length })   // fill the bar as each item completes
     }
     await new Promise(res => setTimeout(res, 450))          // hold the final fill so it's visible
+    logAdsMany(budgetLogs)
     setBusy(""); setPubProgress(null); setDraftErrors(errs)
     const failed = Object.keys(errs)
     if (failed.length === 0) {
@@ -1202,6 +1222,9 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
     try {
       const j = await fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "update", id: r.id, daily_budget: Math.round(v) }) }).then(rr => rr.json())
       if (!j.success) throw new Error(j.error || "Failed")
+      logAds({ action: "budget", level, objectId: r.id, objectName: r.name, accountName: r.accountName,
+        summary: `${r.ownBudget > 0 ? peso(r.ownBudget) : "—"} → ${peso(Math.round(v))}`,
+        surface: "ads-manager", details: { from: r.ownBudget, to: Math.round(v), via: "publish now" } })
       setLastPublished([{ name: r.name, change: `Budget → ${peso(Math.round(v))}` }])
       setPublishToast({ count: 1, label: nameHdr })
       setTimeout(() => setPublishToast(null), 6000)
@@ -1673,7 +1696,7 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
 
 // ═════════════════ Automated rules — Meta adrules_library, mirrors Ads Manager's "More ▾ → Automated rules" ═════════════════
 type RulesView = "" | "choose" | "create" | "apply" | "manage"
-type FBRule = { id: string; name: string; status: string; created_time?: string; evaluation_spec?: any; execution_spec?: any; schedule_spec?: any; __accId: string; __accName: string }
+type FBRule = { id: string; name: string; status: string; created_time?: string; created_by?: { id?: string; name?: string }; evaluation_spec?: any; execution_spec?: any; schedule_spec?: any; __accId: string; __accName: string }
 
 // Metric filter fields supported by the ad-rules engine. Currency thresholds are sent in centavos (like budgets).
 const RULE_METRICS = [
@@ -1944,6 +1967,11 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
         ? await post({ token: editToken, action: "rule_update", id: editing.id, rule })
         : await post({ token: acct.token, action: "rule_create", account_id: actId(acct.ad_account_id), rule: { ...rule, status: "ENABLED" } })
       if (!j.success) throw new Error(j.error || "Failed")
+      logAds({ action: editing ? "rule_update" : "rule_create", level: "rule",
+        objectId: editing ? editing.id : String(j.id || ""), objectName: ruleName.trim(),
+        accountName: editing ? editing.__accName : (acct?.name || ""), surface: "rules",
+        summary: `${ruleActionsFor(entity).find(a => a.v === action)?.l || action}${needsBudget ? ` ${budgetAmt}${budgetUnit === "PERCENTAGE" ? "%" : ""}` : ""} · ${sched.toLowerCase()}`,
+        details: { action, budgetAmt, budgetUnit, budgetCap, timeRange, sched, conditions: conds.filter(condComplete) } })
       if (editing) {
         // Balik sa listahan at hilahin muli — ang ipinapakita ay ang sagot ni
         // Meta, hindi ang inakala nating naipadala.
@@ -1964,6 +1992,9 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
     try {
       const j = await post({ token, action: act, id: r.id, status })
       if (!j.success) throw new Error(j.error || "Failed")
+      logAds({ action: act === "rule_delete" ? "rule_delete" : "rule_status", level: "rule",
+        objectId: r.id, objectName: r.name, accountName: r.__accName, surface: "rules",
+        summary: act === "rule_delete" ? "Deleted" : status === "ENABLED" ? "Enabled" : "Disabled" })
       if (act === "rule_delete") { setRules(rs => rs.filter(x => x.id !== r.id)); notify("Rule deleted.") }
       else setRules(rs => rs.map(x => x.id === r.id ? { ...x, status: status! } : x))
     } catch (e: any) { notify("⚠ " + (e?.message || "Failed")) }
@@ -2054,6 +2085,10 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
       setRules(rs => rs.map(x => x.id === r.id
         ? { ...x, evaluation_spec: { ...(x.evaluation_spec || {}), filters: next } } : x))
       const w = ENTITY_WORD[ent] || ENTITY_WORD.CAMPAIGN
+      logAds({ action: "rule_scope", level: "rule", objectId: r.id, objectName: r.name,
+        accountName: r.__accName, surface: "rules",
+        summary: ids === null ? `Now runs on all active ${w[1]}` : `Set on ${ids.length} ${w[ids.length === 1 ? 0 : 1]}`,
+        details: { from: scopedIdsOf(r), to: ids } })
       notify(ids === null
         ? `"${r.name}" now applies to all active ${w[1]}.`
         : `"${r.name}" is now set on ${ids.length} ${w[ids.length === 1 ? 0 : 1]}.`)
@@ -2424,6 +2459,7 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                   <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
                     <tr className="text-left text-xs text-slate-500">
                       <th className="px-4 py-2.5 font-semibold">RULE NAME</th>
+                      <th className="px-4 py-2.5 font-semibold">CREATED BY</th>
                       {!currentAccountId && <th className="px-4 py-2.5 font-semibold">AD ACCOUNT</th>}
                       <th className="px-4 py-2.5 font-semibold">APPLIED TO</th>
                       <th className="px-4 py-2.5 font-semibold">ACTION</th>
@@ -2451,6 +2487,13 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                               <span className="block truncate" title={r.name}>{r.name}</span>
                             </span>
                             {r.created_time && <span className="text-[10px] text-slate-400 pl-5">{fmtD(r.created_time)}</span>}</td>
+                          {/* Sinong Facebook user ang gumawa nito — kasama ang mga
+                              ginawa sa Ads Manager, hindi lang ang galing dito. */}
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {r.created_by?.name
+                              ? <span className="text-[12px] font-semibold text-slate-700">{r.created_by.name}</span>
+                              : <span className="text-[12px] text-slate-400" title="Meta didn't report a creator for this rule">—</span>}
+                          </td>
                           {!currentAccountId && <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.__accName}</td>}
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
                             {/* Ang bilang ang unang tanong: "ilan ba ang naka-set dito?" */}
@@ -2494,7 +2537,7 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                           const dirty = scopeSel.size !== scoped.length || scoped.some(id => !scopeSel.has(id))
                           return (
                           <tr className="border-b border-slate-200 bg-blue-50/40">
-                            <td colSpan={currentAccountId ? 7 : 8} className="px-4 py-3">
+                            <td colSpan={currentAccountId ? 8 : 9} className="px-4 py-3">
                               <div className="space-y-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-[13px] font-bold text-slate-800">What this rule is set on</span>

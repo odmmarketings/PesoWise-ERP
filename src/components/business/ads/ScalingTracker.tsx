@@ -9,6 +9,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
 import { cachedJson } from "@/lib/pancake-cache"
 import { useScalingRegistry, type Registration, type ScaleEvent } from "@/lib/scaling-registry-store"
+import { logAds, logAdsMany } from "@/lib/ads-activity-store"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCALING TRACKER — nasa loob ng Facebook Ads tab.
@@ -845,6 +846,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         body: JSON.stringify({ token: s.adset.account.token, action: "status", id: s.adset.id, status: "PAUSED" }),
       }).then(r => r.json())
       if (!j.success) throw new Error(j.error || "pause failed")
+      logAds({ action: "kill", level, objectId: s.adset.id, objectName: s.adset.name,
+        accountName: s.adset.account.name, surface: mode,
+        summary: auto ? `Auto-paused (${s.rule})` : "Killed (paused)",
+        details: { auto, rule: s.rule, reason: s.reason } })
       saveLog(prev => {
         const cur = rollLog(prev)
         return { ...cur, items: [...cur.items, { id: s.adset.id, name: s.adset.name, token: s.adset.account.token }] }
@@ -932,6 +937,12 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     }))
     const err = await registry.register(items)
     if (err) setErrors(p => [...p, `Register failed — ${err}`])
+    else logAdsMany(items.map(i => ({
+      action: "register" as const, level, objectId: i.adset_id, objectName: i.adset_name,
+      accountName: i.account_name, surface: mode,
+      summary: `Registered to monitor · starting budget ${peso(i.starting_budget)}`,
+      details: { registered_at: i.registered_at, starting_budget: i.starting_budget },
+    })))
     setPickSel(new Set()); setPickOpen(false); setBusy("")
   }
 
@@ -977,6 +988,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
 
       const ev: ScaleEvent = { date: today, pct, from, to: applied ? to : from, applied }
       if (s.reg) await registry.addScale(s.reg.adset_id, ev)
+      logAds({ action: "scale", level, objectId: s.adset.id, objectName: s.adset.name,
+        accountName: s.adset.account.name, surface: mode,
+        summary: applied ? `+${pct}% · ${peso(from)} → ${peso(to)}` : `+${pct}% recorded only (not applied on Facebook)`,
+        details: { pct, from, to, applied, scaleNo: (s.reg?.scales.length ?? 0) + 1, budgetLevel: t.level } })
       if (applied) setAdsets(prev => prev.map(m =>
         t.level === "adset"
           ? (m.id === s.adset.id ? { ...m, budget: to } : m)
@@ -1079,6 +1094,9 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         body: JSON.stringify({ token: s.adset.account.token, action: "status", id: ad.id, status: "PAUSED" }),
       }).then(r => r.json())
       if (!j.success) throw new Error(j.error || "pause failed")
+      logAds({ action: "kill", level: "ad", objectId: ad.id, objectName: ad.name,
+        accountName: s.adset.account.name, surface: mode, summary: "Ad killed (paused)",
+        details: { under: s.adset.name } })
       const key = `${drillParent(s)}|ad`
       const flip = (rows: AdRow[]) => rows.map(r => r.id === ad.id ? { ...r, status: "PAUSED" } : r)
       setAdRows(p => ({ ...p, [key]: flip(p[key] || []) }))
@@ -1124,6 +1142,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       }
       const removed = await registry.undoLastScale(s.reg.adset_id)
       if (!removed) throw new Error("could not remove the step from the registry")
+      logAds({ action: "scale_undo", level, objectId: s.adset.id, objectName: s.adset.name,
+        accountName: s.adset.account.name, surface: mode,
+        summary: canRevert ? `Undone · back to ${peso(last.from)}` : "Record removed only (budget not reverted)",
+        details: { pct: last.pct, from: last.to, to: last.from, revertedOnMeta: canRevert } })
       if (canRevert) setAdsets(prev => prev.map(m =>
         t.level === "adset"
           ? (m.id === s.adset.id ? { ...m, budget: last.from } : m)
@@ -1140,6 +1162,9 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       level: "ad-moved", registered_at: today, starting_budget: 0,
     }])
     if (err) setErrors(p => [...p, `${ad.name}: mark failed — ${err}`])
+    else logAds({ action: "ad_moved", level: "ad", objectId: ad.id, objectName: ad.name,
+      accountName: s.adset.account.name, surface: mode, summary: "Marked moved to Scaling",
+      details: { from: s.adset.name } })
     setAdActBusy("")
   }
 
@@ -1277,7 +1302,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
             )
           })}
           {s.reg && (
-            <button onClick={() => { if (confirm(`Stop monitoring "${s.adset.name}"? History is kept.`)) registry.unregister(s.reg!.adset_id) }}
+            <button onClick={() => { if (confirm(`Stop monitoring "${s.adset.name}"? History is kept.`)) {
+              registry.unregister(s.reg!.adset_id)
+              logAds({ action: "unregister", level, objectId: s.adset.id, objectName: s.adset.name,
+                accountName: s.adset.account.name, surface: mode, summary: "Stopped monitoring" })
+            } }}
               title="Stop monitoring" className="text-[11px] px-1.5 py-1 rounded-md border border-slate-300 text-slate-500 hover:bg-slate-50">
               <X className="w-3 h-3" />
             </button>

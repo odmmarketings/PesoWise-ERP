@@ -48,8 +48,10 @@ export const businessNav: NavSection[] = [
       { href: "/business/ads", icon: BarChart3, label: "Ads Overview" },
       { href: "/business/ads/facebook", icon: Megaphone, label: "Facebook Ads" },
       { href: "/business/ads/tiktok", icon: Activity, label: "TikTok Ads" },
-      { href: "/business/ads/shopee", icon: ShoppingBag, label: "Shopee Ads" },
-      { href: "/business/ads/lazada", icon: Package, label: "Lazada Ads" },
+      // Shopee at Lazada Ads: inalis sa nav Ago 14 2026 ("hindi naman pa need").
+      // Nananatili ang ComingSoon na pahina sa `ads/shopee` at `ads/lazada`, kaya
+      // isang linya lang ang kailangan para maibalik sila.
+      { href: "/business/ads/activity", icon: ScrollText, label: "Activity Log" },
       { href: "/business/ads/accounts", icon: Link2, label: "Ad Accounts" },
     ],
   },

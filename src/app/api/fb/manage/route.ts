@@ -84,7 +84,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true, id: j.id, name: j.name })
       }
       case "rules_list": {
-        const j = await fbGet(`${account_id}/adrules_library`, { fields: "name,status,created_time,evaluation_spec,execution_spec,schedule_spec", limit: "100" }, token)
+        // `created_by` = ang FACEBOOK user na gumawa ng rule (kasama ang mga
+        // ginawa mismo sa Ads Manager). Ang gumawa sa loob ng PesoWise ay nasa
+        // ads_activity_log — magkaibang tanong, magkaibang pinagkukunan.
+        const j = await fbGet(`${account_id}/adrules_library`, { fields: "name,status,created_time,created_by,evaluation_spec,execution_spec,schedule_spec", limit: "100" }, token)
         return NextResponse.json({ success: true, rules: j.data || [] })
       }
       case "rule_create": {
