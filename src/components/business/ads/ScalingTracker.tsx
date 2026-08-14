@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react"
 import {
   TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
   ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X, LayoutGrid, Layers,
@@ -166,9 +166,37 @@ const netOf = (value: number, spend: number, rts: number) => spend > 0 ? (value 
 // mabigat iyon at nakakainis kapag nagpapalipat-lipat lang. Buhay ang module
 // habang nasa app, kaya ang pagbalik sa tab ay INSTANT; ang Refresh button
 // (force) ang tanging nagbabasag nito.
-type Cached = { ts: number; adsets: AdsetModel[]; errors: string[]; fatigue: FatigueRow[] }
+//
+// ⚠ ANG BITAG NA NAG-BALIK NG SPINNER (nahuli Ago 14 2026): ang resulta LANG ang
+// nakatabi, kaya ang cache ay pumapalya kung saan ito pinakakailangan — kapag
+// nagpalit ka ng tab habang HINDI PA TAPOS ang hila. Nag-uumpisa ang bagong
+// mount ng PANGALAWANG buong hila (21 account × 3 request), tapos ang pangatlo
+// sa susunod na palit… kaya walang natatapos at 0/21 ang bar habambuhay. Ang
+// sagot ay hindi mas mahabang TTL kundi ang IN-FLIGHT na mapa sa ibaba: ang
+// pumapasok na mount ay SUMASAKAY sa tumatakbo nang hila, hindi nagsisimula ng
+// bago. Isang hila kada cacheKey sa buong app, kahit ilang beses ka magpalit.
+type Cached = {
+  ts: number; adsets: AdsetModel[]; errors: string[]
+  fatigue: FatigueRow[]
+  // Hiwalay na timestamp: ang WALANG LAMAN na fatigue ay tamang sagot din
+  // ("walang pagod na ad"). Dating `fatigue.length > 0` ang kondisyon ng cache,
+  // kaya ang pinakakaraniwang kalagayan ay muling humihila ng 42 request kada
+  // pagbukas ng tab — iyon ang kumakain ng koneksyon ng pangunahing hila.
+  fatigueTs: number
+  // Aling account ang TALAGANG nakarating — kailangan ng orphan check.
+  loadedAccounts: string[]
+}
 const MODEL_CACHE = new Map<string, Cached>()
+const MODEL_INFLIGHT = new Map<string, Promise<void>>()
+const FATIGUE_INFLIGHT = new Map<string, Promise<void>>()
+// Progreso ng tumatakbong hila, kada key — para may makitang gumagalaw na bar
+// ang mount na sumakay sa hila ng iba (hindi nito natatanggap ang setState nito).
+const MODEL_PROGRESS = new Map<string, { done: number; total: number }>()
 const MODEL_TTL = 10 * 60_000
+const freshCache = (key: string): Cached | null => {
+  const hit = MODEL_CACHE.get(key)
+  return hit && Date.now() - hit.ts < MODEL_TTL ? hit : null
+}
 
 /** Ilang araw nang umiiral — pinapakita sa picker at sa registered rows. */
 function daysOld(iso: string): number {
@@ -204,17 +232,6 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   const [rules, setRules] = useState<Rules>(() => loadRules())
   const saveRules = (r: Rules) => { setRules(r); try { localStorage.setItem(RULES_KEY, JSON.stringify(r)) } catch {} }
 
-  const [loading, setLoading] = useState(true)
-  const [progress, setProgress] = useState({ done: 0, total: 0 })
-  const [errors, setErrors] = useState<string[]>([])
-  const [adsets, setAdsets] = useState<AdsetModel[]>([])
-  const [fatigue, setFatigue] = useState<FatigueRow[]>([])
-  const [fatigueLoading, setFatigueLoading] = useState(true)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [fOwner, setFOwner] = useState("All")
-  const [fAccount, setFAccount] = useState("ALL")
-  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc")
-
   const live = useMemo(() => accounts.filter(a => !a.archived && a.token && a.ad_account_id), [accounts])
 
   // ⚠ ANG BITAG NA NAKA-DOKUMENTO SA CLAUDE.md: ang useActivePages() (at ang mga
@@ -238,20 +255,75 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
 
   const cacheKey = `${level}|${liveKey}|${from30}|${today}`
 
+  // ── SINISIMULAN MULA SA CACHE, HINDI SA SPINNER ────────────────────────────
+  // Dating `useState(true)` ang `loading`, kaya kahit tumatama ang cache ay may
+  // isang pinta pa ring "Pulling 30 days…" bago tumakbo ang effect. Ang bumabalik
+  // sa tab ay dapat WALANG makitang spinner. Isang beses lang ito binabasa (mount).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const boot = useMemo(() => freshCache(cacheKey), [])
+  const [loading, setLoading] = useState(!boot)
+  const [progress, setProgress] = useState(() => MODEL_PROGRESS.get(cacheKey) ?? { done: 0, total: 0 })
+  const [errors, setErrors] = useState<string[]>(boot?.errors ?? [])
+  const [adsets, setAdsets] = useState<AdsetModel[]>(boot?.adsets ?? [])
+  const [fatigue, setFatigue] = useState<FatigueRow[]>(boot?.fatigue ?? [])
+  const [fatigueLoading, setFatigueLoading] = useState(!boot?.fatigueTs)
+  // Pangalan ng account na tunay na nakarating ang datos. Ang orphan check LANG
+  // ang gumagamit nito — huwag isipin ang pumalyang account bilang "wala na".
+  const [loadedAccounts, setLoadedAccounts] = useState<string[]>(boot?.loadedAccounts ?? [])
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [fOwner, setFOwner] = useState("All")
+  const [fAccount, setFAccount] = useState("ALL")
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc")
+
+  // Isinasalin ang naka-cache na resulta sa state ng mount na ito.
+  const applyCached = useCallback((c: Cached) => {
+    setAdsets(c.adsets); setErrors(c.errors); setLoadedAccounts(c.loadedAccounts)
+    if (c.fatigueTs) { setFatigue(c.fatigue); setFatigueLoading(false) }
+    setLoading(false)
+  }, [])
+
   const load = useCallback(async (force = false) => {
-    const live = liveRef.current, allPages = pagesRef.current
-    // Sariwa pa ang cache? Ibalik agad — walang spinner, walang hila.
     if (!force) {
-      const hit = MODEL_CACHE.get(cacheKey)
-      if (hit && Date.now() - hit.ts < MODEL_TTL) {
-        setAdsets(hit.adsets); setErrors(hit.errors); setFatigue(hit.fatigue)
-        setLoading(false); setFatigueLoading(false)
+      // Sariwa pa ang cache? Ibalik agad — walang spinner, walang hila.
+      const hit = freshCache(cacheKey)
+      if (hit) { applyCached(hit); return }
+      // Tumatakbo na ito ngayon (naiwan ng dating tab, o mabilis kang nagpalit)?
+      // SUMAKAY — huwag magsimula ng pangalawang 21-account na hila. Ito mismo
+      // ang dahilan kung bakit hindi natatapos ang 0/21 dati.
+      const running = MODEL_INFLIGHT.get(cacheKey)
+      if (running) {
+        setLoading(true)
+        // Ang bar ay sinasabayan sa module — hindi natin natatanggap ang
+        // setProgress ng mount na nagsimula nito (baka wala na ito).
+        const tick = setInterval(() => {
+          const p = MODEL_PROGRESS.get(cacheKey)
+          if (p) setProgress({ ...p })
+        }, 250)
+        try { await running } catch { /* naitala na ng nagpatakbo */ }
+        finally { clearInterval(tick) }
+        const done = MODEL_CACHE.get(cacheKey)
+        if (done) applyCached(done)
+        else setLoading(false)
         return
       }
     }
     setLoading(true)
+    const run = runLoad(force)
+    MODEL_INFLIGHT.set(cacheKey, run)
+    try { await run }
+    catch (e: any) { setErrors(p => [...p, `load failed — ${String(e?.message).slice(0, 90)}`]); setLoading(false) }
+    finally { MODEL_INFLIGHT.delete(cacheKey) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey, applyCached])
+
+  // Ang TUNAY na hila. Hiwalay para maibahagi ang IISANG promise sa lahat ng
+  // mount na humihingi ng parehong cacheKey.
+  const runLoad = useCallback(async (force: boolean) => {
+    const live = liveRef.current, allPages = pagesRef.current
+    MODEL_PROGRESS.set(cacheKey, { done: 0, total: live.length })
     setProgress({ done: 0, total: live.length })
     const errs: string[] = []
+    const ok: string[] = []
 
     // 1. RTS rate kada page (returning+returned ÷ total sales, parehong window).
     const rtsByPage = new Map<string, number>()
@@ -329,25 +401,58 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           m.dailies.set(r.date, { date: r.date, spend: r.spend, purchases: r.purchases, purchaseValue: r.purchaseValue, impressions: r.impressions, clicks: r.clicks })
         }
         models.push(...byId.values())
+        ok.push(a.name)
       } catch (e: any) { errs.push(`${a.name}: ${String(e?.message).slice(0, 80)}`) }
-      finally { setProgress(p => ({ ...p, done: p.done + 1 })) }
+      finally {
+        const p = MODEL_PROGRESS.get(cacheKey) ?? { done: 0, total: live.length }
+        const next = { done: p.done + 1, total: p.total }
+        MODEL_PROGRESS.set(cacheKey, next)
+        setProgress(next)
+      }
     })
     setAdsets(models)
     setErrors(errs)
+    setLoadedAccounts(ok)
     setLoading(false)
     // Itabi. Ang `fatigue` ay dumarating mamaya (hiwalay na hila) — ini-update ito
     // ng loadFatigue sa parehong entry, kaya hindi nawawala kapag bumalik ka.
-    MODEL_CACHE.set(cacheKey, { ts: Date.now(), adsets: models, errors: errs, fatigue: MODEL_CACHE.get(cacheKey)?.fatigue ?? [] })
+    const prev = MODEL_CACHE.get(cacheKey)
+    MODEL_CACHE.set(cacheKey, {
+      ts: Date.now(), adsets: models, errors: errs, loadedAccounts: ok,
+      fatigue: prev?.fatigue ?? [], fatigueTs: prev?.fatigueTs ?? 0,
+    })
   }, [from30, today, cacheKey])
 
   // 3. Fatigue kada AD: huling 3 araw vs naunang 7 (frequency mula kay Meta mismo).
   const loadFatigue = useCallback(async (force = false) => {
-    const live = liveRef.current
     if (!force) {
       const hit = MODEL_CACHE.get(cacheKey)
-      if (hit && Date.now() - hit.ts < MODEL_TTL && hit.fatigue.length > 0) { setFatigue(hit.fatigue); setFatigueLoading(false); return }
+      // ⚠ `fatigueTs` ang batayan, HINDI ang `fatigue.length`. Ang walang laman
+      // ay tamang sagot din ("walang pagod na ad") at iyon ang karaniwan — dating
+      // muling humihila ng 42 request kada pagbukas ng tab dahil dito.
+      if (hit?.fatigueTs && Date.now() - hit.fatigueTs < MODEL_TTL) {
+        setFatigue(hit.fatigue); setFatigueLoading(false); return
+      }
+      const running = FATIGUE_INFLIGHT.get(cacheKey)
+      if (running) {
+        setFatigueLoading(true)
+        try { await running } catch { /* naitala na ng nagpatakbo */ }
+        const done = MODEL_CACHE.get(cacheKey)
+        if (done?.fatigueTs) setFatigue(done.fatigue)
+        setFatigueLoading(false)
+        return
+      }
     }
     setFatigueLoading(true)
+    const run = runFatigue(force)
+    FATIGUE_INFLIGHT.set(cacheKey, run)
+    try { await run } catch { /* laktawan — dagdag lang ito sa mga signal */ }
+    finally { FATIGUE_INFLIGHT.delete(cacheKey); setFatigueLoading(false) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey])
+
+  const runFatigue = useCallback(async (force: boolean) => {
+    const live = liveRef.current
     const out: FatigueRow[] = []
     await mapLimit(live, 3, async a => {
       try {
@@ -379,18 +484,25 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       } catch { /* laktawan ang account na bumigo — nasa errors na ng main load kung ganoon */ }
     })
     setFatigue(out)
-    setFatigueLoading(false)
+    // Isinasama sa UMIIRAL na entry lang. Ang paggawa ng bagong entry dito ay
+    // maglalagay ng WALANG LAMAN na adsets sa cache, at ang susunod na mount ay
+    // maghihintay ng listahang hindi na darating.
     const prev = MODEL_CACHE.get(cacheKey)
-    if (prev) MODEL_CACHE.set(cacheKey, { ...prev, fatigue: out })
+    if (prev) MODEL_CACHE.set(cacheKey, { ...prev, fatigue: out, fatigueTs: Date.now() })
   }, [last3From, prev7From, prev7To, today, cacheKey])
 
   // Isang hila kada tunay na pagbabago ng account set — HINDI kada render.
   // Ang `load`/`loadFatigue` ay sadyang WALA sa deps: matatag na sila ngayon
   // (walang array sa kanilang closure), at ang paglagay sa kanila ay ibabalik
   // lang ang loop.
+  //
+  // SUNOD-SUNOD, hindi sabay: ang fatigue ay 2 request kada account (42 sa 21
+  // account) at nag-aagawan sila sa 6-connection na limitasyon ng browser sa
+  // pangunahing hila — kaya nakaupo ang bar habang ang hindi naman kailangan
+  // agad ang unang natatapos. Ang listahan muna; ang fatigue ay dagdag lang.
   useEffect(() => {
     if (!liveKey) return
-    load(); loadFatigue()
+    load().then(() => loadFatigue()).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveKey])
 
@@ -459,6 +571,18 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       const lastScale = reg?.scales[reg.scales.length - 1]
       const hoursSinceScale = lastScale
         ? (Date.now() - new Date(`${lastScale.date}T00:00:00`).getTime()) / 3600_000 : Infinity
+      // ⚠ ANG PAGDURUGO AY HINDI RELEARNING. Dating sinasakop ng 48h na cooldown
+      // ang LAHAT — kaya ang campaign na sinaktan ng scale ay nakatago sa Watch
+      // nang dalawang araw habang nasusunog ang pera, at hindi ito lumalabas sa
+      // Kill (ni hindi maaabot ng auto-pause). Ang matinding pagdurugo LANG ang
+      // dumadaan sa cooldown; ang lahat ng ibang hatol ay naghihintay pa rin.
+      if (reg && hoursSinceScale < 48 && isActive
+        && windows.w3.netRoas < rules.bleedRoas && windows.w3.spend >= rules.bleedSpend) {
+        out.push({ ...base, kind: "kill", rule: "bleeding",
+          reason: `Bleeding INSIDE the 48h post-scale window: 3-day net ROAS ${dec(windows.w3.netRoas)} on ${peso(windows.w3.spend)} spent. `
+            + `Relearning doesn't explain this much — kill it, don't wait out the cooldown.` })
+        continue
+      }
       if (reg && hoursSinceScale < 48) {
         out.push({ ...base, kind: "watch", rule: "cooldown",
           reason: `Scaled ${lastScale!.pct}% on ${lastScale!.date} (${peso(lastScale!.from)} → ${peso(lastScale!.to)}). `
@@ -567,11 +691,18 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   // Napatunayan (Ago 14 2026): may campaign na naitala bilang level='adset' ng
   // lumang build, kaya hindi ito lumalabas sa Testing (hindi ad set) at hindi rin
   // sa Scaling (mali ang level). Ipinapakita na ngayon para maalis o maitama.
+  // ⚠ HINDI ULILA ANG GALING SA ACCOUNT NA PUMALYA. Kapag na-timeout o tumanggi
+  // si Meta para sa isang ad account, wala ang mga object nito sa `adsets` — at
+  // dating lumalabas ang bawat rehistro nito rito na may "Remove" na buton.
+  // Isang pindot at mawawala ang totoong monitoring dahil lang sa sandaling
+  // pagpalya ng API. Ang account na hindi nakarating ay LAKTAWAN, hindi tanungin.
+  const okAccounts = useMemo(() => new Set(loadedAccounts), [loadedAccounts])
   const orphans = useMemo(() => {
     if (!registry.loaded || loading) return []
     const ids = new Set(adsets.map(m => m.id))
-    return registry.regs.filter(r => r.level === level && !ids.has(r.adset_id))
-  }, [registry.regs, registry.loaded, adsets, level, loading])
+    return registry.regs.filter(r =>
+      r.level === level && !ids.has(r.adset_id) && okAccounts.has(r.account_name))
+  }, [registry.regs, registry.loaded, adsets, level, loading, okAccounts])
 
   const scaleRows = view.filter(s => s.kind === "scale")
   const killRows = view.filter(s => s.kind === "kill")
@@ -585,11 +716,26 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   useEffect(() => { onSignals?.(totalSignals) }, [totalSignals, onSignals])
 
   // ── Auto-pause (kapag naka-ON ang master + ang rule) ───────────────────────
-  const [autoLog, setAutoLog] = useState<{ date: string; items: { id: string; name: string; token: string }[] }>(() => {
+  type AutoLog = { date: string; items: { id: string; name: string; token: string }[] }
+  const [autoLog, setAutoLog] = useState<AutoLog>(() => {
     try { const l = JSON.parse(localStorage.getItem(AUTOLOG_KEY) || "null"); if (l?.date === dstr(new Date())) return l } catch {}
     return { date: dstr(new Date()), items: [] }
   })
-  const saveLog = (l: typeof autoLog) => { setAutoLog(l); try { localStorage.setItem(AUTOLOG_KEY, JSON.stringify(l)) } catch {} }
+  // ⚠ FUNCTIONAL UPDATE — hindi `{ ...autoLog }`. Ang auto-pause ay nagpapatakbo
+  // ng ilang pause SABAY sa iisang pass, at lahat sila ay may parehong `autoLog`
+  // sa closure: ang huling nakatapos ang nag-iisang naitatala at nabubura ang
+  // iba. Kaya kulang ang bilang laban sa daily cap (nakakalusot pa ng higit sa
+  // hangganan) at hindi mai-undo ang mga naunang pause. Kapatid ito ng bitag ng
+  // patchMeta sa Fulfillment.
+  const saveLog = useCallback((fn: (prev: AutoLog) => AutoLog) => {
+    setAutoLog(prev => {
+      const next = fn(prev)
+      try { localStorage.setItem(AUTOLOG_KEY, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [])
+  // Nakabukas ang tab nang lampas hatinggabi? Bagong araw, bagong cap.
+  const rollLog = (prev: AutoLog): AutoLog => prev.date === today ? prev : { date: today, items: [] }
   const [pausing, setPausing] = useState<string>("")
 
   async function pauseAdset(s: Signal, auto: boolean) {
@@ -600,7 +746,10 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         body: JSON.stringify({ token: s.adset.account.token, action: "status", id: s.adset.id, status: "PAUSED" }),
       }).then(r => r.json())
       if (!j.success) throw new Error(j.error || "pause failed")
-      saveLog({ ...autoLog, items: [...autoLog.items, { id: s.adset.id, name: s.adset.name, token: s.adset.account.token }] })
+      saveLog(prev => {
+        const cur = rollLog(prev)
+        return { ...cur, items: [...cur.items, { id: s.adset.id, name: s.adset.name, token: s.adset.account.token }] }
+      })
       setAdsets(prev => prev.map(m => m.id === s.adset.id ? { ...m, status: "PAUSED" } : m))
     } catch (e: any) {
       setErrors(prev => [...prev, `${s.adset.name}: ${auto ? "auto-" : ""}pause failed — ${String(e?.message).slice(0, 80)}`])
@@ -613,17 +762,20 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         body: JSON.stringify({ token: item.token, action: "status", id: item.id, status: "ACTIVE" }),
       }).then(r => r.json())
       if (!j.success) throw new Error(j.error || "undo failed")
-      saveLog({ ...autoLog, items: autoLog.items.filter(x => x.id !== item.id) })
+      saveLog(prev => ({ ...prev, items: prev.items.filter(x => x.id !== item.id) }))
       setAdsets(prev => prev.map(m => m.id === item.id ? { ...m, status: "ACTIVE" } : m))
     } catch (e: any) { setErrors(prev => [...prev, `${item.name}: undo failed — ${String(e?.message).slice(0, 80)}`]) }
   }
   useEffect(() => {
     if (!rules.autoMaster || loading) return
+    // Kahapon pa ang log kung nakabukas ang tab magdamag — huwag itong bilangin
+    // laban sa cap ngayong araw (at huwag ding gamiting "na-pause na" na tala).
+    const log = autoLog.date === today ? autoLog : { date: today, items: [] }
     const eligible = killRows.filter(s =>
       rules.autoRules[s.rule as keyof Rules["autoRules"]]
       && /active/i.test(s.adset.status)
-      && !autoLog.items.some(x => x.id === s.adset.id))
-    const room = rules.autoDailyCap - autoLog.items.length
+      && !log.items.some(x => x.id === s.adset.id))
+    const room = rules.autoDailyCap - log.items.length
     for (const s of eligible.slice(0, Math.max(0, room))) pauseAdset(s, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rules.autoMaster, loading, killRows.length])
@@ -815,11 +967,21 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     if (!s.reg || s.reg.scales.length === 0) return
     const last = s.reg.scales[s.reg.scales.length - 1]
     const t = budgetTarget(s.adset)
-    if (!confirm(`Undo scale #${s.reg.scales.length} (+${last.pct}%)?`
-      + (last.applied ? ` This sets the ${t.level} budget back to ${peso(last.from)} on Facebook.` : ` This only removes the recorded step.`))) return
+    // ⚠ HUWAG MAGPADALA NG BUDGET NA HINDI NATIN ALAM. Kung wala nang buhay na
+    // budget na matatamaan (naging lifetime budget, o binura ang campaign) o
+    // kung `0` ang `from` ng step (lumang record na walang naitalang budget),
+    // ang pagpapadala niyon ay magtatakda ng ₱0 o babagsak nang malabo. Ang
+    // record LANG ang tatanggalin, at hayagang sasabihin ang natitirang gawain.
+    const canRevert = last.applied && t.level !== "none" && last.from > 0
+    if (last.applied && !canRevert) {
+      if (!confirm(`Undo scale #${s.reg.scales.length} (+${last.pct}%)?\n\n`
+        + `The budget CANNOT be reverted automatically — ${t.level === "none" ? "no live daily budget was found on this " + unitLabel : "the original amount wasn't recorded"}. `
+        + `This removes the recorded step only; set the budget back in Ads Manager yourself.`)) return
+    } else if (!confirm(`Undo scale #${s.reg.scales.length} (+${last.pct}%)?`
+      + (canRevert ? ` This sets the ${t.level} budget back to ${peso(last.from)} on Facebook.` : ` This only removes the recorded step.`))) return
     setUndoBusy(s.adset.id)
     try {
-      if (last.applied) {
+      if (canRevert) {
         // Ibalik ang budget sa Meta BAGO tanggalin ang record — kung pumalya ang
         // API, mananatili ang record at walang nagsisinungaling na kasaysayan.
         const j = await fetch("/api/fb/manage", {
@@ -830,7 +992,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       }
       const removed = await registry.undoLastScale(s.reg.adset_id)
       if (!removed) throw new Error("could not remove the step from the registry")
-      if (last.applied) setAdsets(prev => prev.map(m =>
+      if (canRevert) setAdsets(prev => prev.map(m =>
         t.level === "adset"
           ? (m.id === s.adset.id ? { ...m, budget: last.from } : m)
           : (m.campaignId === t.id ? { ...m, campaignBudget: last.from } : m)))
@@ -859,7 +1021,12 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
   const compactRow = (s: Signal) => ({
     adset: s.adset.name, campaign: s.adset.campaignName, account: s.adset.account.name,
     signal: s.kind, rule: s.rule, streak: s.streak, status: s.adset.status,
-    budget: s.adset.budget, rtsRate: +s.adset.rtsRate.toFixed(3),
+    // ⚠ `s.adset.budget` ay LAGING 0 sa Scaling tab (nasa campaign ang CBO), kaya
+    // "walang budget" ang sinasabi natin sa AI para sa BAWAT scaling campaign —
+    // at doon nakabatay ang payo nito sa morning brief. budgetTarget ang tama.
+    budget: budgetTarget(s.adset).amount,
+    budgetLevel: budgetTarget(s.adset).level,
+    rtsRate: +s.adset.rtsRate.toFixed(3),
     today: { spend: Math.round(s.todaySpend), netRoas: +dec(s.todayNet) },
     d3: { spend: Math.round(s.windows.w3.spend), netRoas: +dec(s.windows.w3.netRoas), cpp: Math.round(s.windows.w3.cpp) },
     d7: { spend: Math.round(s.windows.w7.spend), netRoas: +dec(s.windows.w7.netRoas) },
@@ -1087,12 +1254,20 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
     </div>
   )
 
+  // ⚠ TINATAWAG, HINDI ISINUSULAT BILANG <Row />. Ang `Row`/`Section` ay
+  // ginagawa sa loob ng ScalingTracker, kaya BAGONG uri ng component sila kada
+  // render — at itinuturing ng React ang bagong uri bilang ibang component:
+  // binubuwag nito at muling binubuo ang BUONG listahan sa bawat render. Habang
+  // humihila, 21 beses tumitibok ang progress → 21 buong rebuild ng lahat ng row,
+  // kasama ang mga thumbnail na muling nagda-download. Ang pagtawag sa kanila
+  // bilang function ay inilalatag ang resulta sa parent — walang bagong uri,
+  // walang remount. (Walang hook ang dalawa, kaya ligtas ito.)
   const Section = ({ title, icon: Icon, color, rows, accent, empty }: any) => (
     <div className="space-y-2">
       <p className={`text-sm font-bold ${color} flex items-center gap-1.5`}><Icon className="w-4 h-4" /> {title} ({rows.length})</p>
       {rows.length === 0
         ? <p className="text-[13px] text-slate-400 italic">{empty}</p>
-        : rows.map((s: Signal) => <Row key={s.adset.id} s={s} accent={accent} />)}
+        : rows.map((s: Signal) => <Fragment key={s.adset.id}>{Row({ s, accent })}</Fragment>)}
     </div>
   )
 
@@ -1152,7 +1327,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           <button onClick={() => setSettingsOpen(o => !o)} className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 flex items-center gap-1.5 hover:bg-slate-50">
             <Settings className="w-4 h-4" /> Rules
           </button>
-          <button onClick={() => { load(true); loadFatigue(true) }} disabled={loading}
+          <button onClick={() => { load(true).then(() => loadFatigue(true)).catch(() => {}) }} disabled={loading}
             className="h-9 w-9 rounded-lg border border-slate-200 bg-white text-slate-600 flex items-center justify-center hover:bg-slate-50 disabled:opacity-50">
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -1163,10 +1338,10 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
       {rules.autoMaster && (
         <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-2.5 text-[13px] text-rose-700 flex flex-wrap items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span><b>Auto-pause is ON</b> ({Object.entries(rules.autoRules).filter(([, v]) => v).map(([k]) => k).join(", ") || "no rules enabled"}) — cap {rules.autoDailyCap}/day, {autoLog.items.length} paused today. Runs only while this tab is open.</span>
+          <span><b>Auto-pause is ON</b> ({Object.entries(rules.autoRules).filter(([, v]) => v).map(([k]) => k).join(", ") || "no rules enabled"}) — cap {rules.autoDailyCap}/day, {autoLog.date === today ? autoLog.items.length : 0} paused today. Runs only while this tab is open.</span>
         </div>
       )}
-      {autoLog.items.length > 0 && (
+      {autoLog.date === today && autoLog.items.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-[13px] text-slate-600 space-y-1">
           <p className="font-semibold text-slate-700">Paused today (undo re-activates on Facebook):</p>
           {autoLog.items.map(it => (
@@ -1397,7 +1572,7 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
         <div className="py-10 space-y-3">
           <p className="text-sm text-slate-400 flex items-center gap-2 justify-center">
             <RefreshCw className="w-4 h-4 animate-spin" />
-            Pulling 30 days of ad-set data — {progress.done}/{progress.total} accounts
+            Pulling 30 days of {isCampaign ? "campaign" : "ad-set"} data — {progress.done}/{progress.total} accounts
           </p>
           <div className="mx-auto w-64 h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div className="h-full bg-blue-500 rounded-full transition-[width] duration-300"
@@ -1415,12 +1590,12 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
                 : <> Use this for new tests; once one earns it, register the campaign in the <b>Scaling</b> tab.</>}
             </div>
           )}
-          <Section title="Ready to Scale" icon={TrendingUp} color="text-emerald-600" accent="border-emerald-500" rows={scaleRows}
-            empty={`None yet — needs net ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.`} />
-          <Section title="Kill Suggestions" icon={Skull} color="text-rose-600" accent="border-rose-500" rows={killRows}
-            empty="Nothing hits the kill rules right now." />
-          <Section title="Monitoring / Watch" icon={Eye} color="text-amber-600" accent="border-amber-400" rows={watchRows}
-            empty={`No registered ${unitLabel} is waiting.`} />
+          {Section({ title: "Ready to Scale", icon: TrendingUp, color: "text-emerald-600", accent: "border-emerald-500", rows: scaleRows,
+            empty: `None yet — needs net ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.` })}
+          {Section({ title: "Kill Suggestions", icon: Skull, color: "text-rose-600", accent: "border-rose-500", rows: killRows,
+            empty: "Nothing hits the kill rules right now." })}
+          {Section({ title: "Monitoring / Watch", icon: Eye, color: "text-amber-600", accent: "border-amber-400", rows: watchRows,
+            empty: `No registered ${unitLabel} is waiting.` })}
 
           {/* Fatigue — kada AD */}
           <div className="space-y-2">
