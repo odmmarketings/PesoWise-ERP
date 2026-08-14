@@ -102,6 +102,13 @@ const DASH_CACHE = new Map<string, { ts: number; part: DashPart }>()
 const DASH_INFLIGHT = new Map<string, Promise<DashPart>>()
 const DASH_TTL = 5 * 60_000
 
+// Ang Ad Sets / Ads na antas SA LOOB ng Dashboard tab ay nasa component state
+// dati (`lvlData`), kaya namamatay sa bawat pagpalit ng tab — 21 request ulit
+// sa tuwing babalik ka at pipindutin muli ang Ad Sets. Kada account din ang
+// yunit dito, para ang pag-filter ng account/owner ay hindi na humihila.
+const LVL_CACHE = new Map<string, { ts: number; rows: Row[] }>()
+const LVL_INFLIGHT = new Map<string, Promise<Row[]>>()
+
 export default function FacebookAdsPage() {
   const fb = useFBAccounts()
   const pages = useActivePages()
@@ -355,6 +362,14 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
   // ── View-only level tabs (Campaigns / Ad Sets / Ads). Ad-set and ad metrics are lazy-loaded
   // once per date range (server cache handles freshness) — no toggles here, viewing only. ──
   const [perfLevel, setPerfLevel] = useState<"campaign" | "adset" | "ad">("campaign")
+  // Kinukuha agad ang nahila kanina — buhay ito sa module, kaya hindi na
+  // humihila muli ang pagbalik sa Ad Sets / Ads pagkatapos mong lumipat ng tab.
+  const lvlKey = useCallback((lvl: string, a: FBAccount) => `${lvl}|${from}|${to}|${a.id}`, [from, to])
+  const lvlFromCache = useCallback((lvl: string, accts: FBAccount[]): Row[] | null => {
+    const now = Date.now()
+    const hits = accts.map(a => LVL_CACHE.get(lvlKey(lvl, a))).filter(h => !!h && now - h.ts < DASH_TTL)
+    return hits.length === accts.length && accts.length > 0 ? hits.flatMap(h => h!.rows) : null
+  }, [lvlKey])
   const [lvlData, setLvlData] = useState<Record<string, Row[]>>({})
   const [lvlLoading, setLvlLoading] = useState(false)
   // Meta-style selection (view-only): selecting campaigns filters the Ad Sets/Ads tabs, selecting
@@ -375,20 +390,37 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
     if (perfLevel === "campaign") { setSelCampaigns(new Set([r.id])); setSelAdsets(new Set()); setSelAds(new Set()); setPerfLevel("adset") }
     else if (perfLevel === "adset") { setSelAdsets(new Set([r.id])); setSelAds(new Set()); setPerfLevel("ad") }
   }
-  useEffect(() => { setLvlData({}); setPerfLevel("campaign"); clearPerfSel("campaign") }, [from, to])   // range change → refetch levels
+  // Ang saklaw ng petsa ay bahagi ng cache key, kaya hindi na kailangang burahin
+  // ang laman kapag nagbago ito — babalik lang ito sa tamang entry.
+  useEffect(() => { setLvlData({}); setPerfLevel("campaign"); clearPerfSel("campaign") }, [from, to])
   useEffect(() => {
     if (perfLevel === "campaign" || lvlData[perfLevel]) return
+    const cached = lvlFromCache(perfLevel, fbAccounts)
+    if (cached) { setLvlData(d => ({ ...d, [perfLevel]: cached })); setLvlLoading(false); return }
     let alive = true
     ;(async () => {
       setLvlLoading(true)
-      const out: Row[] = []
       await mapLimit(fbAccounts, 3, async (a: FBAccount) => {
-        try {
+        const k = lvlKey(perfLevel, a)
+        const hit = LVL_CACHE.get(k)
+        if (hit && Date.now() - hit.ts < DASH_TTL) return
+        // Sumasakay sa tumatakbo nang hila para sa parehong account+antas.
+        const running = LVL_INFLIGHT.get(k)
+        if (running) { await running.catch(() => null); return }
+        const run = (async () => {
           const j = await fetch(`/api/fb/insights?rich=1&level=${perfLevel}&parent=${encodeURIComponent(actId(a.ad_account_id))}&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`).then(r => r.json())
-          if (j.success) for (const r of j.rows) out.push(toRow(r, a.id, a.name, a.owner))
-        } catch {}
+          const rows: Row[] = j.success ? j.rows.map((r: any) => toRow(r, a.id, a.name, a.owner)) : []
+          LVL_CACHE.set(k, { ts: Date.now(), rows })
+          return rows
+        })()
+        LVL_INFLIGHT.set(k, run)
+        try { await run } catch { /* laktawan ang account na bumigo */ }
+        finally { LVL_INFLIGHT.delete(k) }
       })
-      if (alive) { setLvlData(d => ({ ...d, [perfLevel]: out })); setLvlLoading(false) }
+      if (alive) {
+        setLvlData(d => ({ ...d, [perfLevel]: fbAccounts.flatMap(a => LVL_CACHE.get(lvlKey(perfLevel, a))?.rows ?? []) }))
+        setLvlLoading(false)
+      }
     })()
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -822,8 +854,10 @@ function DailySpend({ daily, loading }: { daily: { date: string; accountName: st
             <tbody>
               {loading ? <tr><td colSpan={6} className="text-center py-10 text-slate-400"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" /> Loading…</td></tr>
                 : filtered.length === 0 ? <tr><td colSpan={6} className="text-center py-10 text-slate-400 text-sm">No spend in range.</td></tr>
+                  // key sa DATOS, hindi sa index — kapag index ang key, ini-reuse
+                  // ni React ang maling row pagkatapos mag-filter.
                   : filtered.map((d, i) => (
-                    <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40`}>
+                    <tr key={`${d.date}|${d.accountName}`} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40`}>
                       <td className="px-4 py-2.5 whitespace-nowrap">{d.date}</td>
                       <td className="px-4 py-2.5 font-medium">{d.accountName}</td>
                       <td className="px-4 py-2.5 text-slate-600">{d.owner || "—"}</td>
@@ -1195,6 +1229,9 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
 
   // Connected panel tab. The "N selected ✕" badge slot is always reserved (invisible when
   // nothing is selected) so the tab keeps a constant width and the row never shifts/stretches.
+  // Tinatawag bilang function sa ibaba, HINDI isinusulat bilang <PanelTab />:
+  // ang component na ginagawa sa loob ng render ay bagong uri kada render, kaya
+  // binubuwag at muling binubuo ni React ang tatlong tab sa bawat pagpindot.
   const PanelTab = ({ lvl, Icon, title, count, onClear }: { lvl: MgrLevel; Icon: any; title: string; count: number; onClear: () => void }) => (
     <button onClick={() => setLevel(lvl)}
       className={`flex items-center gap-2 px-4 py-2.5 rounded-t-lg border-b-2 -mb-px text-sm font-medium whitespace-nowrap ${level === lvl ? "border-blue-600 text-blue-700 bg-white" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
@@ -1370,9 +1407,9 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           {/* Connected panels: Campaigns · Ad Sets · Ads (selecting upstream filters downstream) */}
           <div className="flex items-center gap-1 px-3 pt-2 border-b border-slate-200 bg-slate-50/50 overflow-x-auto scrollbar-dark">
-            <PanelTab lvl="campaign" Icon={Megaphone} title="Campaigns" count={selCampaigns.size} onClear={clearCampaigns} />
-            <PanelTab lvl="adset" Icon={LayoutGrid} title={selCampaigns.size ? `Ad Sets for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ad Sets"} count={selAdsets.size} onClear={clearAdsets} />
-            <PanelTab lvl="ad" Icon={Layers} title={selAdsets.size ? `Ads for ${selAdsets.size} Ad Set${selAdsets.size > 1 ? "s" : ""}` : selCampaigns.size ? `Ads for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ads"} count={selAds.size} onClear={clearAds} />
+            {PanelTab({ lvl: "campaign", Icon: Megaphone, title: "Campaigns", count: selCampaigns.size, onClear: clearCampaigns })}
+            {PanelTab({ lvl: "adset", Icon: LayoutGrid, title: selCampaigns.size ? `Ad Sets for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ad Sets", count: selAdsets.size, onClear: clearAdsets })}
+            {PanelTab({ lvl: "ad", Icon: Layers, title: selAdsets.size ? `Ads for ${selAdsets.size} Ad Set${selAdsets.size > 1 ? "s" : ""}` : selCampaigns.size ? `Ads for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ads", count: selAds.size, onClear: clearAds })}
             <span className="ml-auto pr-2 text-[11px] text-amber-600 whitespace-nowrap">On/Off applies instantly — budget edits save as drafts until Publish</span>
           </div>
 
