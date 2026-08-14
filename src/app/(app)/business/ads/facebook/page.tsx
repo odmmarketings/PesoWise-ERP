@@ -157,6 +157,10 @@ export default function FacebookAdsPage() {
   const [scalingCount, setScalingCount] = useState(0)
   const [testingCount, setTestingCount] = useState(0)
   const [monitorCount, setMonitorCount] = useState(0)
+  // "Dalhin mo ako doon": pinipindot ang pangalan sa Testing/Scaling/Monitoring,
+  // bumubukas ang Ads Manager na nakatutok na sa mismong object na iyon.
+  const [mgrFocus, setMgrFocus] = useState<MgrFocus | null>(null)
+  const openInManager = useCallback((f: MgrFocus) => { setMgrFocus(f); setTab("manager") }, [])
   const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>(dashBoot.trend)
   const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>(dashBoot.daily)
   const [loading, setLoading] = useState(false)
@@ -255,7 +259,9 @@ export default function FacebookAdsPage() {
 
       <div className="flex gap-1 border-b border-slate-200 overflow-x-auto scrollbar-dark">
         {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["testing", "Testing", FlaskConical], ["scaling", "Scaling", TrendingUp], ["monitoring", "Monitoring", Eye]] as [Tab, string, any][]).map(([t, label, Icon]) => (
-          <button key={t} onClick={() => setTab(t)}
+          // Ang pagpindot mismo sa tab ay normal na pagbukas — hindi dala ng
+          // lumang focus mula sa nakaraang "dalhin mo ako doon".
+          <button key={t} onClick={() => { setMgrFocus(null); setTab(t) }}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
             <Icon className="w-4 h-4" /> {label}
             {/* Bilang ng scale+kill+fatigue signals — lumalabas matapos madalaw ang tab
@@ -286,10 +292,10 @@ export default function FacebookAdsPage() {
         </div>
       ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} />
         : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
-          : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} />
-            : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} />
-              : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} />
-              : <AdsManager fb={fb} from={from} to={to} />}
+          : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} />
+            : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} />
+              : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} onOpenInManager={openInManager} />
+              : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} />}
     </div>
   )
 }
@@ -878,6 +884,10 @@ function DailySpend({ daily, loading }: { daily: { date: string; accountName: st
 // ADS MANAGER — full in-app manager (Campaigns → Ad Sets → Ads), like Meta Ads Manager
 // ════════════════════════════════════════════════════════════════════════════════
 type MgrLevel = "campaign" | "adset" | "ad"
+// Ang hinihinging "dalhin mo ako doon": galing sa isang row ng Testing /
+// Scaling / Monitoring papunta sa Ads Manager, nakapili na ang ad account,
+// nasa tamang antas, at ang mismong object ang nakikita.
+type MgrFocus = { accountId: string; level: MgrLevel; id: string; name: string; campaignId?: string }
 type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
 // Ad-preview placement formats (mirrors Meta's preview switcher).
@@ -907,8 +917,8 @@ const MGR_CACHE = new Map<string, MgrCached>()
 const MGR_INFLIGHT = new Map<string, Promise<any[]>>()
 const MGR_TTL = 5 * 60_000   // katumbas ng 5-minutong server cache ng insights
 
-function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; from: string; to: string }) {
-  const [accId, setAccId] = useState("all")   // default: All ad accounts
+function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null }) {
+  const [accId, setAccId] = useState(focus?.accountId || "all")   // default: All ad accounts
   const [fOwner, setFOwner] = useState("All")
   const [objMgr, setObjMgr] = useState<Obj>("All")
   const [fStatus, setFStatus] = useState("All")
@@ -920,10 +930,18 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
   const isAll = accId === "all"
   const account = accById(accId)
 
-  const [level, setLevel] = useState<MgrLevel>("campaign")
+  // ── "Buksan sa Ads Manager" mula sa Testing / Scaling / Monitoring ─────────
+  // Ang tab na ito ay ini-mount lang kapag binuksan (ternary), kaya ang `focus`
+  // ay basta ipinapasok sa unang halaga ng state — walang effect na kailangan,
+  // walang kumukurap na "All ad accounts" muna bago mag-filter.
+  const [focusOn, setFocusOn] = useState<MgrFocus | null>(focus ?? null)
+  const [level, setLevel] = useState<MgrLevel>(focus?.level ?? "campaign")
   // Meta-style multi-select: selecting upstream rows filters the downstream panels.
-  const [selCampaigns, setSelCampaigns] = useState<Set<string>>(new Set())
-  const [selAdsets, setSelAdsets] = useState<Set<string>>(new Set())
+  // Kapag may focus, naka-tsek na agad ang pinanggalingan: kaya kung pipindutin
+  // mo ang Ad Sets, ang mga ad set NG CAMPAIGN NA IYON agad ang lalabas.
+  const [selCampaigns, setSelCampaigns] = useState<Set<string>>(() => new Set(
+    focus?.level === "campaign" ? [focus.id] : focus?.campaignId ? [focus.campaignId] : []))
+  const [selAdsets, setSelAdsets] = useState<Set<string>>(() => new Set(focus?.level === "adset" ? [focus.id] : []))
   const [selAds, setSelAds] = useState<Set<string>>(new Set())
 
   // raw rows for the CURRENT level only (lazy-loaded). Naka-cache pa ba mula sa
@@ -1028,7 +1046,14 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
   }, [isAll, account, visibleAccounts, level, from, to, accKey])
   useEffect(() => { load() }, [load])
   // Account change resets the view + all selections.
-  useEffect(() => { setLevel("campaign"); setSelCampaigns(new Set()); setSelAdsets(new Set()); setSelAds(new Set()) }, [accId])
+  // ⚠ Tumatakbo rin ito sa MOUNT, at buburahin nito ang buong `focus` bago mo
+  // pa ito makita ("bakit All ad accounts pa rin?"). Nilalaktawan ang unang
+  // takbo; ang tunay na pagpalit ng account ay nagpapawalang-bisa sa focus.
+  const accIdFirstRun = useRef(true)
+  useEffect(() => {
+    if (accIdFirstRun.current) { accIdFirstRun.current = false; return }
+    setLevel("campaign"); setSelCampaigns(new Set()); setSelAdsets(new Set()); setSelAds(new Set()); setFocusOn(null)
+  }, [accId])
 
   async function manage(token: string, action: string, extra: any = {}, silent = false) {
     if (!token) return
@@ -1193,13 +1218,20 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
     const a = accById(r.__accId) || account
     return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "" }
   }
-  const passStatus = (r: MgrRow) => fStatus === "All" || (fStatus === "Active" ? /active/i.test(r.status) : fStatus === "Paused" ? (/paus/i.test(r.status) && r.spend > 0) : r.spend > 0)
+  // ⚠ PAREHONG BITAG NA INAYOS SA DASHBOARD (Ago 6 2026), naiwan dito: ang
+  // "Paused" ay humihingi rin ng `spend > 0`, kaya sa 145 na paused campaign ay
+  // 45 lang ang lumalabas — 100 ang nakatago. Ang STATUS ay status; ang "With
+  // spend" ang para sa gastos. Huwag paghaluin muli.
+  const passStatus = (r: MgrRow) => fStatus === "All" || (fStatus === "Active" ? /active/i.test(r.status) : fStatus === "Paused" ? /paus/i.test(r.status) : r.spend > 0)
   const levelRows = useMemo(() => rows.map(toMgr).filter(r => {
     if (!passStatus(r)) return false
+    // Galing sa Testing/Scaling/Monitoring: ang hinahanap mo lang muna ang
+    // ipinapakita. May "Show all" na buton sa banner sa itaas.
+    if (focusOn && level === focusOn.level && r.id !== focusOn.id) return false
     if (level === "campaign") return objMgr === "All" || (objMgr === "Messaging" ? isMsg(r.objective) : !isMsg(r.objective))
     if (level === "adset") return selCampaigns.size === 0 || selCampaigns.has(r.campaignId)
     return selAdsets.size > 0 ? selAdsets.has(r.adsetId) : (selCampaigns.size === 0 || selCampaigns.has(r.campaignId))   // ads
-  }), [rows, account, mgrAccounts, level, objMgr, fStatus, selCampaigns, selAdsets])
+  }), [rows, account, mgrAccounts, level, objMgr, fStatus, selCampaigns, selAdsets, focusOn])
 
   const curSel = level === "campaign" ? selCampaigns : level === "adset" ? selAdsets : selAds
   const setCurSel = level === "campaign" ? setSelCampaigns : level === "adset" ? setSelAdsets : setSelAds
@@ -1397,6 +1429,22 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
         <Sel value={objMgr} onChange={v => setObjMgr(v as Obj)} opts={["All", "Conversions", "Messaging"]} label="Objective" />
         <Sel value={fStatus} onChange={setFStatus} opts={["All", "Active", "Paused", "With spend"]} label="Status" />
       </div>
+
+      {/* Saan ka galing at ano ang tinitingnan — at paano bumalik sa lahat. */}
+      {focusOn && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[13px] text-blue-800 flex flex-wrap items-center gap-2">
+          <Search className="w-4 h-4 shrink-0" />
+          <span>
+            Showing one {focusOn.level === "campaign" ? "campaign" : focusOn.level === "adset" ? "ad set" : "ad"}:{" "}
+            <b className="break-all">{focusOn.name}</b>
+            {focusOn.level === "campaign" && <> — open <b>Ad Sets</b> above to see what&apos;s inside it.</>}
+          </span>
+          <button onClick={() => setFocusOn(null)}
+            className="ml-auto text-[12px] px-2 py-1 rounded-lg border border-blue-300 hover:bg-blue-100 whitespace-nowrap">
+            Show all
+          </button>
+        </div>
+      )}
 
       {mgrAccounts.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">

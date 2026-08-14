@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "rea
 import {
   TrendingUp, Skull, Eye, Flame, RefreshCw, Settings, Sparkles, Send,
   ChevronDown, ChevronUp, Pause, Undo2, AlertTriangle, ArrowUp, ArrowDown, Check, Plus, X, LayoutGrid, Layers,
+  ExternalLink,
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
@@ -231,8 +232,13 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
 //                       ang aksyon — walang Scale, walang Register. May View ad
 //                       sets / View ads pa rin.
 // Isang engine para hindi maghiwalay ang net-ROAS math sa tatlong lugar.
-export function ScalingTracker({ accounts, onSignals, mode }: {
+export type ManagerFocus = {
+  accountId: string; level: "campaign" | "adset" | "ad"; id: string; name: string; campaignId?: string
+}
+export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
   accounts: FBAccount[]; onSignals?: (n: number) => void; mode: "testing" | "scaling" | "monitoring"
+  /** Pinipindot ang pangalan ng row → bumubukas ang Ads Manager na nakatutok dito. */
+  onOpenInManager?: (f: ManagerFocus) => void
 }) {
   const allPages = useActivePages()
   const registry = useScalingRegistry()
@@ -1146,7 +1152,25 @@ export function ScalingTracker({ accounts, onSignals, mode }: {
           <input type="checkbox" checked={scaleSel.has(s.adset.id)}
             onChange={e => setScaleSel(p => { const n = new Set(p); e.target.checked ? n.add(s.adset.id) : n.delete(s.adset.id); return n })} />
         )}
-        <span className="font-semibold text-slate-800 text-sm">{s.adset.name}</span>
+        {/* Ang pangalan ay ang daan papuntang Ads Manager: nakapili na ang ad
+            account, nasa tamang antas, at ito mismo ang nakikita. */}
+        {onOpenInManager ? (
+          <button
+            onClick={() => onOpenInManager({
+              accountId: s.adset.account.id,
+              level: isCampaign ? "campaign" : "adset",
+              id: s.adset.id,
+              name: s.adset.name,
+              campaignId: s.adset.campaignId || undefined,
+            })}
+            title={`Open this ${unitLabel} in Ads Manager`}
+            className="font-semibold text-slate-800 text-sm text-left flex items-center gap-1 hover:text-blue-600 group">
+            <span className="group-hover:underline decoration-dotted underline-offset-2">{s.adset.name}</span>
+            <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 shrink-0" />
+          </button>
+        ) : (
+          <span className="font-semibold text-slate-800 text-sm">{s.adset.name}</span>
+        )}
         <span className="text-[11px] text-slate-400">
           {!isCampaign && <>{s.adset.campaignName} · </>}{s.adset.account.name}
           {s.adset.createdTime && <> · {daysOld(s.adset.createdTime)}d old</>}
