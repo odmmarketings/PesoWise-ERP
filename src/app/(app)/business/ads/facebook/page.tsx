@@ -1713,6 +1713,15 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
   const [attrOpen, setAttrOpen] = useState(-1)         // condition row whose "…" popover is open
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState("")
+  // ── Edit: ang parehong form, pero binubuksan nang may laman ────────────────
+  // Ang SAKLAW ay HINDI nagbabago sa pag-edit: iniingatan nang buo ang
+  // entity_type at ang id filter ng rule. Kung mababago ang "Apply rule to",
+  // ang rule na nakatutok sa tatlong napiling campaign ay tahimik na
+  // magiging "lahat ng aktibong campaign" — iyon ay pagpapalit ng ibang bagay
+  // kaysa sa ini-edit mo. Ang pagpapalit ng saklaw ay Apply-existing o bago.
+  const [editing, setEditing] = useState<FBRule | null>(null)
+  const [editEntity, setEditEntity] = useState("")          // entity_type ng ini-edit
+  const [editIdFilter, setEditIdFilter] = useState<any>(null)   // buong id filter, kopya
   // ── Manage-list state ──
   const [rules, setRules] = useState<FBRule[]>([])
   const [rulesLoading, setRulesLoading] = useState(false)
@@ -1723,13 +1732,64 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
   const [applying, setApplying] = useState(false)
 
   const acct = accounts.find(a => a.id === acctId) || accounts.find(a => a.id === currentAccountId) || accounts[0] || null
-  const entity = applyTo === "SELECTED" ? LEVEL_ENTITY[level] : applyTo
+  const entity = editing ? (editEntity || "CAMPAIGN") : (applyTo === "SELECTED" ? LEVEL_ENTITY[level] : applyTo)
   const words = ENTITY_WORD[entity] || ENTITY_WORD.CAMPAIGN
   const post = (body: any) => fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json())
 
+  // Binubuksan ang form na may laman ng umiiral na rule. Ang mga halagang pera
+  // ay nasa sentimo sa Meta (tulad ng budget), kaya hinahati sa 100 pabalik.
+  function prefillFrom(r: FBRule) {
+    const fs: any[] = r.evaluation_spec?.filters || []
+    const ent = String(fs.find(f => f.field === "entity_type")?.value || "CAMPAIGN")
+    const idF = fs.find(f => /\.id$|^id$/.test(f.field)) || null
+    setEditEntity(ent); setEditIdFilter(idF)
+    setAcctId(r.__accId)
+    setRuleName(r.name || "")
+    setApplyTo(ent)
+    setTimeRange(String(fs.find(f => f.field === "time_preset")?.value || "LIFETIME"))
+
+    const ex = String(r.execution_spec?.execution_type || "")
+    const spec = (r.execution_spec?.execution_options || []).find((o: any) => o.field === "change_spec")?.value
+    if (ex === "PAUSE") setAction("PAUSE")
+    else if (ex === "UNPAUSE") setAction("UNPAUSE")
+    else if (ex === "NOTIFICATION") setAction("NOTIFY")
+    else if (/BUDGET/.test(ex)) {
+      const amt = Number(spec?.amount ?? 0)
+      const unit = spec?.unit === "ACCOUNT_CURRENCY" ? "ACCOUNT_CURRENCY" : "PERCENTAGE"
+      setAction(amt < 0 ? "BUDGET_DEC" : "BUDGET_INC")
+      setBudgetUnit(unit)
+      setBudgetAmt(String(unit === "PERCENTAGE" ? Math.abs(amt) : Math.abs(amt) / 100))
+      setBudgetCap(Number(spec?.limit) > 0 ? String(Number(spec.limit) / 100) : "")
+    } else setAction("")
+
+    const money = (f: string) => !!RULE_METRICS.find(m => m.f === f)?.money
+    const back = (f: string, v: any) => money(f) ? String(Number(v) / 100) : String(v)
+    const cs: RuleCond[] = fs
+      .filter(f => !["entity_type", "time_preset", "attribution_window"].includes(f.field) && !/\.id$|^id$/.test(f.field))
+      .map(f => ({
+        metric: f.field, op: f.operator,
+        v1: Array.isArray(f.value) ? back(f.field, f.value[0]) : back(f.field, f.value),
+        v2: Array.isArray(f.value) ? back(f.field, f.value[1]) : "",
+      }))
+    setConds(cs.length ? cs : [blankCond()])
+
+    const st = String(r.schedule_spec?.schedule_type || "SEMI_HOURLY")
+    setSched(st === "DAILY" ? "DAILY" : st === "CUSTOM" ? "CUSTOM" : "SEMI_HOURLY")
+    const win = r.schedule_spec?.schedule?.[0]
+    setDays(Array.isArray(win?.days) && win.days.length ? win.days : [0, 1, 2, 3, 4, 5, 6])
+    setStartMin(Number(win?.start_minute) || 0)
+    setEndMin(Number(win?.end_minute) || 0)
+    setErr(""); setAttrOpen(-1); setSubInput("")
+  }
+
   // Fresh form on every open; preselect the checked rows when there are any (like Meta).
+  // ⚠ Kapag EDIT ang pagbukas, ang laman ang inilalagay — hindi blangko. Ang
+  // `editing` ay naitakda na sa parehong batch ng `setView("create")`, kaya
+  // nakikita ito ng effect na ito.
   useEffect(() => {
     if (view !== "create") return
+    if (editing) { prefillFrom(editing); return }
+    setEditEntity(""); setEditIdFilter(null)
     setAcctId(currentAccountId || accounts[0]?.id || "")
     setRuleName(""); setApplyTo(selectedIds.length ? "SELECTED" : LEVEL_ENTITY[level]); setAction("")
     setBudgetAmt(""); setBudgetUnit("PERCENTAGE"); setBudgetCap("")
@@ -1737,6 +1797,11 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
     setDays([0, 1, 2, 3, 4, 5, 6]); setStartMin(0); setEndMin(0)
     setErr(""); setAttrOpen(-1); setSubInput("")
   }, [view])   // eslint-disable-line react-hooks/exhaustive-deps
+  // ⚠ Ang pag-alis sa form ay nagtatapos ng pag-edit. Kung hindi, ang susunod
+  // na "Create a new rule" ay bubukas na may laman ng huling ini-edit — at ang
+  // Save ay ita-target pa rin ang LUMANG rule id. Bagong gawa iyon na papatong
+  // sa iba.
+  useEffect(() => { if (view !== "create") setEditing(null) }, [view])
   // Subscriber = token owner's user id (who gets the Facebook notification).
   useEffect(() => {
     if (view !== "create" || !acct?.token) return
@@ -1777,7 +1842,13 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
     const filters: any[] = [
       { field: "entity_type", value: entity, operator: "EQUAL" },
       { field: "time_preset", value: timeRange, operator: "EQUAL" },
-      ...(applyTo === "SELECTED" ? [{ field: `${entity.toLowerCase()}.id`, value: selectedIds, operator: "IN" }] : []),
+      // Sa pag-edit ay ang ORIHINAL na id filter ang ibinabalik nang buo — hindi
+      // ang kasalukuyang naka-tsek sa manager. Ang rule na nakatutok sa tatlong
+      // campaign ay dapat manatiling nakatutok sa parehong tatlo pagkatapos
+      // mong palitan ang pangalan nito.
+      ...(editing
+        ? (editIdFilter ? [editIdFilter] : [])
+        : applyTo === "SELECTED" ? [{ field: `${entity.toLowerCase()}.id`, value: selectedIds, operator: "IN" }] : []),
       // Ang mga blangko ay ITINATAPON, hindi ipinapadala bilang "> 0" — kung wala kang
       // nilagay na value, walang metric condition na isasama sa rule.
       ...conds.filter(condComplete).map(c => ({ field: c.metric, value: condVal(c), operator: c.op })),
@@ -1802,14 +1873,31 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
     const schedule_spec = sched === "CUSTOM"
       ? { schedule_type: "CUSTOM", schedule: [{ start_minute: startMin, end_minute: endMin, days }] }
       : { schedule_type: sched }
+    const rule = { name: ruleName.trim(), evaluation_spec: { evaluation_type: "SCHEDULE", filters }, execution_spec, schedule_spec }
+    // ⚠ Ang token ng SARILING ad account ng rule ang ginagamit sa pag-update,
+    // hindi ang napili sa dropdown: ang `acct` ay bumabagsak sa accounts[0]
+    // kapag hindi nahanap, at ang pag-post gamit ang maling token ay tatanggihan
+    // ni Meta o — mas masahol — tatama sa ibang account.
+    const editToken = editing ? (accounts.find(a => a.id === editing.__accId)?.token || "") : ""
+    if (editing && !editToken) {
+      setErr("No token for the ad account that owns this rule — open it from that account.")
+      setSaving(false); return
+    }
     try {
-      const j = await post({
-        token: acct.token, action: "rule_create", account_id: actId(acct.ad_account_id),
-        rule: { name: ruleName.trim(), evaluation_spec: { evaluation_type: "SCHEDULE", filters }, execution_spec, schedule_spec, status: "ENABLED" },
-      })
+      const j = editing
+        ? await post({ token: editToken, action: "rule_update", id: editing.id, rule })
+        : await post({ token: acct.token, action: "rule_create", account_id: actId(acct.ad_account_id), rule: { ...rule, status: "ENABLED" } })
       if (!j.success) throw new Error(j.error || "Failed")
-      setView(""); notify(`Rule "${ruleName.trim()}" created — it now runs on Facebook.`)
-    } catch (e: any) { setErr(e?.message || "Failed to create the rule") }
+      if (editing) {
+        // Balik sa listahan at hilahin muli — ang ipinapakita ay ang sagot ni
+        // Meta, hindi ang inakala nating naipadala.
+        const name = ruleName.trim()
+        setEditing(null); setView("manage")
+        notify(`Rule "${name}" updated.`)
+      } else {
+        setView(""); notify(`Rule "${ruleName.trim()}" created — it now runs on Facebook.`)
+      }
+    } catch (e: any) { setErr(e?.message || `Failed to ${editing ? "update" : "create"} the rule`) }
     setSaving(false)
   }
 
@@ -1918,14 +2006,25 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-              <h2 className="text-lg font-bold text-slate-900">Create a custom rule</h2>
-              <button onClick={() => setView("")} className="p-1 rounded hover:bg-slate-100"><X className="w-5 h-5" /></button>
+              <h2 className="text-lg font-bold text-slate-900">{editing ? "Edit rule" : "Create a custom rule"}</h2>
+              <button onClick={() => { setEditing(null); setView(editing ? "manage" : "") }} className="p-1 rounded hover:bg-slate-100"><X className="w-5 h-5" /></button>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
               <p className="text-sm text-slate-600">
-                Automatically update the settings of selected campaigns, ad sets or ads by creating a rule.{" "}
+                {editing
+                  ? <>Changing this rule updates it on Facebook — it keeps running under the same name and schedule you set here.</>
+                  : <>Automatically update the settings of selected campaigns, ad sets or ads by creating a rule.</>}{" "}
                 <a href="https://www.facebook.com/business/help/1029841767742843" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Learn more</a>
               </p>
+              {editing && (
+                <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <b>What this rule applies to can&apos;t be changed here</b> — it stays on{" "}
+                  {editIdFilter
+                    ? <>the {Array.isArray(editIdFilter.value) ? editIdFilter.value.length : 1} {ENTITY_WORD[entity]?.[Array.isArray(editIdFilter.value) && editIdFilter.value.length === 1 ? 0 : 1] || "objects"} it was built for</>
+                    : <>all active {ENTITY_WORD[entity]?.[1] || "campaigns"}</>}.
+                  To point a rule at something else, use <b>Apply existing rule</b> or make a new one.
+                </p>
+              )}
 
               {accounts.length > 1 && (
                 <div>
@@ -1944,8 +2043,10 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   {lbl("Apply rule to", false)}
-                  <select value={applyTo} onChange={e => { const v = e.target.value; setApplyTo(v); const ent = v === "SELECTED" ? LEVEL_ENTITY[level] : v; setAction(a => ruleActionsFor(ent).some(x => x.v === a) ? a : "") }} className={inputCls}>
-                    {selectedIds.length > 0 && <option value="SELECTED">{selectedIds.length} selected {ENTITY_WORD[LEVEL_ENTITY[level]][selectedIds.length === 1 ? 0 : 1]}</option>}
+                  <select value={applyTo} disabled={!!editing}
+                    onChange={e => { const v = e.target.value; setApplyTo(v); const ent = v === "SELECTED" ? LEVEL_ENTITY[level] : v; setAction(a => ruleActionsFor(ent).some(x => x.v === a) ? a : "") }}
+                    className={`${inputCls} disabled:bg-slate-100 disabled:text-slate-500`}>
+                    {selectedIds.length > 0 && !editing && <option value="SELECTED">{selectedIds.length} selected {ENTITY_WORD[LEVEL_ENTITY[level]][selectedIds.length === 1 ? 0 : 1]}</option>}
                     <option value="CAMPAIGN">All active campaigns</option>
                     <option value="ADSET">All active ad sets</option>
                     <option value="AD">All active ads</option>
@@ -2112,8 +2213,10 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
               {err && <p className="text-sm text-rose-600">⚠ {err}</p>}
             </div>
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-200">
-              <button onClick={() => setView("")} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-800 font-semibold hover:bg-slate-50">Cancel</button>
-              <button onClick={createRule} disabled={!canCreate} className="px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-40">{saving ? "Creating…" : "Create"}</button>
+              <button onClick={() => { setEditing(null); setView(editing ? "manage" : "") }} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-800 font-semibold hover:bg-slate-50">Cancel</button>
+              <button onClick={createRule} disabled={!canCreate} className="px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-40">
+                {saving ? (editing ? "Saving…" : "Creating…") : (editing ? "Save changes" : "Create")}
+              </button>
             </div>
           </div>
         </div>
@@ -2238,7 +2341,11 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                                 <button onClick={() => setConfirmDel("")} className="px-2 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50">Cancel</button>
                               </span>
                             ) : (
-                              <button onClick={() => setConfirmDel(r.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50" title="Delete rule"><Trash2 className="w-4 h-4" /></button>
+                              <span className="inline-flex items-center gap-0.5">
+                                <button onClick={() => { setEditing(r); setView("create") }}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Edit rule"><Pencil className="w-4 h-4" /></button>
+                                <button onClick={() => setConfirmDel(r.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50" title="Delete rule"><Trash2 className="w-4 h-4" /></button>
+                              </span>
                             )}
                           </td>
                         </tr>

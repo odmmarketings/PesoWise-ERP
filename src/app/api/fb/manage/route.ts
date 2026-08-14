@@ -103,8 +103,16 @@ export async function POST(req: NextRequest) {
         await fbCall(id, "POST", { status: status === "DISABLED" ? "DISABLED" : "ENABLED" }, token)
         return NextResponse.json({ success: true })
       case "rule_update": {
-        if (!rule?.evaluation_spec) return NextResponse.json({ success: false, error: "Missing evaluation_spec" }, { status: 400 })
-        await fbCall(id, "POST", { evaluation_spec: JSON.stringify(rule.evaluation_spec) }, token)
+        // Bahagyang pag-update: ang ipinadala LANG ang binabago. Ginagamit ito ng
+        // "Apply existing rule" (evaluation_spec lang, para lawakan ang saklaw) at
+        // ng Edit sa listahan ng rules (pangalan/aksyon/kondisyon/iskedyul).
+        const p: Record<string, string> = {}
+        if (rule?.name) p.name = String(rule.name)
+        if (rule?.evaluation_spec) p.evaluation_spec = JSON.stringify(rule.evaluation_spec)
+        if (rule?.execution_spec) p.execution_spec = JSON.stringify(rule.execution_spec)
+        if (rule?.schedule_spec) p.schedule_spec = JSON.stringify(rule.schedule_spec)
+        if (Object.keys(p).length === 0) return NextResponse.json({ success: false, error: "Nothing to update" }, { status: 400 })
+        await fbCall(id, "POST", p, token)
         return NextResponse.json({ success: true })
       }
       case "rule_delete":
