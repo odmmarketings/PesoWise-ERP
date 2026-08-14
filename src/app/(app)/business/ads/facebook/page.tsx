@@ -772,6 +772,19 @@ const PREVIEW_FORMATS = [
   { key: "RIGHT_COLUMN_STANDARD", label: "Right column" },
 ] as const
 
+// ── CACHE NG ADS MANAGER ────────────────────────────────────────────────────
+// Ang tab na ito ay ini-UNMOUNT kapag lumipat ka (ternary sa itaas), kaya ang
+// pagbalik ay dating bagong hila ng bawat ad account — "Loading…" kahit kanina
+// mo lang binuksan (iniulat Ago 14 2026). Kaparehong lunas ng ScalingTracker:
+// itinatabi ang resulta AT ang tumatakbong promise, kada (level, accounts,
+// petsa). Ang pumapasok na mount habang may hilang tumatakbo ay SUMASAKAY —
+// hindi nagsisimula ng pangalawa, kaya hindi na naaabot ang FB #17 rate limit.
+// Ang `load(true)` (pagkatapos ng tunay na pagbabago sa Meta) ang naglilinis.
+type MgrCached = { ts: number; rows: any[] }
+const MGR_CACHE = new Map<string, MgrCached>()
+const MGR_INFLIGHT = new Map<string, Promise<any[]>>()
+const MGR_TTL = 5 * 60_000   // katumbas ng 5-minutong server cache ng insights
+
 function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; from: string; to: string }) {
   const [accId, setAccId] = useState("all")   // default: All ad accounts
   const [fOwner, setFOwner] = useState("All")
@@ -791,7 +804,14 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
   const [selAdsets, setSelAdsets] = useState<Set<string>>(new Set())
   const [selAds, setSelAds] = useState<Set<string>>(new Set())
 
-  const [rows, setRows] = useState<any[]>([])   // raw rows for the CURRENT level only (lazy-loaded)
+  // raw rows for the CURRENT level only (lazy-loaded). Naka-cache pa ba mula sa
+  // huling pagbukas? Ilagay agad — walang "Loading…" sa pagbalik sa tab.
+  // (Sa mount, "campaign" palagi ang `level`.)
+  const [rows, setRows] = useState<any[]>(() => {
+    const accts = isAll ? visibleAccounts : (account ? [account] : [])
+    const hit = MGR_CACHE.get(`${level}|${from}|${to}|${accts.map(a => a.id).join(",")}`)
+    return hit && Date.now() - hit.ts < MGR_TTL ? hit.rows : []
+  })
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState("")
   const [toast, setToast] = useState("")
@@ -822,20 +842,45 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
   // Lazy-load ONLY the level being viewed (keeps API calls low → avoids FB #17 rate limits).
   // Cross-level filtering uses each row's own campaignId / adsetId, so other levels needn't load.
   // Uses the 5-min server cache by default; pass fresh=true after an edit to force a refetch.
+  const mgrKey = useMemo(() => {
+    const accts = isAll ? visibleAccounts : (account ? [account] : [])
+    return `${level}|${from}|${to}|${accts.map(a => a.id).join(",")}`
+  }, [isAll, visibleAccounts, account, level, from, to])
+
   const load = useCallback(async (fresh = false) => {
     const accts = isAll ? visibleAccounts : (account ? [account] : [])
     if (accts.length === 0) { setRows([]); return }
+    if (fresh) {
+      // Binago natin ang Meta — wala nang mapagkakatiwalaan ANG KAHIT ALING
+      // antas (ang pag-pause ng campaign ay nagpapabago sa ad sets nito).
+      MGR_CACHE.clear()
+    } else {
+      const hit = MGR_CACHE.get(mgrKey)
+      if (hit && Date.now() - hit.ts < MGR_TTL) { setRows(hit.rows); setLoading(false); return }
+      const running = MGR_INFLIGHT.get(mgrKey)
+      if (running) {
+        setLoading(true)
+        const shared = await running.catch(() => null)
+        if (shared) setRows(shared)
+        setLoading(false)
+        return
+      }
+    }
     setLoading(true)
-    const out: any[] = []
-    await mapLimit(accts, 3, async (a: FBAccount) => {
-      try {
-        const j = await fetch(`/api/fb/insights?rich=1${fresh ? "&nocache=1" : ""}&level=${level}&parent=${encodeURIComponent(actId(a.ad_account_id))}&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`).then(r => r.json())
-        if (j.success) for (const r of j.rows) out.push({ ...r, __accId: a.id })
-      } catch {}
-    })
-    setRows(out)
-    setLoading(false)
-  }, [isAll, account, visibleAccounts, level, from, to])
+    const run = (async () => {
+      const out: any[] = []
+      await mapLimit(accts, 3, async (a: FBAccount) => {
+        try {
+          const j = await fetch(`/api/fb/insights?rich=1${fresh ? "&nocache=1" : ""}&level=${level}&parent=${encodeURIComponent(actId(a.ad_account_id))}&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`).then(r => r.json())
+          if (j.success) for (const r of j.rows) out.push({ ...r, __accId: a.id })
+        } catch {}
+      })
+      MGR_CACHE.set(mgrKey, { ts: Date.now(), rows: out })
+      return out
+    })()
+    MGR_INFLIGHT.set(mgrKey, run)
+    try { setRows(await run) } catch {} finally { MGR_INFLIGHT.delete(mgrKey); setLoading(false) }
+  }, [isAll, account, visibleAccounts, level, from, to, mgrKey])
   useEffect(() => { load() }, [load])
   // Account change resets the view + all selections.
   useEffect(() => { setLevel("campaign"); setSelCampaigns(new Set()); setSelAdsets(new Set()); setSelAds(new Set()) }, [accId])
@@ -1213,7 +1258,7 @@ function AdsManager({ fb, from, to }: { fb: ReturnType<typeof useFBAccounts>; fr
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           {/* Connected panels: Campaigns · Ad Sets · Ads (selecting upstream filters downstream) */}
-          <div className="flex items-center gap-1 px-3 pt-2 border-b border-slate-200 bg-slate-50/50 overflow-x-auto">
+          <div className="flex items-center gap-1 px-3 pt-2 border-b border-slate-200 bg-slate-50/50 overflow-x-auto scrollbar-dark">
             <PanelTab lvl="campaign" Icon={Megaphone} title="Campaigns" count={selCampaigns.size} onClear={clearCampaigns} />
             <PanelTab lvl="adset" Icon={LayoutGrid} title={selCampaigns.size ? `Ad Sets for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ad Sets"} count={selAdsets.size} onClear={clearAdsets} />
             <PanelTab lvl="ad" Icon={Layers} title={selAdsets.size ? `Ads for ${selAdsets.size} Ad Set${selAdsets.size > 1 ? "s" : ""}` : selCampaigns.size ? `Ads for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ads"} count={selAds.size} onClear={clearAds} />

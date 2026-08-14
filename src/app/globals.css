@@ -45,6 +45,11 @@
    !important.
    ═══════════════════════════════════════════════════════════════════════════ */
 .dark {
+  /* Sinasabi sa browser na madilim ang pahina: ang mga bagay na HINDI naaabot
+     ng CSS — scrollbar, native na dropdown ng <select>, date/number spinner,
+     autofill — ay ipipinta niya nang madilim. Kung wala ito, mapusyaw na guhit
+     ang scrollbar sa gitna ng madilim na panel (kita sa Ads Manager). */
+  color-scheme: dark;
   --background: #0b1220;
   --foreground: #e8edf5;
   --card: #131c2e;
@@ -74,8 +79,27 @@
 .dark .hover\:bg-white:hover { background-color: var(--dk-raised); }
 .dark .hover\:bg-slate-50:hover, .dark .hover\:bg-gray-50:hover { background-color: var(--dk-raised); }
 .dark .hover\:bg-slate-100:hover, .dark .hover\:bg-gray-100:hover { background-color: #222e42; }
-/* Semi-transparent na bersyon na ginagamit sa mga hovered row */
+/* ⚠ ANG SLASH-OPACITY AY IBANG KLASE. Ang `bg-slate-50/50` ay HINDI tinatamaan
+   ng `.bg-slate-50` — ibang token iyon, kaya nananatiling halos-puti ito sa
+   ibabaw ng madilim na card at lumalabas na mapusyaw na guhit. Ganoon ang
+   nangyari sa Campaigns · Ad Sets · Ads na strip ng Ads Manager (Ago 14 2026).
+   Kailangang tahasang isulat ang bawat antas na TALAGANG ginagamit; walang
+   `[class*=]` dito — pati `hover:bg-slate-50/70` ang tatamaan niyon at
+   ilalapat ang kulay kahit hindi naka-hover.
+   MAY LIMITASYON: ang mababang alpha (`bg-white/5`, `/10`, `/20`, `/25`) ay
+   sadyang malabong belo sa ibabaw ng kulay/gradient na banner (landing page,
+   RTS, ChannelNet) — TAMA na sila ay maputi, kaya hindi sila kasama rito. */
+.dark .bg-slate-50\/50 { background-color: color-mix(in srgb, var(--dk-sunken) 50%, transparent); }
+.dark .bg-slate-50\/60 { background-color: color-mix(in srgb, var(--dk-sunken) 60%, transparent); }
 .dark .bg-slate-50\/70 { background-color: color-mix(in srgb, var(--dk-sunken) 70%, transparent); }
+.dark .bg-white\/60 { background-color: color-mix(in srgb, var(--dk-surface) 60%, transparent); }
+.dark .bg-white\/70 { background-color: color-mix(in srgb, var(--dk-surface) 70%, transparent); }
+.dark .bg-white\/95 { background-color: color-mix(in srgb, var(--dk-surface) 95%, transparent); }
+/* Skeleton shimmer — mabigat na maputing bloke kung hindi papalitan */
+.dark .bg-slate-200\/70 { background-color: color-mix(in srgb, #2a374e 70%, transparent); }
+.dark .bg-slate-200\/80 { background-color: color-mix(in srgb, #2a374e 80%, transparent); }
+.dark .bg-slate-300\/50 { background-color: color-mix(in srgb, #32405a 50%, transparent); }
+.dark .bg-slate-300\/70 { background-color: color-mix(in srgb, #32405a 70%, transparent); }
 
 /* ── Teksto ────────────────────────────────────────────────────────────── */
 .dark .text-slate-900, .dark .text-gray-900,
@@ -220,7 +244,7 @@ body {
 .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .scrollbar-dark { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
-.scrollbar-dark::-webkit-scrollbar { width: 4px; }
+.scrollbar-dark::-webkit-scrollbar { width: 4px; height: 4px; }
 .scrollbar-dark::-webkit-scrollbar-track { background: transparent; }
 .scrollbar-dark::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
 .scrollbar-dark::-webkit-scrollbar-thumb:hover { background: #475569; }
