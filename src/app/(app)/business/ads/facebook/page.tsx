@@ -102,7 +102,11 @@ type DashPart = {
 }
 const DASH_CACHE = new Map<string, { ts: number; part: DashPart }>()
 const DASH_INFLIGHT = new Map<string, Promise<DashPart>>()
-const DASH_TTL = 5 * 60_000
+// 30 minuto, hindi 5. Ligtas ang mahabang TTL dahil sa stale-while-revalidate:
+// LAGI kang may nakikitang laman agad, at kung luma na ito ay tahimik itong
+// pinapalitan. Ang maikling TTL ay hindi nagpapasariwa nang mas mabilis —
+// nagpapadalas lang ito ng hila para sa datos na nasa kamay na.
+const DASH_TTL = 30 * 60_000
 
 // Ang Ad Sets / Ads na antas SA LOOB ng Dashboard tab ay nasa component state
 // dati (`lvlData`), kaya namamatay sa bawat pagpalit ng tab — 21 request ulit
@@ -137,11 +141,15 @@ export default function FacebookAdsPage() {
   // blangkong dashboard (puro zero) ang makikita bago tumakbo ang effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const dashBoot = useMemo(() => {
-    const now = Date.now()
+    // ⚠ WALANG TTL DITO. Ang luma ay ipinapakita pa rin — mas mainam ang numerong
+    // 20 minuto na kaysa sa blangkong dashboard habang naghihintay. Ang effect sa
+    // ibaba ang tahimik na magpapalit. Ang TTL ay pumipili KUNG KAILAN hihila
+    // muli, hindi kung ano ang ipapakita (umalis papuntang Finance, bumalik —
+    // dapat nandoon pa rin ang lahat; iniulat ng may-ari, Ago 15 2026).
     const parts = fb.accounts
       .filter(a => !a.archived && a.ad_account_id && a.token)
       .map(a => DASH_CACHE.get(`${a.id}|${from}|${to}`))
-      .filter(h => !!h && now - h.ts < DASH_TTL)
+      .filter(h => !!h)
       .map(h => h!.part)
     const trendByDate: Record<string, { spend: number; sales: number }> = {}
     for (const p of parts) for (const d of p.trend) {
@@ -376,8 +384,8 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
   // humihila muli ang pagbalik sa Ad Sets / Ads pagkatapos mong lumipat ng tab.
   const lvlKey = useCallback((lvl: string, a: FBAccount) => `${lvl}|${from}|${to}|${a.id}`, [from, to])
   const lvlFromCache = useCallback((lvl: string, accts: FBAccount[]): Row[] | null => {
-    const now = Date.now()
-    const hits = accts.map(a => LVL_CACHE.get(lvlKey(lvl, a))).filter(h => !!h && now - h.ts < DASH_TTL)
+    // Walang TTL sa pagpapakita — kung may hawak tayo, ilabas.
+    const hits = accts.map(a => LVL_CACHE.get(lvlKey(lvl, a))).filter(h => !!h)
     return hits.length === accts.length && accts.length > 0 ? hits.flatMap(h => h!.rows) : null
   }, [lvlKey])
   const [lvlData, setLvlData] = useState<Record<string, Row[]>>({})
@@ -405,11 +413,16 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { r
   useEffect(() => { setLvlData({}); setPerfLevel("campaign"); clearPerfSel("campaign") }, [from, to])
   useEffect(() => {
     if (perfLevel === "campaign" || lvlData[perfLevel]) return
+    // Ipakita agad ang hawak; kung sariwa pa ang LAHAT, tapos na — kung hindi,
+    // tahimik na palitan sa likod (walang spinner, may laman na ang screen).
     const cached = lvlFromCache(perfLevel, fbAccounts)
-    if (cached) { setLvlData(d => ({ ...d, [perfLevel]: cached })); setLvlLoading(false); return }
+    if (cached) setLvlData(d => ({ ...d, [perfLevel]: cached }))
+    const now = Date.now()
+    const stale = fbAccounts.some(a => { const h = LVL_CACHE.get(lvlKey(perfLevel, a)); return !h || now - h.ts >= DASH_TTL })
+    if (cached && !stale) { setLvlLoading(false); return }
     let alive = true
     ;(async () => {
-      setLvlLoading(true)
+      if (!cached) setLvlLoading(true)
       await mapLimit(fbAccounts, 3, async (a: FBAccount) => {
         const k = lvlKey(perfLevel, a)
         const hit = LVL_CACHE.get(k)
@@ -937,7 +950,7 @@ const PREVIEW_FORMATS = [
 type MgrCached = { ts: number; rows: any[] }
 const MGR_CACHE = new Map<string, MgrCached>()
 const MGR_INFLIGHT = new Map<string, Promise<any[]>>()
-const MGR_TTL = 5 * 60_000   // katumbas ng 5-minutong server cache ng insights
+const MGR_TTL = 30 * 60_000   // tingnan ang DASH_TTL: mahaba dahil tahimik ang refresh
 
 function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null }) {
   const [accId, setAccId] = useState(focus?.accountId || "all")   // default: All ad accounts
@@ -973,12 +986,9 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
   // huling pagbukas? Ilagay agad — walang "Loading…" sa pagbalik sa tab.
   // (Sa mount, "campaign" palagi ang `level`.)
   const [rows, setRows] = useState<any[]>(() => {
+    // Walang TTL sa PAGPAPAKITA — tingnan ang paliwanag sa `dashBoot`.
     const accts = isAll ? visibleAccounts : (account ? [account] : [])
-    const now = Date.now()
-    return accts.flatMap(a => {
-      const h = MGR_CACHE.get(`${level}|${from}|${to}|${a.id}`)
-      return h && now - h.ts < MGR_TTL ? h.rows : []
-    })
+    return accts.flatMap(a => MGR_CACHE.get(`${level}|${from}|${to}|${a.id}`)?.rows ?? [])
   })
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState("")

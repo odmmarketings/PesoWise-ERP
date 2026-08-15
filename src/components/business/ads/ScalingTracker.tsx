@@ -200,7 +200,11 @@ const FATIGUE_INFLIGHT = new Map<string, Promise<void>>()
 // Progreso ng tumatakbong hila, kada key — para may makitang gumagalaw na bar
 // ang mount na sumakay sa hila ng iba (hindi nito natatanggap ang setState nito).
 const MODEL_PROGRESS = new Map<string, { done: number; total: number }>()
-const MODEL_TTL = 10 * 60_000
+// 30 minuto. Hindi ito tungkol sa "gaano kaluma ang pinapakita" — ang luma ay
+// ipinapakita agad at tahimik na pinapalitan; ito ay tungkol sa gaano kadalas
+// tayo humihila muli. Ang 10 minuto ay nangangahulugang bawat pagbalik mula sa
+// ibang pahina ay bagong 21-account na hila para sa datos na hawak na natin.
+const MODEL_TTL = 30 * 60_000
 // Ang binuksang drill-down (View ad sets / View ads) ay nasa component state
 // dati, kaya nawawala kapag lumipat ka ng tab — muling hihila sa susunod mong
 // pagbukas ng parehong campaign. Sa module na ito nakatira ngayon.
@@ -301,7 +305,12 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
   // bago pa matapos (nakita Ago 13 2026; ganito rin ang Jul 9 Fulfillment glitch).
   // Ang effect ay nakakabit na sa VALUE STRING (liveKey); ang arrays ay binabasa
   // sa REF sa oras ng takbo, hindi sa closure.
-  const liveKey = useMemo(() => live.map(a => a.id).join(","), [live])
+  // ⚠ NAKA-SORT. Ang `fb_accounts` ay hinihila nang `order(inserted_at desc)`, at
+  // ang mga account na sabay na naidagdag ay may PAREHONG inserted_at — hindi
+  // tinitiyak ng Postgres ang pagkakasunod ng magkakapantay. Iba ang pagkakasunod,
+  // ibang liveKey, ibang cacheKey — at buong bagong hila para sa parehong 21
+  // account. Ang pagkakasunod ay hindi dapat bahagi ng pagkakakilanlan.
+  const liveKey = useMemo(() => live.map(a => a.id).sort().join(","), [live])
   const liveRef = useRef(live);      liveRef.current = live
   const pagesRef = useRef(allPages); pagesRef.current = allPages
 
