@@ -68,7 +68,10 @@ function budgetTarget(m: AdsetModel): { level: "adset" | "campaign" | "none"; id
   if (m.campaignBudget > 0) return { level: "campaign", id: m.campaignId, amount: m.campaignBudget }
   return { level: "none", id: "", amount: 0 }
 }
-type Windows = Record<"w3" | "w7" | "w15" | "w31", { spend: number; value: number; purchases: number; netRoas: number; grossRoas: number; cpp: number }>
+// `w1` = NGAYONG ARAW. Nauna ito sa lahat: iyon ang unang tinitingnan kapag
+// binuksan mo ang tab, at dati ay nasa reason text lang — wala sa hanay ng
+// numero, kaya mukhang nagsisimula sa 3 araw ang kasaysayan.
+type Windows = Record<"w1" | "w3" | "w7" | "w15" | "w31", { spend: number; value: number; purchases: number; netRoas: number; grossRoas: number; cpp: number }>
 type Signal = {
   adset: AdsetModel; windows: Windows
   kind: "scale" | "kill" | "watch"
@@ -642,7 +645,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         for (const dt of dates.slice(-n)) { const d = m.dailies.get(dt); if (d) { spend += d.spend; value += d.purchaseValue; purchases += d.purchases } }
         return { spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate), grossRoas: spend > 0 ? value / (spend * VAT) : 0, cpp: purchases > 0 ? spend / purchases : 0 }
       }
-      const windows: Windows = { w3: win(3), w7: win(7), w15: win(15), w31: win(31) }
+      const windows: Windows = { w1: win(1), w3: win(3), w7: win(7), w15: win(15), w31: win(31) }
       // Ang inirehistro ay pinapakita KAHIT walang gastos pa — iyon ang sagot sa
       // "sinimulan kong i-monitor ngayon" (araw 0, wala pang datos).
       if (windows.w31.spend === 0 && !reg) continue
@@ -1364,18 +1367,38 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       </div>
       <p className="text-[13px] text-slate-600">{s.reason}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 tabular-nums">
-        {(["w3", "w7", "w15", "w31"] as const).map((w, i) => {
-          const win = s.windows[w]
-          const prev = i < 3 ? s.windows[(["w7", "w15", "w31"] as const)[i]] : null
-          const up = prev ? win.netRoas >= prev.netRoas : true
-          return (
-            <span key={w}>
-              {w.slice(1)}d: <b className={win.netRoas >= rules.scaleRoas ? "text-emerald-600" : win.netRoas < rules.killRoas ? "text-rose-600" : "text-slate-700"}>{dec(win.netRoas)}</b>
-              {prev && (up ? <ChevronUp className="inline w-3 h-3 text-emerald-500" /> : <ChevronDown className="inline w-3 h-3 text-rose-500" />)}
-              <span className="text-slate-400"> ({peso(win.spend)})</span>
-            </span>
-          )
-        })}
+        {(() => {
+          // ⚠ HUWAG MAGPAKITA NG WINDOW NA HINDI PA NABUBUHAY. Ang 2-araw na ad
+          // set ay nagpapakita dati ng magkaparehong bilang sa 3d/7d/15d/31d —
+          // apat na hanay na mukhang apat na sukat, gayong iisa lang: wala pang
+          // 7 araw na mabibilang. Mas masahol pa sa walang laman ang numerong
+          // nagpapanggap na kasaysayan (iniulat ng may-ari, Ago 15 2026).
+          const haveDays = s.adset.createdTime ? daysOld(s.adset.createdTime) + 1 : Infinity
+          const cols = ["w1", "w3", "w7", "w15", "w31"] as const
+          const need = { w1: 1, w3: 3, w7: 7, w15: 15, w31: 31 } as const
+          return cols.map((w, i) => {
+            const win = s.windows[w]
+            const enough = haveDays >= need[w]
+            const nextW = cols[i + 1]
+            const prev = nextW && haveDays >= need[nextW] ? s.windows[nextW] : null
+            const up = prev ? win.netRoas >= prev.netRoas : true
+            const label = w === "w1" ? "today" : `${w.slice(1)}d`
+            return (
+              <span key={w}>
+                {label}:{" "}
+                {enough ? (
+                  <>
+                    <b className={win.netRoas >= rules.scaleRoas ? "text-emerald-600" : win.netRoas < rules.killRoas ? "text-rose-600" : "text-slate-700"}>{dec(win.netRoas)}</b>
+                    {prev && (up ? <ChevronUp className="inline w-3 h-3 text-emerald-500" /> : <ChevronDown className="inline w-3 h-3 text-rose-500" />)}
+                    <span className="text-slate-400"> ({peso(win.spend)})</span>
+                  </>
+                ) : (
+                  <span className="text-slate-300" title={`Only ${haveDays === Infinity ? "?" : haveDays}d of data — this ${unitLabel} isn't ${need[w]} days old yet`}>—</span>
+                )}
+              </span>
+            )
+          })
+        })()}
         <span className="text-slate-400">gross 7d: {dec(s.windows.w7.grossRoas)} · RTS rate {(s.adset.rtsRate * 100).toFixed(1)}%</span>
       </div>
       {/* Buwanang kabuuan — ito ang tinitingnan sa Monitoring, hindi ang gulong. */}
