@@ -278,10 +278,14 @@ const ordinal = (n: number) => {
   const s = ["th", "st", "nd", "rd"][(n % 100 - 20) % 10] ?? ["th", "st", "nd", "rd"][n % 100] ?? "th"
   return `${n}${s}`
 }
-export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
+/** Galing sa Ads Manager: buksan ang tab na ito na SALA na sa ad account na ito. */
+export type TrackerFocus = { accountName: string; owner?: string; objectId?: string; objectName?: string }
+
+export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, focus }: {
   accounts: FBAccount[]; onSignals?: (n: number) => void; mode: "testing" | "scaling" | "monitoring"
   /** Pinipindot ang pangalan ng row → bumubukas ang Ads Manager na nakatutok dito. */
   onOpenInManager?: (f: ManagerFocus) => void
+  focus?: TrackerFocus | null
 }) {
   const allPages = useActivePages()
   const registry = useScalingRegistry()
@@ -348,8 +352,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
   // ang gumagamit nito — huwag isipin ang pumalyang account bilang "wala na".
   const [loadedAccounts, setLoadedAccounts] = useState<string[]>(boot?.loadedAccounts ?? [])
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [fOwner, setFOwner] = useState("All")
-  const [fAccount, setFAccount] = useState("ALL")
+  // Galing sa jump ng Ads Manager: SALA na agad. Ang tab na ito ay ini-mount lang
+  // kapag binuksan (may sariling `key`), kaya sapat ang unang halaga ng state —
+  // walang effect, walang kumukurap na "ALL" bago mag-filter.
+  const [fOwner, setFOwner] = useState(focus?.owner || "All")
+  const [fAccount, setFAccount] = useState(focus?.accountName || "ALL")
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc")
 
   // Isinasalin ang naka-cache na resulta sa state ng mount na ito.
@@ -1625,6 +1632,28 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
           <span><b>Auto-pause is ON</b> ({Object.entries(rules.autoRules).filter(([, v]) => v).map(([k]) => k).join(", ") || "no rules enabled"}) — cap {rules.autoDailyCap}/day, {autoLog.date === today ? autoLog.items.length : 0} paused today. Runs only while this tab is open.</span>
         </div>
       )}
+      {/* ⚠ TINALUNAN PERO WALA RITO. Ang Testing/Scaling ay INIREHISTRO lang ang
+          nilalaman, kaya ang paglundag mula sa Ads Manager patungo sa hindi pa
+          nakarehistrong campaign ay magpapakita ng blangkong listahan — mukhang
+          sira. Sabihin nang tahasan, at ituro ang Register. */}
+      {focus?.objectId && !loading && !signals.some(s => s.adset.id === focus.objectId) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[13px] text-amber-800 flex flex-wrap items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>
+            <b className="break-all">{focus.objectName || focus.objectId}</b>{" "}
+            {isMonitoring
+              ? "has no spend this month, so it isn't in Monitoring."
+              : <>isn&apos;t registered in {mode === "testing" ? "Testing" : "Scaling"} yet — only registered {unitLabel}s appear here.</>}
+          </span>
+          {!isMonitoring && (
+            <button onClick={() => setPickOpen(true)}
+              className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-amber-300 hover:bg-amber-100 whitespace-nowrap">
+              Register it →
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Patunay na tumalab — nakalutang sa ibaba-kanan, may kusang paglaho. */}
       {killToast && (
         <div className={`fixed bottom-4 right-4 z-[70] rounded-xl shadow-lg px-4 py-3 w-[330px] border flex items-start gap-2.5

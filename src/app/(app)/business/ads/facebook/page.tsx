@@ -16,7 +16,9 @@ import { useFBAccounts, actId, type FBAccount } from "@/lib/fb-store"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
-import { ScalingTracker } from "@/components/business/ads/ScalingTracker"
+import { ScalingTracker, type TrackerFocus } from "@/components/business/ads/ScalingTracker"
+import { CommentsModal } from "@/components/business/ads/CommentsModal"
+import { useCommentCounts } from "@/lib/ads-comments-store"
 import { logAds, logAdsMany, useRuleEditors, useAdsActivity, ACTION_LABEL } from "@/lib/ads-activity-store"
 import { playToggle, playError, sfxOn, setSfxOn } from "@/lib/ui-feedback"
 import { loadHouseRules, netOf, usePageRts } from "@/lib/scaling-signals"
@@ -175,6 +177,9 @@ export default function FacebookAdsPage() {
   // bumubukas ang Ads Manager na nakatutok na sa mismong object na iyon.
   const [mgrFocus, setMgrFocus] = useState<MgrFocus | null>(null)
   const openInManager = useCallback((f: MgrFocus) => { setMgrFocus(f); setTab("manager") }, [])
+  // Kabaligtarang direksyon: Ads Manager → Testing/Scaling/Monitoring, sala na.
+  const [trackerFocus, setTrackerFocus] = useState<TrackerFocus | null>(null)
+  const jumpToTracker = useCallback((t: Tab, f: TrackerFocus) => { setTrackerFocus(f); setTab(t) }, [])
   const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>(dashBoot.trend)
   const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>(dashBoot.daily)
   const [loading, setLoading] = useState(false)
@@ -275,7 +280,7 @@ export default function FacebookAdsPage() {
         {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["testing", "Testing", FlaskConical], ["scaling", "Scaling", TrendingUp], ["monitoring", "Monitoring", Eye]] as [Tab, string, any][]).map(([t, label, Icon]) => (
           // Ang pagpindot mismo sa tab ay normal na pagbukas — hindi dala ng
           // lumang focus mula sa nakaraang "dalhin mo ako doon".
-          <button key={t} onClick={() => { setMgrFocus(null); setTab(t) }}
+          <button key={t} onClick={() => { setMgrFocus(null); setTrackerFocus(null); setTab(t) }}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
             <Icon className="w-4 h-4" /> {label}
             {/* Ang bilang ay ang LAMAN ng tab, hindi bilang ng signal: ilang
@@ -308,10 +313,10 @@ export default function FacebookAdsPage() {
         </div>
       ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} onOpen={openInManager} goTab={setTab} />
         : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
-          : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} />
-            : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} />
-              : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} onOpenInManager={openInManager} />
-              : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} />}
+          : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} focus={trackerFocus} />
+            : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} focus={trackerFocus} />
+              : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} onOpenInManager={openInManager} focus={trackerFocus} />
+              : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} onJump={jumpToTracker} />}
     </div>
   )
 }
@@ -1042,7 +1047,11 @@ const MGR_CACHE = new Map<string, MgrCached>()
 const MGR_INFLIGHT = new Map<string, Promise<any[]>>()
 const MGR_TTL = 30 * 60_000   // tingnan ang DASH_TTL: mahaba dahil tahimik ang refresh
 
-function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null }) {
+function AdsManager({ fb, from, to, focus, onJump }: {
+  fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null
+  /** Paglundag papuntang Testing/Scaling/Monitoring, sala na sa ad account. */
+  onJump: (tab: Tab, f: TrackerFocus) => void
+}) {
   const [accId, setAccId] = useState(focus?.accountId || "all")   // default: All ad accounts
   // Sinasabay ang Owner sa focus: kung ang ad account lang ang itatakda, ang
   // dropdown ng Owner ay "All" pa rin at mukhang hindi naka-filter — samantalang
@@ -1102,6 +1111,9 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
   const [flashOn, setFlashOn] = useState<Record<string, "ACTIVE" | "PAUSED">>({})
   const [sfx, setSfx] = useState(true)
   useEffect(() => { setSfx(sfxOn()) }, [])
+  // Usapan + paglundag papuntang tracker — parehong nakakabit sa isang row.
+  const [commentFor, setCommentFor] = useState<MgrRow | null>(null)
+  const [jumpFor, setJumpFor] = useState<MgrRow | null>(null)
   // Automated rules (Meta adrules_library): More ▾ → Create a new rule / Manage rules
   const [moreOpen, setMoreOpen] = useState(false)
   const [rulesView, setRulesView] = useState<RulesView>("")
@@ -1432,6 +1444,9 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
 
   const curSel = level === "campaign" ? selCampaigns : level === "adset" ? selAdsets : selAds
   const setCurSel = level === "campaign" ? setSelCampaigns : level === "adset" ? setSelAdsets : setSelAds
+  // Isang hila para sa bilang ng komento ng LAHAT ng nakikitang row — hindi isa
+  // kada row (22 campaign = 22 request kung ganoon).
+  const { counts: commentCounts, refresh: refreshCounts } = useCommentCounts(useMemo(() => levelRows.map(r => r.id), [levelRows]))
 
   const [sort, setSort] = useState<SortState | null>({ key: "Amount Spent", dir: "desc" })
   const sortedRows = useMemo(() => sortRows(levelRows, sort, (r, k) =>
@@ -1784,6 +1799,15 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                               </button>
                               {(isAll || r.bidStrategy) && <div className="text-[10px] text-slate-400 truncate max-w-[130px] sm:max-w-[220px]">{isAll ? r.accountName : r.bidStrategy.replace(/_/g, " ").toLowerCase()}</div>}
                             </div>
+                            {/* Usapan ng team sa object na ito — may bilang kapag
+                                may laman, para makita agad kung may sinabi na. */}
+                            <button onClick={() => setCommentFor(r)} title="Comments — tag a teammate with @"
+                              className="ml-auto shrink-0 flex items-center gap-0.5 px-1.5 py-1 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50">
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              {(commentCounts[r.id] || 0) > 0 && (
+                                <span className="text-[10px] font-bold text-blue-600">{commentCounts[r.id]}</span>
+                              )}
+                            </button>
                           </div>
                         </td>
                         <td className="px-4 py-3 border-r border-slate-100"><span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${statusColor(r.status)}`}>{statusLabel(r.status)}</span></td>
@@ -1826,7 +1850,17 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                               ) : (
                                 <span className="text-slate-400 text-xs font-normal">{level === "campaign" ? "Using ad set budget" : "Using campaign budget"}</span>
                               )
-                            ) : c.l === "ROAS" ? <span className={`inline-block px-2 py-0.5 rounded-md font-semibold ${roasBg(r.roas)}`}>{c.f(r)}</span> : c.f(r)}
+                            ) : c.l === "ROAS" ? (
+                              // ⚠ ANG ROAS ANG PINTUAN. Ito mismo ang numerong
+                              // tinitingnan mo bago magpasyang "dalhin ko ito sa
+                              // Scaling" — kaya dito nakakabit ang paglundag,
+                              // hindi sa isang buton na malayo sa dahilan.
+                              <button onClick={() => setJumpFor(r)} title="Jump to Testing / Scaling / Monitoring, filtered"
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${roasBg(r.roas)} hover:ring-2 hover:ring-blue-400 transition`}>
+                                {c.f(r)}
+                                <ChevronRight className="w-3 h-3 opacity-50" />
+                              </button>
+                            ) : c.f(r)}
                           </td>
                         ))}
                       </tr>
@@ -1855,6 +1889,52 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
           )}
         </div>
       )}
+
+      {/* Usapan sa isang object */}
+      {commentFor && (
+        <CommentsModal objectId={commentFor.id} level={level} name={commentFor.name}
+          account={commentFor.accountName} href="/business/ads/facebook"
+          onClose={() => setCommentFor(null)} onPosted={refreshCounts} />
+      )}
+
+      {/* Saan ka dadalhin ng ROAS — ikaw ang pumipili, at sala na pagdating. */}
+      {jumpFor && (() => {
+        const f: TrackerFocus = { accountName: jumpFor.accountName, owner: jumpFor.accountOwner || undefined, objectId: jumpFor.id, objectName: jumpFor.name }
+        // Ang antas ang nagsasabi kung saan may saysay: ang Testing ay AD SET,
+        // ang Scaling at Monitoring ay CAMPAIGN. Ang hindi angkop ay naka-dim,
+        // may dahilan — mas mabuti kaysa mawala nang walang paliwanag.
+        const opts: { tab: Tab; label: string; hint: string; ok: boolean }[] = [
+          { tab: "testing", label: "View in Testing", hint: "ad-set level", ok: level === "adset" },
+          { tab: "scaling", label: "View in Scaling", hint: "campaign level", ok: level === "campaign" },
+          { tab: "monitoring", label: "View in Monitoring", hint: "campaign level · all campaigns", ok: level === "campaign" },
+        ]
+        return (
+          <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => setJumpFor(null)}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
+              <div>
+                <p className="font-bold text-slate-800">Where to?</p>
+                <p className="text-[12px] text-slate-500 truncate">{jumpFor.name} · {jumpFor.accountName}</p>
+              </div>
+              <div className="space-y-2">
+                {opts.map(o => (
+                  <button key={o.tab} disabled={!o.ok}
+                    onClick={() => { onJump(o.tab, f); setJumpFor(null) }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 text-left hover:border-blue-300 hover:bg-blue-50 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:bg-transparent">
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-semibold text-slate-800">{o.label}</span>
+                      <span className="block text-[11px] text-slate-400">
+                        {o.ok ? `Filtered to ${jumpFor.accountName}` : `Not for ${level}s — ${o.hint}`}
+                      </span>
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setJumpFor(null)} className="w-full h-9 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50">Cancel</button>
+            </div>
+          </div>
+        )
+      })()}
 
       <AutomatedRules accounts={mgrAccounts} currentAccountId={isAll ? "" : accId} level={level}
         selectedRows={levelRows.filter(r => curSel.has(r.id)).map(r => ({ id: r.id, accId: r.accountId }))}
