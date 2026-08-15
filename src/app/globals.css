@@ -160,6 +160,27 @@
   background-color: color-mix(in srgb, currentColor 16%, var(--dk-surface));
 }
 
+/* ⚠ ANG `-100` AY BADGE, ANG `-50` AY PANEL — magkaibang trabaho.
+   Ang ROAS pill (`bg-emerald-100 text-emerald-800`) ay 16% na tint lang ng
+   parehong kulay ng teksto nito: nasusukat na 1.26–1.41 lang ang pagkakaiba sa
+   card sa likod, kaya hindi ito mukhang badge — parang lumulutang na teksto
+   (iniulat Ago 15 2026). Hindi ito kayang ayusin ng mas matapang na tint: ang
+   paglapit ng background sa kulay ng teksto ay NAGPAPABABA ng contrast ng
+   teksto — nasukat: 26% → pill 1.82 pero teksto 5.36; 34% → pill 2.25 pero
+   teksto 4.34 (bagsak na sa AA).
+   Kaya SINGSING ang sagot, hindi kulay: `inset` na box-shadow ang gumuguhit ng
+   hangganan ng pill nang HINDI ginagalaw ang fill o ang teksto — at dahil inset
+   ito, walang idinadagdag na 1px sa sukat, kaya walang gumagalaw na layout. */
+.dark [class~="bg-emerald-100"], .dark [class~="bg-green-100"], .dark [class~="bg-teal-100"],
+.dark [class~="bg-blue-100"], .dark [class~="bg-sky-100"], .dark [class~="bg-indigo-100"],
+.dark [class~="bg-violet-100"], .dark [class~="bg-purple-100"], .dark [class~="bg-fuchsia-100"],
+.dark [class~="bg-pink-100"], .dark [class~="bg-rose-100"], .dark [class~="bg-red-100"],
+.dark [class~="bg-orange-100"], .dark [class~="bg-amber-100"], .dark [class~="bg-yellow-100"],
+.dark [class~="bg-cyan-100"] {
+  background-color: color-mix(in srgb, currentColor 20%, var(--dk-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent);
+}
+
 /* Ang hover na bersyon ng parehong tint (hal. hover:bg-red-50 sa delete button) —
    hiwalay na token, kaya kailangan ng sariling rule. */
 .dark [class~="hover:bg-emerald-50"]:hover, .dark [class~="hover:bg-green-50"]:hover,
@@ -200,7 +221,9 @@
 .dark .text-teal-800, .dark .text-teal-700, .dark .text-teal-600 { color: #2dd4bf; }
 .dark .text-blue-800, .dark .text-blue-700, .dark .text-blue-600 { color: #60a5fa; }
 .dark .text-sky-800, .dark .text-sky-700, .dark .text-sky-600 { color: #38bdf8; }
-.dark .text-indigo-800, .dark .text-indigo-700, .dark .text-indigo-600 { color: #818cf8; }
+/* #818cf8 ay masyadong madilim sa loob ng may-singsing na `bg-indigo-100` na
+   pill — nasukat na 4.16, bagsak sa AA. Ang indigo-300 ay umaabot sa 5+. */
+.dark .text-indigo-800, .dark .text-indigo-700, .dark .text-indigo-600 { color: #a5b4fc; }
 .dark .text-violet-800, .dark .text-violet-700, .dark .text-violet-600 { color: #a78bfa; }
 .dark .text-purple-800, .dark .text-purple-700, .dark .text-purple-600 { color: #c084fc; }
 .dark .text-fuchsia-800, .dark .text-fuchsia-700, .dark .text-fuchsia-600 { color: #e879f9; }

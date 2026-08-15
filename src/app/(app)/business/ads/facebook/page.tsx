@@ -321,12 +321,14 @@ export default function FacebookAdsPage() {
 // ════════════════════════════════════════════════════════════════════════════════
 const COLORS = ["#2563eb", "#7c3aed", "#0891b2", "#16a34a", "#ea580c", "#db2777", "#ca8a04", "#475569"]
 
+// Mobile: mas maliit na teksto at padding (konbensyon ng lahat ng dashboard —
+// sa 375px ay umaapaw ang halagang piso kapag `text-2xl` at 3 hanay).
 function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-2xl p-4 text-white bg-gradient-to-br ${accent} shadow-sm`}>
-      <div className="text-[11px] uppercase tracking-wider opacity-90">{label}</div>
-      <div className="text-2xl font-bold mt-1 tabular-nums">{value}</div>
-      {sub && <div className="text-xs opacity-90 mt-0.5">{sub}</div>}
+    <div className={`relative overflow-hidden rounded-xl sm:rounded-2xl p-3 sm:p-4 text-white bg-gradient-to-br ${accent} shadow-sm`}>
+      <div className="text-[10px] sm:text-[11px] uppercase tracking-wider opacity-90 leading-tight">{label}</div>
+      <div className="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 tabular-nums leading-tight break-words">{value}</div>
+      {sub && <div className="text-[10px] sm:text-xs opacity-90 mt-0.5 leading-tight">{sub}</div>}
     </div>
   )
 }
@@ -395,9 +397,9 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
 
   // ── BRAND CARDS — kada ad account, hindi kada campaign ─────────────────────
   const brands = useMemo(() => {
-    const m = new Map<string, { name: string; owner: string; spend: number; value: number; netValue: number; purchases: number; active: number; rts: number }>()
+    const m = new Map<string, { name: string; accountId: string; owner: string; spend: number; value: number; netValue: number; purchases: number; active: number; rts: number }>()
     for (const x of withNet) {
-      const b = m.get(x.r.accountName) ?? { name: x.r.accountName, owner: x.r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, rts: x.rts }
+      const b = m.get(x.r.accountName) ?? { name: x.r.accountName, accountId: x.r.accountId, owner: x.r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, rts: x.rts }
       b.spend += x.r.spend; b.value += x.r.purchaseValue; b.netValue += x.r.purchaseValue * (1 - x.rts); b.purchases += x.r.purchases
       if (/active/i.test(x.r.status)) b.active++
       m.set(b.name, b)
@@ -511,26 +513,26 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
               <div className="space-y-1.5">
                 {losers.length > 0 && (
                   <button onClick={() => goTab("monitoring")}
-                    className="w-full flex flex-wrap items-center gap-2 text-left px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100">
+                    className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1 sm:gap-2 text-left px-3 py-2.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100">
                     <Skull className="w-4 h-4 text-rose-600 shrink-0" />
                     <span className="text-[13px] text-rose-800"><b>{losers.length}</b> below the kill line (net &lt; {rules.killRoas}) — <b>{peso(sumSpend(losers))}</b> spent {rangeLabel}</span>
-                    <span className="ml-auto text-[12px] text-rose-600">Review in Monitoring →</span>
+                    <span className="sm:ml-auto text-[12px] font-semibold text-rose-600 whitespace-nowrap">Review in Monitoring →</span>
                   </button>
                 )}
                 {noSales.length > 0 && (
                   <button onClick={() => goTab("testing")}
-                    className="w-full flex flex-wrap items-center gap-2 text-left px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 hover:bg-amber-100">
+                    className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1 sm:gap-2 text-left px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 hover:bg-amber-100">
                     <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                     <span className="text-[13px] text-amber-800"><b>{noSales.length}</b> spent {peso(sumSpend(noSales))} with <b>zero sales</b> past {rules.noSalesHour}:00</span>
-                    <span className="ml-auto text-[12px] text-amber-600">Check in Testing →</span>
+                    <span className="sm:ml-auto text-[12px] font-semibold text-amber-600 whitespace-nowrap">Check in Testing →</span>
                   </button>
                 )}
                 {winners.length > 0 && (
                   <button onClick={() => goTab("scaling")}
-                    className="w-full flex flex-wrap items-center gap-2 text-left px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 hover:bg-emerald-100">
+                    className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1 sm:gap-2 text-left px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 hover:bg-emerald-100">
                     <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span className="text-[13px] text-emerald-800"><b>{winners.length}</b> at scale threshold (net ≥ {rules.scaleRoas}) on {peso(sumSpend(winners))}</span>
-                    <span className="ml-auto text-[12px] text-emerald-600">Open Scaling →</span>
+                    <span className="sm:ml-auto text-[12px] font-semibold text-emerald-600 whitespace-nowrap">Open Scaling →</span>
                   </button>
                 )}
               </div>
@@ -543,19 +545,26 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
             <p className="text-sm font-bold text-slate-800 mb-2">Brands {rangeLabel}</p>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {brands.map(b => (
-                <div key={b.name} className="bg-white rounded-xl border border-slate-200 p-3 space-y-1">
+                // Shortcut: bumubukas ang Ads Manager na naka-filter na sa ad
+                // account na ito (blangkong `id` = buong account, walang pin).
+                <button key={b.name} onClick={() => onOpen({ accountId: b.accountId, level: "campaign", id: "", name: b.name, owner: b.owner || undefined })}
+                  title={`Open ${b.name} in Ads Manager`}
+                  className="text-left bg-white rounded-xl border border-slate-200 p-3 space-y-1 hover:border-blue-300 hover:shadow-sm transition group">
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-[13px] font-semibold text-slate-800 leading-tight">{b.name}</span>
+                    <span className="text-[13px] font-semibold text-slate-800 leading-tight group-hover:text-blue-600 flex items-center gap-1">
+                      {b.name}
+                      <ExternalLink className="w-3 h-3 text-slate-300 group-hover:text-blue-500 shrink-0" />
+                    </span>
                     <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 ${netBadge(netOf(b.value, b.spend, b.rts))}`}>
                       {dec(netOf(b.value, b.spend, b.rts))}x
                     </span>
                   </div>
-                  <p className="text-lg font-bold text-slate-900 tabular-nums">{peso(b.spend)}</p>
+                  <p className="text-base sm:text-lg font-bold text-slate-900 tabular-nums">{peso(b.spend)}</p>
                   <p className="text-[11px] text-slate-500">
                     {b.purchases} purchases{b.purchases > 0 && <> · CPP {peso(b.spend / b.purchases)}</>}
                   </p>
                   <p className="text-[11px] text-slate-400">{b.owner || "—"} · {b.active} active · RTS {(b.rts * 100).toFixed(1)}%</p>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -863,7 +872,7 @@ function PerfTable({ rows, objective, loading, level, onLevel, sel, onToggle, on
                             : <div className="w-9 h-9 rounded bg-slate-100 border border-slate-200 shrink-0" />)}
                           <div className="min-w-0 max-w-[240px]">
                             <button onClick={() => level !== "ad" && onDrill(r)} disabled={level === "ad"} title={level === "campaign" ? "View ad sets" : level === "adset" ? "View ads" : r.name}
-                              className={`flex items-center gap-1 text-left max-w-[220px] ${level !== "ad" ? "text-blue-600 hover:underline" : "text-slate-800"}`}>
+                              className={`flex items-center gap-1 text-left max-w-[130px] sm:max-w-[220px] ${level !== "ad" ? "text-blue-600 hover:underline" : "text-slate-800"}`}>
                               {level !== "ad" && <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
                               <span className="truncate">{r.name}</span>
                             </button>
@@ -983,7 +992,10 @@ type MgrLevel = "campaign" | "adset" | "ad"
 // Scaling / Monitoring papunta sa Ads Manager, nakapili na ang ad account,
 // nasa tamang antas, at ang mismong object ang nakikita.
 type MgrFocus = {
-  accountId: string; level: MgrLevel; id: string; name: string; campaignId?: string
+  accountId: string; level: MgrLevel
+  /** Aling object ang ipipinto. BLANGKO = buong ad account (galing sa brand card). */
+  id: string
+  name: string; campaignId?: string
   /** Isinasabay ang Owner dropdown — "yung owner + ad account na yun lang ang naka-select". */
   owner?: string
   /** Bakit ka dinala rito, hal. "2nd scale · ₱1,000 → ₱1,100". Nasa banner. */
@@ -1409,7 +1421,10 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
     if (!passStatus(r)) return false
     // Galing sa Testing/Scaling/Monitoring: ang hinahanap mo lang muna ang
     // ipinapakita. May "Show all" na buton sa banner sa itaas.
-    if (focusOn && level === focusOn.level && r.id !== focusOn.id) return false
+    // ⚠ Ang BLANGKONG `id` ay ibig sabihin "buong ad account" (galing sa brand
+    // card ng Dashboard) — hindi ito pinipinto sa isang campaign; ang pagpili
+    // ng account na lang ang ginagawa nito.
+    if (focusOn?.id && level === focusOn.level && r.id !== focusOn.id) return false
     if (level === "campaign") return objMgr === "All" || (objMgr === "Messaging" ? isMsg(r.objective) : !isMsg(r.objective))
     if (level === "adset") return selCampaigns.size === 0 || selCampaigns.has(r.campaignId)
     return selAdsets.size > 0 ? selAdsets.has(r.adsetId) : (selCampaigns.size === 0 || selCampaigns.has(r.campaignId))   // ads
@@ -1620,7 +1635,9 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[13px] text-blue-800 flex flex-wrap items-center gap-2">
           <Search className="w-4 h-4 shrink-0" />
           <span>
-            Showing one {focusOn.level === "campaign" ? "campaign" : focusOn.level === "adset" ? "ad set" : "ad"}:{" "}
+            {focusOn.id
+              ? <>Showing one {focusOn.level === "campaign" ? "campaign" : focusOn.level === "adset" ? "ad set" : "ad"}: </>
+              : <>Filtered to </>}
             <b className="break-all">{focusOn.name}</b>
             {/* Galing sa Scale: ito ang pang-ilang scale at ang tunay na galaw ng
                 budget — kailangan mo iyon habang binubuo ang rule dito. */}
@@ -1705,7 +1722,7 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                     <th className="px-2 py-2.5 font-semibold text-slate-600 sticky left-[43px] z-20 bg-slate-100 border-l border-slate-200 w-[52px] min-w-[52px] max-w-[52px]">
                       <button onClick={() => setSort(s => nextSort(s, "On"))} className="flex items-center gap-1 hover:text-blue-600">On <SortArrow active={sort?.key === "On"} dir={sort?.dir || "desc"} /></button>
                     </th>
-                    <th className="px-3 py-2.5 font-semibold text-slate-600 sticky left-[94px] z-20 bg-slate-100 min-w-[240px] border-l border-r border-slate-200">
+                    <th className="px-3 py-2.5 font-semibold text-slate-600 sticky left-[94px] z-20 bg-slate-100 min-w-[168px] sm:min-w-[240px] border-l border-r border-slate-200">
                       <button onClick={() => setSort(s => nextSort(s, "Name"))} className="flex items-center gap-1 hover:text-blue-600">{nameHdr} <SortArrow active={sort?.key === "Name"} dir={sort?.dir || "desc"} /></button>
                     </th>
                     <th className="px-4 py-2.5 font-semibold text-slate-600 border-r border-slate-200">
@@ -1754,18 +1771,18 @@ function AdsManager({ fb, from, to, focus }: { fb: ReturnType<typeof useFBAccoun
                             </span>
                           </button>
                         </td>
-                        <td className={`px-3 py-3 sticky left-[94px] z-10 ${rowBg} min-w-[260px] border-l border-r border-slate-100`}>
+                        <td className={`px-3 py-3 sticky left-[94px] z-10 ${rowBg} min-w-[168px] sm:min-w-[260px] border-l border-r border-slate-100`}>
                           <div className="flex items-center gap-2">
                             {level === "ad" && (r.thumbnail
                               ? <img src={r.thumbnail} alt="" loading="lazy" className="w-9 h-9 rounded object-cover border border-slate-200 shrink-0" />
                               : <div className="w-9 h-9 rounded bg-slate-100 border border-slate-200 shrink-0" />)}
                             <div className="min-w-0">
                               <button onClick={() => level !== "ad" && drillInto(r)} disabled={level === "ad"} title={level === "campaign" ? "View ad sets" : level === "adset" ? "View ads" : r.name}
-                                className={`flex items-center gap-1 font-medium text-left max-w-[220px] ${level !== "ad" ? "text-blue-600 hover:underline" : "text-slate-800"}`}>
+                                className={`flex items-center gap-1 font-medium text-left max-w-[130px] sm:max-w-[220px] ${level !== "ad" ? "text-blue-600 hover:underline" : "text-slate-800"}`}>
                                 {level !== "ad" && <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
                                 <span className="truncate">{r.name}</span>
                               </button>
-                              {(isAll || r.bidStrategy) && <div className="text-[10px] text-slate-400 truncate max-w-[220px]">{isAll ? r.accountName : r.bidStrategy.replace(/_/g, " ").toLowerCase()}</div>}
+                              {(isAll || r.bidStrategy) && <div className="text-[10px] text-slate-400 truncate max-w-[130px] sm:max-w-[220px]">{isAll ? r.accountName : r.bidStrategy.replace(/_/g, " ").toLowerCase()}</div>}
                             </div>
                           </div>
                         </td>

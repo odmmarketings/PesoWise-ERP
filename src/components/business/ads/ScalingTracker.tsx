@@ -1314,7 +1314,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         {s.reg && s.reg.scales.length === 0 && (
           <span className="text-[11px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">not scaled yet</span>
         )}
-        <span className="ml-auto flex items-center gap-1.5">
+        <span className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-1.5">
           {/* Scaling tab: Scale (itinataas ang campaign budget). Testing tab:
               KILL — ang testing na pumalya ay pinapatay, hindi ini-scale; ang
               nanalo ay inililipat sa scaling campaign sa Ads Manager. */}
@@ -1375,7 +1375,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         </span>
       </div>
       <p className="text-[13px] text-slate-600">{s.reason}</p>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 tabular-nums">
+      <div className="flex flex-wrap gap-x-2.5 sm:gap-x-4 gap-y-1 text-[11px] text-slate-500 tabular-nums">
         {(() => {
           // ⚠ HUWAG MAGPAKITA NG WINDOW NA HINDI PA NABUBUHAY. Ang 2-araw na ad
           // set ay nagpapakita dati ng magkaparehong bilang sa 3d/7d/15d/31d —
@@ -1402,7 +1402,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
                     <span className="text-slate-400"> ({peso(win.spend)})</span>
                   </>
                 ) : (
-                  <span className="text-slate-300" title={`Only ${haveDays === Infinity ? "?" : haveDays}d of data — this ${unitLabel} isn't ${need[w]} days old yet`}>—</span>
+                  // `text-slate-300` ay HINDI nire-remap sa dark layer, kaya sa
+                  // madilim na tema ito ay mas MALIWANAG pa kaysa sa tunay na
+                  // numero sa tabi nito — baligtad ang diin. Ang placeholder ay
+                  // dapat pinakatahimik.
+                  <span className="text-slate-400 dark:opacity-60" title={`Only ${haveDays === Infinity ? "?" : haveDays}d of data — this ${unitLabel} isn't ${need[w]} days old yet`}>—</span>
                 )}
               </span>
             )

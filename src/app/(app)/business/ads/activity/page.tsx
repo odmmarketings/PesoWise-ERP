@@ -173,13 +173,13 @@ export default function AdsActivityPage() {
               </div>
               <div className="divide-y divide-slate-100">
                 {items.map(r => (
-                  <div key={r.id} className="px-4 py-3 flex flex-wrap items-start gap-x-3 gap-y-1.5 hover:bg-slate-50/60">
-                    <span className="text-[12px] text-slate-400 tabular-nums w-[68px] shrink-0 pt-0.5">{timeOf(r.at)}</span>
-                    <span className="text-[13px] font-semibold text-slate-800 min-w-[130px]">{r.user_name || "Unknown user"}</span>
+                  <div key={r.id} className="px-3 sm:px-4 py-3 flex flex-wrap items-start gap-x-2 sm:gap-x-3 gap-y-1 hover:bg-slate-50/60">
+                    <span className="text-[12px] text-slate-400 tabular-nums w-[62px] shrink-0 pt-0.5">{timeOf(r.at)}</span>
+                    <span className="text-[13px] font-semibold text-slate-800 sm:min-w-[130px]">{r.user_name || "Unknown user"}</span>
                     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${ACTION_TONE[r.action] || "bg-slate-100 text-slate-700 border-slate-200"}`}>
                       {ACTION_LABEL[r.action] || r.action}
                     </span>
-                    <span className="text-[13px] text-slate-700 min-w-0 flex-1">
+                    <span className="text-[13px] text-slate-700 min-w-0 flex-1 basis-full sm:basis-auto">
                       <b className="break-all">{r.object_name || r.object_id || "—"}</b>
                       {r.summary && <span className="text-slate-500"> — {r.summary}</span>}
                       <span className="block text-[11px] text-slate-400">
