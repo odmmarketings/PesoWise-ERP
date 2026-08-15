@@ -5,7 +5,9 @@ import {
   LayoutDashboard, CalendarDays, Settings2, ChevronDown, Search, Play, Pause, Link2,
   ArrowUp, ArrowDown, ArrowUpDown, ChevronRight, X, LayoutGrid, Layers, Pencil, Check, Trash2, CheckCircle2, Eye,
   ExternalLink, Send, Wrench, Info, MoreHorizontal, Activity, FlaskConical, Volume2, VolumeX,
+  Skull, AlertTriangle,
 } from "lucide-react"
+import Link from "next/link"
 import { format } from "date-fns"
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -15,8 +17,10 @@ import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { ScalingTracker } from "@/components/business/ads/ScalingTracker"
-import { logAds, logAdsMany, useRuleEditors, ACTION_LABEL } from "@/lib/ads-activity-store"
+import { logAds, logAdsMany, useRuleEditors, useAdsActivity, ACTION_LABEL } from "@/lib/ads-activity-store"
 import { playToggle, playError, sfxOn, setSfxOn } from "@/lib/ui-feedback"
+import { loadHouseRules, netOf, usePageRts } from "@/lib/scaling-signals"
+import { useScalingRegistry } from "@/lib/scaling-registry-store"
 
 const VAT = 1.12
 // Default range = NGAYONG ARAW lang (hindi buong buwan). Iisang state lang ito kaya
@@ -302,7 +306,7 @@ export default function FacebookAdsPage() {
           <Link2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
           <p className="text-slate-500 text-sm">No connected ad accounts. Register them in <strong>Ad Accounts</strong> first.</p>
         </div>
-      ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} />
+      ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} onOpen={openInManager} goTab={setTab} />
         : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
           : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} />
             : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} />
@@ -327,291 +331,316 @@ function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?
   )
 }
 
-function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to }: { rows: Row[]; trend: { date: string; spend: number; sales: number }[]; loading: boolean; accounts: FBAccount[]; from: string; to: string }) {
-  const [objective, setObjective] = useState<Obj>("All")
-  const [fAccount, setFAccount] = useState("All")
+// ─────────────────────────────────────────────────────────────────────────────
+// DASHBOARD (muling dinisenyo, Ago 15 2026, desisyon ng may-ari): ang dating
+// laman ay campaign table — kaparehong-kapareho ng Ads Manager, walang aksyon,
+// at GROSS ang ROAS gayong NET ang batayan ng bawat kill/scale. Ngayon, apat na
+// tanong ang sinasagot nito, walang campaign table:
+//   1. Kumusta tayo ngayon?     → hero tiles, NET-first
+//   2. May aksyon ba?           → Action Queue (galing sa house rules)
+//   3. Aling brand ang buhay?   → brand cards kada ad account
+//   4. Kumusta ang tatlong buyer? → scoreboard kada owner
+// Ang buong listahan ng campaigns ay nasa Ads Manager / Monitoring — hindi na
+// inuulit dito. Top 3 / Worst 3 lang ayon sa perang epekto.
+// ─────────────────────────────────────────────────────────────────────────────
+function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpen, goTab }: {
+  rows: Row[]; trend: { date: string; spend: number; sales: number }[]; loading: boolean
+  accounts: FBAccount[]; from: string; to: string
+  onOpen: (f: MgrFocus) => void; goTab: (t: Tab) => void
+}) {
   const [fOwner, setFOwner] = useState("All")
-  const [fStatus, setFStatus] = useState("With spend")   // default: campaigns that spent in the period (active or paused)
-  const [qCampaign, setQCampaign] = useState("")
-  // Persist the charts toggle so it survives refresh.
-  const [showCharts, setShowCharts] = useState(() => { try { return localStorage.getItem("pesowise_fb_showcharts") !== "0" } catch { return true } })
-  useEffect(() => { try { localStorage.setItem("pesowise_fb_showcharts", showCharts ? "1" : "0") } catch {} }, [showCharts])
+  const rules = useMemo(() => loadHouseRules(), [])
+  const rtsMap = usePageRts(fbAccounts)
+  const registry = useScalingRegistry()
+  const activity = useAdsActivity(30)
 
-  // Ang mga pagpipilian ay galing sa REGISTRY ng ad accounts, pinagsama sa nakita
-  // sa rows. Kung `rows` lang ang pinagbatayan, ang account/owner na walang
-  // campaign sa panahong ito ay hindi mapipili — kaya mukhang nawawala ang tao
-  // gayong may account naman siya.
-  const accounts = useMemo(() => Array.from(new Set([
-    ...fbAccounts.filter(a => !a.archived).map(a => a.name),
-    ...rows.map(r => r.accountName),
-  ].filter(Boolean))).sort(), [fbAccounts, rows])
-  const owners = useMemo(() => Array.from(new Set([
-    ...fbAccounts.filter(a => !a.archived).map(a => a.owner),
-    ...rows.map(r => r.accountOwner),
-  ].filter(Boolean))).sort(), [fbAccounts, rows])
+  const owners = useMemo(() => Array.from(new Set(
+    fbAccounts.filter(a => !a.archived).map(a => a.owner).filter(Boolean))).sort(), [fbAccounts])
+  const accById = useMemo(() => new Map(fbAccounts.map(a => [a.id, a])), [fbAccounts])
+  const rtsOf = useCallback((r: Row) => rtsMap.get(accById.get(r.accountId)?.page_name || "") ?? 0,
+    [rtsMap, accById])
 
-  // ── STATUS FILTER ───────────────────────────────────────────────────────────
-  // DATING BUG (nasukat Ago 6 2026): ang "Paused" ay nangangailangan ng
-  // `spend > 0`, kaya sa 145 na PAUSED campaigns ay 45 lang ang lumalabas —
-  // 100 ang nakatago. Iyon ang "hindi accurate" na filter. Ang status ay
-  // STATUS; hindi ito dapat maghalo ng kondisyon sa spend. Ang "With spend"
-  // ang para doon.
-  //   All         → lahat
-  //   Active      → effective_status ACTIVE
-  //   Paused      → LAHAT ng paused (kasama ang zero-spend)
-  //   With spend  → anumang may gastos sa panahon (hindi status, kaya hiwalay)
-  const passStatus = (r: Row) => fStatus === "Active" ? /active/i.test(r.status)
-    : fStatus === "Paused" ? /paus/i.test(r.status)
-      : fStatus === "With spend" ? r.spend > 0 : true
+  const todayStr = useMemo(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` }, [])
+  const isToday = from === to && to === todayStr
+  const rangeLabel = isToday ? "today" : from === to ? from : `${from.slice(5)} → ${to.slice(5)}`
 
-  // Ang bawat filter — KASAMA ang Status — ay umaapekto sa cards AT sa table.
-  // Dati ay laktaw ang cards sa Status, kaya "Active" ang napili pero buong-buwan
-  // pa rin ang spend sa itaas (₱818,974 sa cards vs ₱176,247 sa table). Mukhang
-  // sira ang report; ang filter ay dapat mag-filter.
-  const cardRows = useMemo(() => rows.filter(r => {
-    if (objective !== "All" && objBucket(r.objective) !== objective) return false
-    if (fAccount !== "All" && r.accountName !== fAccount) return false
-    if (fOwner !== "All" && r.accountOwner !== fOwner) return false
-    if (qCampaign && !r.name.toLowerCase().includes(qCampaign.toLowerCase())) return false
-    return passStatus(r)
-  }), [rows, objective, fAccount, fOwner, qCampaign, fStatus])
-  const filtered = cardRows
+  // Kada campaign na may gastos: net ROAS at tubo-proxy. Ang `profit` ay
+  // value×(1−RTS) − spend×VAT — ang perang epekto, hindi lang ratio; ito ang
+  // batayan ng Top/Worst 3 para ang ₱10k @ 2.5 ay hindi matalo ng ₱200 @ 8.0.
+  const scoped = useMemo(() => rows.filter(r => fOwner === "All" || r.accountOwner === fOwner), [rows, fOwner])
+  const withNet = useMemo(() => scoped.filter(r => r.spend > 0).map(r => {
+    const rts = rtsOf(r)
+    return { r, rts, net: netOf(r.purchaseValue, r.spend, rts), profit: r.purchaseValue * (1 - rts) - r.spend * VAT }
+  }), [scoped, rtsOf])
 
-  // ── View-only level tabs (Campaigns / Ad Sets / Ads). Ad-set and ad metrics are lazy-loaded
-  // once per date range (server cache handles freshness) — no toggles here, viewing only. ──
-  const [perfLevel, setPerfLevel] = useState<"campaign" | "adset" | "ad">("campaign")
-  // Kinukuha agad ang nahila kanina — buhay ito sa module, kaya hindi na
-  // humihila muli ang pagbalik sa Ad Sets / Ads pagkatapos mong lumipat ng tab.
-  const lvlKey = useCallback((lvl: string, a: FBAccount) => `${lvl}|${from}|${to}|${a.id}`, [from, to])
-  const lvlFromCache = useCallback((lvl: string, accts: FBAccount[]): Row[] | null => {
-    // Walang TTL sa pagpapakita — kung may hawak tayo, ilabas.
-    const hits = accts.map(a => LVL_CACHE.get(lvlKey(lvl, a))).filter(h => !!h)
-    return hits.length === accts.length && accts.length > 0 ? hits.flatMap(h => h!.rows) : null
-  }, [lvlKey])
-  const [lvlData, setLvlData] = useState<Record<string, Row[]>>({})
-  const [lvlLoading, setLvlLoading] = useState(false)
-  // Meta-style selection (view-only): selecting campaigns filters the Ad Sets/Ads tabs, selecting
-  // ad sets filters Ads. Clearing cascades downward.
-  const [selCampaigns, setSelCampaigns] = useState<Set<string>>(new Set())
-  const [selAdsets, setSelAdsets] = useState<Set<string>>(new Set())
-  const [selAds, setSelAds] = useState<Set<string>>(new Set())
-  const perfSel = perfLevel === "campaign" ? selCampaigns : perfLevel === "adset" ? selAdsets : selAds
-  const setPerfSel = perfLevel === "campaign" ? setSelCampaigns : perfLevel === "adset" ? setSelAdsets : setSelAds
-  const togglePerfSel = (id: string) => setPerfSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const togglePerfAll = (ids: string[] | null) => setPerfSel(ids ? new Set(ids) : new Set())
-  const clearPerfSel = (lvl: "campaign" | "adset" | "ad") => {
-    if (lvl === "campaign") { setSelCampaigns(new Set()); setSelAdsets(new Set()); setSelAds(new Set()) }
-    else if (lvl === "adset") { setSelAdsets(new Set()); setSelAds(new Set()) }
-    else setSelAds(new Set())
-  }
-  const drillPerf = (r: Row) => {
-    if (perfLevel === "campaign") { setSelCampaigns(new Set([r.id])); setSelAdsets(new Set()); setSelAds(new Set()); setPerfLevel("adset") }
-    else if (perfLevel === "adset") { setSelAdsets(new Set([r.id])); setSelAds(new Set()); setPerfLevel("ad") }
-  }
-  // Ang saklaw ng petsa ay bahagi ng cache key, kaya hindi na kailangang burahin
-  // ang laman kapag nagbago ito — babalik lang ito sa tamang entry.
-  useEffect(() => { setLvlData({}); setPerfLevel("campaign"); clearPerfSel("campaign") }, [from, to])
-  useEffect(() => {
-    if (perfLevel === "campaign" || lvlData[perfLevel]) return
-    // Ipakita agad ang hawak; kung sariwa pa ang LAHAT, tapos na — kung hindi,
-    // tahimik na palitan sa likod (walang spinner, may laman na ang screen).
-    const cached = lvlFromCache(perfLevel, fbAccounts)
-    if (cached) setLvlData(d => ({ ...d, [perfLevel]: cached }))
-    const now = Date.now()
-    const stale = fbAccounts.some(a => { const h = LVL_CACHE.get(lvlKey(perfLevel, a)); return !h || now - h.ts >= DASH_TTL })
-    if (cached && !stale) { setLvlLoading(false); return }
-    let alive = true
-    ;(async () => {
-      if (!cached) setLvlLoading(true)
-      await mapLimit(fbAccounts, 3, async (a: FBAccount) => {
-        const k = lvlKey(perfLevel, a)
-        const hit = LVL_CACHE.get(k)
-        if (hit && Date.now() - hit.ts < DASH_TTL) return
-        // Sumasakay sa tumatakbo nang hila para sa parehong account+antas.
-        const running = LVL_INFLIGHT.get(k)
-        if (running) { await running.catch(() => null); return }
-        const run = (async () => {
-          const j = await fetch(`/api/fb/insights?rich=1&level=${perfLevel}&parent=${encodeURIComponent(actId(a.ad_account_id))}&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`).then(r => r.json())
-          const rows: Row[] = j.success ? j.rows.map((r: any) => toRow(r, a.id, a.name, a.owner)) : []
-          LVL_CACHE.set(k, { ts: Date.now(), rows })
-          return rows
-        })()
-        LVL_INFLIGHT.set(k, run)
-        try { await run } catch { /* laktawan ang account na bumigo */ }
-        finally { LVL_INFLIGHT.delete(k) }
-      })
-      if (alive) {
-        setLvlData(d => ({ ...d, [perfLevel]: fbAccounts.flatMap(a => LVL_CACHE.get(lvlKey(perfLevel, a))?.rows ?? []) }))
-        setLvlLoading(false)
-      }
-    })()
-    return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfLevel, fbAccounts, from, to])
+  const agg = useMemo(() => withNet.reduce((s, x) => ({
+    spend: s.spend + x.r.spend, purchases: s.purchases + x.r.purchases,
+    netValue: s.netValue + x.r.purchaseValue * (1 - x.rts),
+  }), { spend: 0, purchases: 0, netValue: 0 }), [withNet])
+  const netAll = agg.spend > 0 ? agg.netValue / (agg.spend * VAT) : 0
+  const grossAll = agg.spend > 0 ? withNet.reduce((s, x) => s + x.r.purchaseValue, 0) / agg.spend : 0
+  const totalValue = withNet.reduce((s, x) => s + x.r.purchaseValue, 0)
+  const cpp = agg.purchases > 0 ? agg.spend / agg.purchases : 0
+  const budgetInPlay = useMemo(() => scoped.filter(r => /active/i.test(r.status)).reduce((s, r) => s + r.budget, 0), [scoped])
+  const activeCount = scoped.filter(r => /active/i.test(r.status)).length
 
-  // Rows for the table at the current level, honoring the same filters (Objective is campaign-only)
-  // plus the upstream selection (selected campaigns filter ad sets/ads; selected ad sets filter ads).
-  const tableRows = useMemo(() => {
-    if (perfLevel === "campaign") return filtered
-    return (lvlData[perfLevel] || []).filter(r => {
-      if (fAccount !== "All" && r.accountName !== fAccount) return false
-      if (fOwner !== "All" && r.accountOwner !== fOwner) return false
-      if (qCampaign && !r.name.toLowerCase().includes(qCampaign.toLowerCase())) return false
-      if (perfLevel === "adset" && selCampaigns.size > 0 && !selCampaigns.has(r.campaignId || "")) return false
-      if (perfLevel === "ad") {
-        if (selAdsets.size > 0) { if (!selAdsets.has(r.adsetId || "")) return false }
-        else if (selCampaigns.size > 0 && !selCampaigns.has(r.campaignId || "")) return false
-      }
-      return passStatus(r)
-    })
-  }, [perfLevel, filtered, lvlData, fAccount, fOwner, qCampaign, fStatus, selCampaigns, selAdsets])
-  const agg = useMemo(() => cardRows.reduce((s, r) => ({
-    spend: s.spend + r.spend, spendVat: s.spendVat + r.spendVat, sales: s.sales + r.purchaseValue, budget: s.budget + r.budget,
-    purchases: s.purchases + r.purchases, clicks: s.clicks + r.clicks, linkClicks: s.linkClicks + r.linkClicks,
-    impressions: s.impressions + r.impressions, messaging: s.messaging + r.messaging,
-  }), { spend: 0, spendVat: 0, sales: 0, budget: 0, purchases: 0, clicks: 0, linkClicks: 0, impressions: 0, messaging: 0 }), [cardRows])
+  // ── ACTION QUEUE — house rules, hindi opinyon ──────────────────────────────
+  const losers = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend && x.net < rules.killRoas), [withNet, rules])
+  const winners = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend && x.net >= rules.scaleRoas), [withNet, rules])
+  const hourNow = new Date().getHours()
+  const noSales = useMemo(() => (isToday && hourNow >= rules.noSalesHour)
+    ? withNet.filter(x => x.r.spend >= rules.evalMinSpend && x.r.purchases === 0) : [],
+    [withNet, isToday, hourNow, rules])
+  const sumSpend = (xs: { r: Row }[]) => xs.reduce((s, x) => s + x.r.spend, 0)
 
-  // Ad Budget = budget of campaigns currently running OR that already spent in the period
-  // (a turned-off campaign that still spent had its budget in play, so it counts).
-  const activeBudget = useMemo(() => cardRows.filter(r => /active/i.test(r.status) || r.spend > 0).reduce((s, r) => s + r.budget, 0), [cardRows])
-  const overallRoas = agg.spend > 0 ? agg.sales / agg.spend : 0
-  // Dalawang bagay na hindi kayang gawin ng filter — dating tahimik lang:
-  //  1. Ang Objective ay galing sa Meta sa CAMPAIGN level lang; walang objective
-  //     ang ad set/ad rows, kaya hindi ito maisasalang doon.
-  //  2. Kapag na-rate-limit ang meta edge call ng Graph API, "—" ang status ng
-  //     rows. Ang Active/Paused ay walang maipapakita — at walang paliwanag dati.
-  const filterNotes = useMemo(() => {
-    const notes: string[] = []
-    if (perfLevel !== "campaign" && objective !== "All") {
-      notes.push(`Objective “${objective}” applies to campaigns only — Meta doesn’t report an objective per ad set or ad, so the table below is not filtered by it.`)
+  // ── BRAND CARDS — kada ad account, hindi kada campaign ─────────────────────
+  const brands = useMemo(() => {
+    const m = new Map<string, { name: string; owner: string; spend: number; value: number; netValue: number; purchases: number; active: number; rts: number }>()
+    for (const x of withNet) {
+      const b = m.get(x.r.accountName) ?? { name: x.r.accountName, owner: x.r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, rts: x.rts }
+      b.spend += x.r.spend; b.value += x.r.purchaseValue; b.netValue += x.r.purchaseValue * (1 - x.rts); b.purchases += x.r.purchases
+      if (/active/i.test(x.r.status)) b.active++
+      m.set(b.name, b)
     }
-    const unknown = (perfLevel === "campaign" ? filtered : (lvlData[perfLevel] || [])).filter(r => !r.status || r.status === "—").length
-    if (unknown > 0 && (fStatus === "Active" || fStatus === "Paused")) {
-      notes.push(`${unknown} row${unknown === 1 ? "" : "s"} came back without a status from Meta (usually rate limiting), so the “${fStatus}” filter can’t place them. Refresh to try again.`)
+    return [...m.values()].sort((a, b) => b.spend - a.spend)
+  }, [withNet])
+
+  // ── TOP MOVERS — 3 pinakamalaki ang tubo, 3 pinakamalaki ang lugi ──────────
+  const qualified = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend), [withNet, rules])
+  const best3 = useMemo(() => [...qualified].sort((a, b) => b.profit - a.profit).slice(0, 3).filter(x => x.profit > 0), [qualified])
+  const worst3 = useMemo(() => [...qualified].sort((a, b) => a.profit - b.profit).slice(0, 3).filter(x => x.profit < 0), [qualified])
+
+  // ── BUYER SCOREBOARD — laging LAHAT ng owner (ito mismo ang paghahambing) ──
+  const scoreboard = useMemo(() => {
+    const m = new Map<string, { owner: string; spend: number; netValue: number; value: number; purchases: number; brands: Set<string>; win: number; lose: number }>()
+    for (const r of rows.filter(r => r.spend > 0)) {
+      const o = r.accountOwner || "—"
+      const rts = rtsOf(r)
+      const e = m.get(o) ?? { owner: o, spend: 0, netValue: 0, value: 0, purchases: 0, brands: new Set<string>(), win: 0, lose: 0 }
+      const net = netOf(r.purchaseValue, r.spend, rts)
+      e.spend += r.spend; e.netValue += r.purchaseValue * (1 - rts); e.value += r.purchaseValue; e.purchases += r.purchases
+      e.brands.add(r.accountName)
+      if (r.spend >= rules.evalMinSpend && net >= rules.scaleRoas) e.win++
+      if (r.spend >= rules.evalMinSpend && net < rules.killRoas) e.lose++
+      m.set(o, e)
     }
-    return notes
-  }, [perfLevel, objective, fStatus, filtered, lvlData])
+    return [...m.values()].sort((a, b) => b.spend - a.spend)
+  }, [rows, rtsOf, rules])
 
-  const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0
-  const convRate = agg.clicks > 0 ? (agg.purchases / agg.clicks) * 100 : 0
-  const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0
-  const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0
-  const costPerMsg = agg.messaging > 0 ? agg.spend / agg.messaging : 0
+  // ── FUNNEL — Testing → Moved → Scaling (galing sa registry, all-time) ──────
+  const funnel = useMemo(() => ({
+    testing: registry.regs.filter(r => r.level === "adset" && r.active).length,
+    moved: registry.regs.filter(r => r.level === "ad-moved").length,
+    scaling: registry.regs.filter(r => r.level === "campaign" && r.active).length,
+  }), [registry.regs])
 
-  // Charts data
+  // Trend (gross — walang kada-araw na RTS breakdown, kaya tapat ang label)
   const trendData = trend.map(d => ({ date: d.date.slice(5), roas: d.spend > 0 ? +(d.sales / (d.spend * VAT)).toFixed(2) : 0, spend: +d.spend.toFixed(0), sales: +d.sales.toFixed(0) }))
-  const byAccount = useMemo(() => {
-    const m: Record<string, { sales: number; budget: number; spend: number }> = {}
-    for (const r of rows) { m[r.accountName] = m[r.accountName] || { sales: 0, budget: 0, spend: 0 }; m[r.accountName].sales += r.purchaseValue; m[r.accountName].budget += r.budget; m[r.accountName].spend += r.spend }
-    return Object.entries(m).map(([name, v]) => ({ name, ...v }))
-  }, [rows])
 
-  // Card sets per objective
-  const cards = objective === "Messaging" ? [
-    { label: "Ad Budget", value: peso(activeBudget), accent: "from-slate-700 to-slate-800" },
-    { label: "Ad Spend", value: peso(agg.spend), accent: "from-blue-600 to-blue-700" },
-    { label: "Msg Conversations", value: num(agg.messaging), accent: "from-violet-500 to-violet-600" },
-    { label: "Cost / Msg", value: peso(costPerMsg), accent: "from-fuchsia-500 to-pink-600" },
-    { label: "CTR", value: pct(ctr), accent: "from-cyan-500 to-cyan-600" },
-    { label: "Link Clicks", value: num(agg.linkClicks), accent: "from-emerald-500 to-emerald-600" },
-    { label: "CPC", value: peso(cpc), accent: "from-amber-500 to-orange-600" },
-    { label: "Conversion Rate", value: pct(convRate), accent: "from-teal-500 to-teal-600" },
-  ] : objective === "Conversions" ? [
-    { label: "Ad Budget", value: peso(activeBudget), accent: "from-slate-700 to-slate-800" },
-    { label: "Amount Spent", value: peso(agg.spend), accent: "from-blue-600 to-blue-700" },
-    { label: "ROAS", value: dec(overallRoas) + "x", accent: "from-emerald-500 to-emerald-600" },
-    { label: "Purchase Value", value: peso(agg.sales), accent: "from-violet-500 to-violet-600" },
-    { label: "Purchases", value: num(agg.purchases), accent: "from-fuchsia-500 to-pink-600" },
-    { label: "CPP", value: peso(cpa), accent: "from-amber-500 to-orange-600" },
-    { label: "CVR", value: pct(convRate), accent: "from-teal-500 to-teal-600" },
-  ] : [
-    { label: "Total Sales", value: peso(agg.sales), accent: "from-violet-500 to-violet-600" },
-    { label: "Overall ROAS", value: dec(overallRoas) + "x", accent: "from-emerald-500 to-emerald-600" },
-    { label: "Total Ad Spend", value: peso(agg.spend), accent: "from-blue-600 to-blue-700" },
-    { label: "Total Ad Budget", value: peso(activeBudget), accent: "from-slate-700 to-slate-800" },
-    { label: "Total Purchases", value: num(agg.purchases), accent: "from-fuchsia-500 to-pink-600" },
-    { label: "Cost / Purchase", value: peso(cpa), accent: "from-amber-500 to-orange-600" },
-  ]
+  const netBadge = (net: number) =>
+    net >= rules.scaleRoas ? "bg-emerald-100 text-emerald-800" : net < rules.killRoas ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-800"
+  const focusOf = (r: Row): MgrFocus => ({ accountId: r.accountId, level: "campaign", id: r.id, name: r.name, owner: r.accountOwner || undefined })
 
   return (
     <div className="space-y-5">
-      {/* Filters — at the top */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap gap-3 items-end">
-        <Sel value={fAccount} onChange={setFAccount} opts={["All", ...accounts]} label="Account" />
-        <Sel value={fOwner} onChange={setFOwner} opts={["All", ...owners]} label="Owner" />
-        <Sel value={objective} onChange={(v) => setObjective(v as Obj)} opts={["All", "Conversions", "Messaging", "Other"]} label="Objective" />
-        <Sel value={fStatus} onChange={setFStatus} opts={["All", "Active", "Paused", "With spend"]} label="Status" />
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input className="w-full h-10 rounded-lg border border-slate-200 pl-9 pr-3 text-sm" placeholder="Search campaign…" value={qCampaign} onChange={e => setQCampaign(e.target.value)} />
+      {/* Owner chips — ang tanging filter dito. Ang malalim na paghahanap ay
+          trabaho ng Ads Manager, hindi ng Dashboard. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {["All", ...owners].map(o => (
+          <button key={o} onClick={() => setFOwner(o)}
+            className={`px-3 py-1.5 rounded-full text-sm border ${fOwner === o ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>
+            {o}
+          </button>
+        ))}
+        <span className="ml-auto text-[12px] text-slate-400">
+          {rangeLabel} · {activeCount} active campaigns · budget in play <b className="text-slate-600">{peso(budgetInPlay)}</b>
+          {rtsMap.size === 0 && <> · <span className="text-amber-600">RTS loading — gross muna ang net</span></>}
+        </span>
+      </div>
+
+      {loading && rows.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 py-14 text-center text-slate-400 text-sm">
+          <RefreshCw className="w-4 h-4 animate-spin inline mr-2" /> Pulling {rangeLabel}…
         </div>
-        <button onClick={() => setShowCharts(s => !s)} className="h-10 px-3.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap">
-          {showCharts ? "Hide charts" : "Show charts"}
-        </button>
-      </div>
+      ) : withNet.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 py-14 text-center text-slate-400 text-sm">No spend {rangeLabel}.</div>
+      ) : (
+        <>
+          {/* ── HERO — net muna, dahil net ang batayan ng bawat desisyon ── */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <Kpi label={`Net ROAS ${rangeLabel}`} value={dec(netAll) + "x"} sub={`gross ${dec(grossAll)}x`}
+              accent={netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
+            <Kpi label="Ad Spend" value={peso(agg.spend)} sub={`incl. VAT ${peso(agg.spend * VAT)}`} accent="from-blue-600 to-blue-700" />
+            <Kpi label="Sales" value={peso(totalValue)} sub={`${num(agg.purchases)} purchases`} accent="from-violet-500 to-violet-600" />
+            <Kpi label="Cost / Purchase" value={peso(cpp)} sub={agg.purchases > 0 ? `avg value ${peso(totalValue / agg.purchases)}` : undefined} accent="from-slate-700 to-slate-800" />
+            <Kpi label="🔥 Burning" value={peso(sumSpend(losers))} sub={`${losers.length} below ${rules.killRoas} net`} accent="from-rose-500 to-rose-600" />
+            <Kpi label="🏆 Winning" value={peso(sumSpend(winners))} sub={`${winners.length} at ${rules.scaleRoas}+ net`} accent="from-emerald-500 to-emerald-600" />
+          </div>
 
-      {/* Kung saan hindi kayang gawin ng filter ang inaasahan, SABIHIN — huwag
-          hayaang mag-isip ang user na mali ang datos. */}
-      {(filterNotes.length > 0) && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[13px] text-amber-800 space-y-1">
-          {filterNotes.map((n, i) => <p key={i}>{n}</p>)}
-        </div>
+          {/* ── ACTION QUEUE — listahan ng desisyon, hindi ng campaigns ── */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2">
+            <p className="text-sm font-bold text-slate-800">What needs you {rangeLabel}</p>
+            {losers.length === 0 && winners.length === 0 && noSales.length === 0 ? (
+              <p className="text-[13px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                All clear — walang tumatama sa kill o scale rules ngayon.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {losers.length > 0 && (
+                  <button onClick={() => goTab("monitoring")}
+                    className="w-full flex flex-wrap items-center gap-2 text-left px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100">
+                    <Skull className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span className="text-[13px] text-rose-800"><b>{losers.length}</b> below the kill line (net &lt; {rules.killRoas}) — <b>{peso(sumSpend(losers))}</b> spent {rangeLabel}</span>
+                    <span className="ml-auto text-[12px] text-rose-600">Review in Monitoring →</span>
+                  </button>
+                )}
+                {noSales.length > 0 && (
+                  <button onClick={() => goTab("testing")}
+                    className="w-full flex flex-wrap items-center gap-2 text-left px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 hover:bg-amber-100">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span className="text-[13px] text-amber-800"><b>{noSales.length}</b> spent {peso(sumSpend(noSales))} with <b>zero sales</b> past {rules.noSalesHour}:00</span>
+                    <span className="ml-auto text-[12px] text-amber-600">Check in Testing →</span>
+                  </button>
+                )}
+                {winners.length > 0 && (
+                  <button onClick={() => goTab("scaling")}
+                    className="w-full flex flex-wrap items-center gap-2 text-left px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 hover:bg-emerald-100">
+                    <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="text-[13px] text-emerald-800"><b>{winners.length}</b> at scale threshold (net ≥ {rules.scaleRoas}) on {peso(sumSpend(winners))}</span>
+                    <span className="ml-auto text-[12px] text-emerald-600">Open Scaling →</span>
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[11px] text-slate-400">House rules ang batayan (kill &lt; {rules.killRoas} · scale ≥ {rules.scaleRoas} · min spend {peso(rules.evalMinSpend)}) — palitan sa Rules panel ng Testing/Scaling.</p>
+          </div>
+
+          {/* ── BRAND CARDS — kada ad account ── */}
+          <div>
+            <p className="text-sm font-bold text-slate-800 mb-2">Brands {rangeLabel}</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {brands.map(b => (
+                <div key={b.name} className="bg-white rounded-xl border border-slate-200 p-3 space-y-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-[13px] font-semibold text-slate-800 leading-tight">{b.name}</span>
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 ${netBadge(netOf(b.value, b.spend, b.rts))}`}>
+                      {dec(netOf(b.value, b.spend, b.rts))}x
+                    </span>
+                  </div>
+                  <p className="text-lg font-bold text-slate-900 tabular-nums">{peso(b.spend)}</p>
+                  <p className="text-[11px] text-slate-500">
+                    {b.purchases} purchases{b.purchases > 0 && <> · CPP {peso(b.spend / b.purchases)}</>}
+                  </p>
+                  <p className="text-[11px] text-slate-400">{b.owner || "—"} · {b.active} active · RTS {(b.rts * 100).toFixed(1)}%</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── TOP MOVERS — kapalit ng buong campaign table ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {[{ title: "Top 3 — kumikita", list: best3, tone: "emerald" }, { title: "Worst 3 — nalulugi", list: worst3, tone: "rose" }].map(sec => (
+              <div key={sec.title} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2">
+                <p className={`text-sm font-bold ${sec.tone === "emerald" ? "text-emerald-700" : "text-rose-700"}`}>{sec.title}</p>
+                {sec.list.length === 0
+                  ? <p className="text-[13px] text-slate-400 italic">Wala — {sec.tone === "emerald" ? `walang lumampas sa gastos ${rangeLabel}` : "walang nalulugi sa saklaw na ito"}.</p>
+                  : sec.list.map(x => (
+                    <button key={x.r.id} onClick={() => onOpen(focusOf(x.r))}
+                      title="Open in Ads Manager"
+                      className="w-full flex flex-wrap items-center gap-2 text-left px-3 py-2 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50/40">
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-medium text-slate-800 truncate">{x.r.name}</span>
+                        <span className="block text-[11px] text-slate-400">{x.r.accountName} · spend {peso(x.r.spend)}</span>
+                      </span>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${netBadge(x.net)}`}>{dec(x.net)}x</span>
+                      <span className={`text-[13px] font-bold tabular-nums ${x.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                        {x.profit >= 0 ? "+" : "−"}{peso(Math.abs(x.profit))}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            ))}
+          </div>
+
+          {/* ── BUYER SCOREBOARD + FUNNEL ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <p className="text-sm font-bold text-slate-800 px-4 py-3 border-b border-slate-100">Buyers {rangeLabel}</p>
+              <div className="overflow-x-auto scrollbar-dark">
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-slate-50 border-b border-slate-200 text-left text-[11px] text-slate-500">
+                    {["Buyer", "Brands", "Spend", "Net ROAS", "Winners", "Losers"].map(h => <th key={h} className="px-4 py-2 font-semibold whitespace-nowrap">{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {scoreboard.map(s => (
+                      <tr key={s.owner} className="border-b border-slate-100">
+                        <td className="px-4 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{s.owner}</td>
+                        <td className="px-4 py-2.5 text-slate-600">{s.brands.size}</td>
+                        <td className="px-4 py-2.5 tabular-nums text-slate-700">{peso(s.spend)}</td>
+                        <td className="px-4 py-2.5">
+                          <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${netBadge(s.spend > 0 ? s.netValue / (s.spend * VAT) : 0)}`}>
+                            {dec(s.spend > 0 ? s.netValue / (s.spend * VAT) : 0)}x
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-emerald-600 font-semibold">{s.win}</td>
+                        <td className="px-4 py-2.5 text-rose-600 font-semibold">{s.lose}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+              <p className="text-sm font-bold text-slate-800">Testing → Scaling</p>
+              <div className="space-y-2 text-[13px]">
+                <p className="flex items-center justify-between"><span className="text-slate-600">Tests running</span><b className="text-blue-600">{funnel.testing}</b></p>
+                <p className="flex items-center justify-between"><span className="text-slate-600">Ads moved to Scaling <span className="text-slate-400">(all-time)</span></span><b className="text-emerald-600">{funnel.moved}</b></p>
+                <p className="flex items-center justify-between"><span className="text-slate-600">Scaling campaigns</span><b className="text-violet-600">{funnel.scaling}</b></p>
+              </div>
+              {/* Huling galaw — sino ang gumalaw ng ano */}
+              {activity.rows.length > 0 && (
+                <div className="pt-2 border-t border-slate-100 space-y-1">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Recent activity</p>
+                  {activity.rows.slice(0, 5).map(a => (
+                    <p key={a.id} className="text-[11px] text-slate-500 truncate">
+                      <b className="text-slate-700">{a.user_name}</b> · {ACTION_LABEL[a.action] || a.action} · {a.object_name}
+                    </p>
+                  ))}
+                  <Link href="/business/ads/activity" className="text-[11px] text-blue-600 hover:underline">View all →</Link>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── TREND — makabuluhan lang kapag higit sa isang araw ang saklaw ── */}
+          {trendData.length > 1 ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <ChartCard title="ROAS Trend (gross)">
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={trendData} margin={{ left: -10, right: 10, top: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip /><Line type="monotone" dataKey="roas" stroke="#16a34a" strokeWidth={2} dot={false} name="ROAS" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+              <ChartCard title="Ad Spend vs Sales">
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={trendData} margin={{ left: -10, right: 10, top: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip /><Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="spend" fill="#2563eb" name="Ad Spend" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="sales" fill="#16a34a" name="Sales" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </div>
+          ) : (
+            <p className="text-[12px] text-slate-400">Pumili ng mas mahabang saklaw (hal. Last 7 days) sa date picker para makita ang trend.</p>
+          )}
+        </>
       )}
-
-      {/* Overview cards — sumusunod sa LAHAT ng filter, kasama ang Status */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {cards.map((c, i) => <Kpi key={i} {...c} />)}
-      </div>
-
-      {/* Charts */}
-      {showCharts && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title="ROAS Trend">
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={trendData} margin={{ left: -10, right: 10, top: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} />
-              <Tooltip /><Line type="monotone" dataKey="roas" stroke="#16a34a" strokeWidth={2} dot={false} name="ROAS" />
-            </LineChart>
-          </ResponsiveContainer>
-        </ChartCard>
-        <ChartCard title="Ad Spend vs Sales">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={trendData} margin={{ left: -10, right: 10, top: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} />
-              <Tooltip /><Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="spend" fill="#2563eb" name="Ad Spend" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="sales" fill="#16a34a" name="Sales" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-        <ChartCard title="Sales by Ad Account">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={byAccount} layout="vertical" margin={{ left: 20, right: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-              <XAxis type="number" tick={{ fontSize: 11 }} /><YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={110} />
-              <Tooltip /><Bar dataKey="sales" fill="#7c3aed" name="Sales" radius={[0, 3, 3, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-        <ChartCard title="Budget Allocation by Ad Account">
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie data={byAccount.filter(a => a.budget > 0)} dataKey="budget" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(e: any) => e.name}>
-                {byAccount.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-              </Pie>
-              <Tooltip formatter={(v: any) => peso(Number(v))} />
-            </PieChart>
-          </ResponsiveContainer>
-        </ChartCard>
-      </div>
-      )}
-
-      {/* Performance table */}
-      <PerfTable rows={tableRows} objective={objective} loading={loading || lvlLoading} level={perfLevel} onLevel={setPerfLevel}
-        sel={perfSel} onToggle={togglePerfSel} onToggleAll={togglePerfAll} onDrill={drillPerf}
-        badges={{ campaign: selCampaigns.size, adset: selAdsets.size, ad: selAds.size }} onClear={clearPerfSel} />
     </div>
   )
 }
