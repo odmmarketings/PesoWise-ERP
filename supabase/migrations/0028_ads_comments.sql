@@ -21,8 +21,22 @@ create table if not exists public.ads_comments (
   -- Mga company_email na na-mention (lowercase)
   mentions text[] not null default '{}',
   -- Soft delete: ang burahin ang usapan ay pagbura ng kasaysayan ng desisyon
-  deleted boolean not null default false
+  deleted boolean not null default false,
+  -- ── ACKNOWLEDGE / RESOLVE (parang Google Sheets) ──────────────────────────
+  -- Kapag na-resolve, NAWAWALA ito sa tabi ng numero — pero HINDI nabubura.
+  -- Ang usapan ay kasaysayan ng desisyon: kung bakit pinatay, kung ano ang
+  -- napagkasunduan. Ang tunay na pagbura niyan ay pagbura ng dahilan, kaya
+  -- itinatago lang: may "Show resolved" na tanawin.
+  resolved boolean not null default false,
+  resolved_at timestamptz,
+  resolved_by text not null default ''
 );
+
+-- Idempotent: kung naunang naitakbo ang bersyon na walang resolve, ito ang
+-- magdaragdag ng mga hanay nang hindi kailangang gumawa ng bagong migration.
+alter table public.ads_comments add column if not exists resolved boolean not null default false;
+alter table public.ads_comments add column if not exists resolved_at timestamptz;
+alter table public.ads_comments add column if not exists resolved_by text not null default '';
 
 -- Ang tanong ay laging "ano ang sinabi tungkol SA OBJECT NA ITO".
 create index if not exists ads_comments_object_idx

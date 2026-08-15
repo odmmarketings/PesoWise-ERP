@@ -22,6 +22,9 @@ export interface AdsComment {
   author_email: string
   body: string
   mentions: string[]
+  resolved: boolean
+  resolved_at: string
+  resolved_by: string
 }
 
 export type RosterPick = { name: string; email: string }
@@ -82,6 +85,7 @@ export function useAdsComments(objectId: string) {
         object_name: r.object_name || "", account_name: r.account_name || "",
         author_name: r.author_name || "", author_email: r.author_email || "",
         body: r.body || "", mentions: Array.isArray(r.mentions) ? r.mentions : [],
+        resolved: !!r.resolved, resolved_at: r.resolved_at || "", resolved_by: r.resolved_by || "",
       })))
     } catch { /* walang usapan na maipapakita */ }
     setLoading(false)
@@ -119,7 +123,28 @@ export function useAdsComments(objectId: string) {
     await refresh()
   }, [objectId, refresh])
 
-  return { items, loading, error, refresh, add }
+  // ── Acknowledge / resolve ──────────────────────────────────────────────────
+  // Nawawala sa tanawin, hindi nabubura: nananatili ang kung SINO ang
+  // nag-acknowledge at KAILAN, kaya masasagot pa rin ang "sino'ng nakabasa nito?"
+  const setResolved = useCallback(async (ids: string[], resolved: boolean) => {
+    if (ids.length === 0) return
+    const supabase = createSupabaseBrowserClient()
+    const { error } = await supabase.from("ads_comments").update({
+      resolved,
+      resolved_at: resolved ? new Date().toISOString() : null,
+      resolved_by: resolved ? (currentUserName() || currentUserEmail() || "") : "",
+    }).in("id", ids)
+    if (error) { setError(error.message); return }
+    await refresh()
+  }, [refresh])
+
+  const resolve = useCallback((id: string) => setResolved([id], true), [setResolved])
+  const unresolve = useCallback((id: string) => setResolved([id], false), [setResolved])
+  const resolveAll = useCallback(() => setResolved(items.filter(c => !c.resolved).map(c => c.id), true), [items, setResolved])
+
+  const open = items.filter(c => !c.resolved)
+  const done = items.filter(c => c.resolved)
+  return { items, open, done, loading, error, refresh, add, resolve, unresolve, resolveAll }
 }
 
 /**
@@ -136,9 +161,11 @@ export function useCommentCounts(objectIds: string[]) {
       const businessId = await getBusinessId()
       if (!businessId) return
       const supabase = createSupabaseBrowserClient()
+      // BUKAS lang ang binibilang — ang na-acknowledge ay wala na sa tabi ng
+      // numero, kaya wala rin itong badge.
       const { data, error } = await supabase
         .from("ads_comments").select("object_id")
-        .eq("business_id", businessId).eq("deleted", false)
+        .eq("business_id", businessId).eq("deleted", false).eq("resolved", false)
         .in("object_id", key.split(","))
       if (error || !data) return
       const m: Record<string, number> = {}
