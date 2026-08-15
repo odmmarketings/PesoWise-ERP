@@ -12,6 +12,7 @@ import { useProductItems } from "@/lib/product-items-store"
 import { currentUserName } from "@/lib/current-user"
 import { useWarehouseStaff } from "@/lib/users-store"
 import { fetchFulfillmentMeta, upsertFulfillmentMeta, cacheFulfillmentMeta } from "@/lib/fulfillment-meta-store"
+import { notify, rosterEmailByName } from "@/lib/notify"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
 // FULFILLMENT (LHIKE Warehouse manual) — warehouse-facing view of live Pancake orders:
@@ -688,6 +689,17 @@ export default function FulfillmentPage() {
             setAssignRows(null)
             const who = packer || "Unassigned"
             flash(ids.length === 1 ? `Packer set to ${who}.` : `${ids.length} orders assigned to ${who}.`)
+            // Abiso: ang packer mismo (kung may email sa roster) + buong warehouse.
+            // Ang pag-unassign (blangko) ay hindi inaabisuhan — walang kikilos doon.
+            if (packer) {
+              const email = rosterEmailByName(packer)
+              if (email) notify({ audience: "user", toEmail: email, type: "packer-assigned", severity: "info",
+                title: `You were assigned ${ids.length} order${ids.length === 1 ? "" : "s"} to pack`,
+                href: "/business/logistics/warehouse/fulfillment" })
+              notify({ audience: "department", department: "warehouse", type: "packer-assigned", severity: "info",
+                title: `${ids.length} order${ids.length === 1 ? "" : "s"} assigned to ${who}`,
+                href: "/business/logistics/warehouse/fulfillment" })
+            }
           }} />
       )}
 

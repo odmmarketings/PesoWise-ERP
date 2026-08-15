@@ -5,6 +5,7 @@ import { Menu, Clock } from "lucide-react"
 import type { Plan } from "@/lib/types"
 import { getDaysRemaining } from "@/lib/utils"
 import { ThemeToggle } from "@/components/layout/ThemeToggle"
+import { NotificationBell } from "@/components/layout/NotificationBell"
 
 interface TopbarProps {
   plan: Plan
@@ -30,6 +31,7 @@ export function Topbar({ plan, trialEndsAt, onToggleSidebar, onUpgrade }: Topbar
 
       <div className="flex-1" />
 
+      <NotificationBell />
       <ThemeToggle />
 
       {/* Trial warning */}

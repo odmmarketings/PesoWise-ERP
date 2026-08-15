@@ -4,6 +4,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { getBusinessId } from "@/lib/business"
 import { currentUserName, currentUserEmail } from "@/lib/current-user"
 import { isMotherAccount } from "@/lib/users-store"
+import { notifyMany } from "@/lib/notify"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // PROBLEM MANAGEMENT (Root Cause Analysis) — bawat isyu ay masusubaybayan mula sa
@@ -266,6 +267,16 @@ export async function enqueueNotification(input: {
   }
   if (!rows.length) return
   await supabase.from("problem_notifications").insert(rows)
+  // Tulay sa in-app notifications: ang bawat email na TUNAY na naipila (lampas
+  // na sa dedupe) ay may kapares na abiso sa kampana — hindi na hinihintay ang
+  // email script para lang malaman ng tao na may naka-atas sa kanya.
+  const sev = input.kind === "overdue" ? "critical" : input.kind === "assigned" || input.kind === "completed" ? "info" : "warning"
+  notifyMany(rows.map(r => ({
+    audience: "user" as const, toEmail: r.to_email, type: `problem-${input.kind}`,
+    severity: sev as "info" | "warning" | "critical",
+    title: input.subject, body: input.body.split("\n")[0] || "",
+    href: "/business/board",
+  })))
 }
 
 /** Mga email ng Manager ng isang department (ginagamit sa completion notice). */

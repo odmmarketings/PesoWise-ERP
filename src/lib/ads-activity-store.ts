@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { getBusinessId } from "@/lib/business"
 import { currentUserEmail, currentUserName } from "@/lib/current-user"
+import { notify } from "@/lib/notify"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADS ACTIVITY LOG (migration 0026). Sino ang gumalaw ng ano sa Ads.
@@ -46,8 +47,38 @@ export type AdsLogInput = {
   details?: Record<string, any>
 }
 
+// ── TULAY PAPUNTANG NOTIFICATIONS ────────────────────────────────────────────
+// Ang bawat mahalagang galaw sa Ads ay dumadaan na rito, kaya dito rin
+// nagmumula ang abiso — walang pangalawang call site na makakalimutan.
+// Ang makakakita: mga ADMIN (hindi ang gumawa mismo — tinatanggal ng feed ang
+// sariling actor_email). Hindi lahat ay inaabisuhan: ang status/register ay
+// karaniwang ingay; ang pera at pagpatay ang mahalaga.
+const NOTIFY_MAP: Record<string, { sev: "info" | "warning" | "critical"; label: string } | undefined> = {
+  kill: { sev: "critical", label: "killed" },
+  scale: { sev: "warning", label: "scaled" },
+  scale_undo: { sev: "warning", label: "undid a scale on" },
+  budget: { sev: "warning", label: "changed the budget of" },
+  rule_create: { sev: "info", label: "created rule" },
+  rule_update: { sev: "info", label: "edited rule" },
+  rule_delete: { sev: "warning", label: "deleted rule" },
+  rule_scope: { sev: "info", label: "re-scoped rule" },
+}
+const SURFACE_TAB: Record<string, string> = {
+  testing: "/business/ads/facebook", scaling: "/business/ads/facebook",
+  monitoring: "/business/ads/facebook", "ads-manager": "/business/ads/facebook",
+  rules: "/business/ads/facebook",
+}
+
 /** Isinusulat ang tala. Hindi kailanman nagta-throw at hindi kailangang i-await. */
 export function logAds(entry: AdsLogInput): void {
+  const nm = NOTIFY_MAP[entry.action]
+  if (nm) notify({
+    audience: "admin", type: `ads-${entry.action}`, severity: nm.sev,
+    title: `${currentUserName() || "Someone"} ${nm.label} "${entry.objectName || entry.objectId || "?"}"`,
+    body: [entry.summary, entry.accountName].filter(Boolean).join(" · "),
+    href: SURFACE_TAB[entry.surface || ""] || "/business/ads/activity",
+    details: { action: entry.action, level: entry.level, objectId: entry.objectId },
+  })
   void (async () => {
     try {
       const businessId = await getBusinessId()
@@ -73,6 +104,19 @@ export function logAds(entry: AdsLogInput): void {
 /** Maramihan — isang insert para sa bulk na aksyon (Turn on/off ng 20 rows). */
 export function logAdsMany(entries: AdsLogInput[]): void {
   if (entries.length === 0) return
+  // ISANG abiso para sa buong bulk — hindi 20. Ang unang notifiable na action
+  // ang uri; ang bilang ang kuwento.
+  const notifiable = entries.filter(e => NOTIFY_MAP[e.action])
+  if (notifiable.length > 0) {
+    const nm = NOTIFY_MAP[notifiable[0].action]!
+    notify({
+      audience: "admin", type: `ads-${notifiable[0].action}-bulk`, severity: nm.sev,
+      title: `${currentUserName() || "Someone"} ${nm.label} ${notifiable.length} item${notifiable.length === 1 ? "" : "s"}`,
+      body: notifiable.slice(0, 3).map(e => e.objectName).filter(Boolean).join(", ") + (notifiable.length > 3 ? "…" : ""),
+      href: SURFACE_TAB[notifiable[0].surface || ""] || "/business/ads/activity",
+      details: { count: notifiable.length, action: notifiable[0].action },
+    })
+  }
   void (async () => {
     try {
       const businessId = await getBusinessId()

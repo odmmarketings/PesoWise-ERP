@@ -8,6 +8,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { getBusinessId } from "@/lib/business"
 import { currentUserName } from "@/lib/current-user"
 import { getSettingBlob, setSettingBlob } from "@/lib/supa-rows"
+import { notify, rosterEmailByName } from "@/lib/notify"
 
 const uid = (p: string) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
 const nowStamp = () => new Date().toISOString()
@@ -266,6 +267,14 @@ export function useTmLeads() {
       await supabase.from("tm_leads")
         .update({ assigned_to: agentId, updated_at: nowStamp(), history: [...(prev?.history ?? []), hist("Assigned", agentName)] })
         .eq("id", id)
+    }
+    // Abiso sa agent (kung may email sa roster ang pangalan) — isang abiso para
+    // sa buong batch, hindi kada lead.
+    if (agentName && ids.length > 0) {
+      const email = rosterEmailByName(agentName)
+      if (email) notify({ audience: "user", toEmail: email, type: "lead-assigned", severity: "info",
+        title: `You were assigned ${ids.length} lead${ids.length === 1 ? "" : "s"}`,
+        href: "/business/telemarketing/leads" })
     }
     await base.refresh()
   }, [base.items, base.refresh])
