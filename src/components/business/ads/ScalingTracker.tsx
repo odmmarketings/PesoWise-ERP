@@ -10,6 +10,7 @@ import { actId, type FBAccount } from "@/lib/fb-store"
 import { cachedJson } from "@/lib/pancake-cache"
 import { useScalingRegistry, type Registration, type ScaleEvent } from "@/lib/scaling-registry-store"
 import { logAds, logAdsMany } from "@/lib/ads-activity-store"
+import { playToggle, playError } from "@/lib/ui-feedback"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCALING TRACKER — nasa loob ng Facebook Ads tab.
@@ -201,6 +202,33 @@ const MODEL_TTL = 10 * 60_000
 // dati, kaya nawawala kapag lumipat ka ng tab — muling hihila sa susunod mong
 // pagbukas ng parehong campaign. Sa module na ito nakatira ngayon.
 const DRILL_CACHE = new Map<string, { ts: number; rows: any[] }>()
+
+// ── MGA PAGBABAGONG GALING SA'TIN ────────────────────────────────────────────
+// ⚠ Ang pagpatay ay dating nasa component state LANG. Pindutin ang Kill, lumipat
+// sa Ads Manager, bumalik — at buhay na naman ang pinatay mo (iniulat ng may-ari,
+// Ago 15 2026). Dalawang dahilan, magkasunod: ang remount ay kumukuha sa
+// MODEL_CACHE na hawak pa ang LUMANG status, at kahit sariwang hila pa, huli si
+// Meta sa sarili niyang sulat (read-after-write). Kaya nasa MODULE ang tala —
+// nabubuhay ito sa remount — at ipinapatong sa kahit anong sabihin ng modelo,
+// hanggang sumang-ayon si Meta o mag-expire.
+const LOCAL_TTL = 15 * 60_000
+const LOCAL_STATUS = new Map<string, { to: string; at: number }>()
+const LOCAL_BUDGET = new Map<string, { to: number; at: number }>()   // key = budget TARGET id
+/** Sumang-ayon na ba si Meta? Kalimutan na ang tala — o kung luma na, bitawan. */
+function reconcileLocal(models: AdsetModel[]) {
+  const now = Date.now()
+  const byId = new Map(models.map(m => [m.id, m]))
+  for (const [id, v] of Array.from(LOCAL_STATUS)) {
+    if (now - v.at > LOCAL_TTL) { LOCAL_STATUS.delete(id); continue }
+    const m = byId.get(id)
+    if (m && (/active/i.test(v.to) ? /active/i.test(m.status) : /paus/i.test(m.status))) LOCAL_STATUS.delete(id)
+  }
+  for (const [id, v] of Array.from(LOCAL_BUDGET)) {
+    if (now - v.at > LOCAL_TTL) { LOCAL_BUDGET.delete(id); continue }
+    const hit = models.find(m => (m.id === id && m.budget === v.to) || (m.campaignId === id && m.campaignBudget === v.to))
+    if (hit) LOCAL_BUDGET.delete(id)
+  }
+}
 const freshCache = (key: string): Cached | null => {
   const hit = MODEL_CACHE.get(key)
   return hit && Date.now() - hit.ts < MODEL_TTL ? hit : null
@@ -462,6 +490,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         setProgress(next)
       }
     })
+    reconcileLocal(models)   // bago itabi: alisin ang mga tala na katugma na ni Meta
     setAdsets(models)
     setErrors(errs)
     setLoadedAccounts(ok)
@@ -566,6 +595,24 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveKey])
 
+  // Ang modelong nakikita mo = ang hinila kay Meta + ang mga pagbabagong tayo
+  // mismo ang gumawa at hindi pa niya inuulat pabalik.
+  const [localTick, setLocalTick] = useState(0)
+  const markLocal = useCallback(() => setLocalTick(t => t + 1), [])
+  const effAdsets = useMemo(() => adsets.map(m => {
+    const st = LOCAL_STATUS.get(m.id)
+    const ab = LOCAL_BUDGET.get(m.id)             // ABO: sariling budget ng ad set
+    const cb = LOCAL_BUDGET.get(m.campaignId)     // CBO: budget ng campaign
+    if (!st && !ab && !cb) return m
+    return {
+      ...m,
+      ...(st ? { status: st.to } : {}),
+      ...(ab ? { budget: ab.to } : {}),
+      ...(cb ? { campaignBudget: cb.to } : {}),
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [adsets, localTick])
+
   // ── Signals ────────────────────────────────────────────────────────────────
   const signals = useMemo<Signal[]>(() => {
     const out: Signal[] = []
@@ -584,7 +631,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       ? new Map<string, Registration>()
       : new Map(registry.regs.filter(r => r.level === level).map(r => [r.adset_id, r]))
 
-    for (const m of adsets) {
+    for (const m of effAdsets) {
       const reg = regByAdset.get(m.id)
       // Sa Scaling tab, ang INIREHISTRO LANG — iyon ang buong punto: malinis at
       // pinili mo mismo. Sa Monitoring, lahat.
@@ -733,7 +780,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       }
     }
     return out
-  }, [adsets, rules, today, registry.regs, level, isMonitoring, monthStart])
+  }, [effAdsets, rules, today, registry.regs, level, isMonitoring, monthStart])
 
   // Owner options galing sa REGISTRY (hindi sa loaded rows) para mapipili pa rin
   // ang owner na walang gastos sa buwan.
@@ -837,6 +884,20 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
   // Nakabukas ang tab nang lampas hatinggabi? Bagong araw, bagong cap.
   const rollLog = (prev: AutoLog): AutoLog => prev.date === today ? prev : { date: today, items: [] }
   const [pausing, setPausing] = useState<string>("")
+  // ── PATUNAY NA TUMALAB ─────────────────────────────────────────────────────
+  // Dating "…" lang ang lumalabas habang naghihintay, at pagkatapos ay walang
+  // anuman — kaya hindi mo alam kung tumalab ba o hindi ang pagpindot mo, lalo
+  // na't ang status badge ay isang maliit na kulay lang ang pinagkaiba. Ang
+  // toast na ito ay ang hayagang sagot: pinatay nga, at kumpirmado ni Facebook.
+  const [killToast, setKillToast] = useState<{ name: string; what: string; ok: boolean } | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showKillToast = useCallback((name: string, what: string, ok: boolean) => {
+    setKillToast({ name, what, ok })
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setKillToast(null), 5000)
+  }, [])
+  // Huwag mag-set ng state pagkatapos mawala ang component.
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
 
   async function pauseAdset(s: Signal, auto: boolean) {
     setPausing(s.adset.id)
@@ -854,23 +915,16 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         const cur = rollLog(prev)
         return { ...cur, items: [...cur.items, { id: s.adset.id, name: s.adset.name, token: s.adset.account.token }] }
       })
+      // Buhay sa remount — ito ang dahilan kung bakit "nabubuhay" ang pinatay.
+      LOCAL_STATUS.set(s.adset.id, { to: "PAUSED", at: Date.now() }); markLocal()
       setAdsets(prev => prev.map(m => m.id === s.adset.id ? { ...m, status: "PAUSED" } : m))
+      playToggle(false)
+      showKillToast(s.adset.name, auto ? `auto-paused (${s.rule})` : `${unitLabel} is now PAUSED on Facebook`, true)
     } catch (e: any) {
       setErrors(prev => [...prev, `${s.adset.name}: ${auto ? "auto-" : ""}pause failed — ${String(e?.message).slice(0, 80)}`])
+      playError()
+      showKillToast(s.adset.name, `could NOT be paused — ${String(e?.message).slice(0, 60)}`, false)
     } finally { setPausing("") }
-  }
-  async function undoPause(item: { id: string; name: string; token: string }) {
-    try {
-      const j = await fetch("/api/fb/manage", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: item.token, action: "status", id: item.id, status: "ACTIVE" }),
-      }).then(r => r.json())
-      if (!j.success) throw new Error(j.error || "undo failed")
-      logAds({ action: "status", level, objectId: item.id, objectName: item.name,
-        accountName: "", surface: mode, summary: "Re-activated (undo of auto-pause)" })
-      saveLog(prev => ({ ...prev, items: prev.items.filter(x => x.id !== item.id) }))
-      setAdsets(prev => prev.map(m => m.id === item.id ? { ...m, status: "ACTIVE" } : m))
-    } catch (e: any) { setErrors(prev => [...prev, `${item.name}: undo failed — ${String(e?.message).slice(0, 80)}`]) }
   }
   useEffect(() => {
     // ⚠ WALANG AUTO-PAUSE SA MONITORING. Lahat ng campaign ang nakikita rito at
@@ -994,11 +1048,14 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         accountName: s.adset.account.name, surface: mode,
         summary: applied ? `+${pct}% · ${peso(from)} → ${peso(to)}` : `+${pct}% recorded only (not applied on Facebook)`,
         details: { pct, from, to, applied, scaleNo: (s.reg?.scales.length ?? 0) + 1, budgetLevel: t.level } })
-      if (applied) setAdsets(prev => prev.map(m =>
-        t.level === "adset"
-          ? (m.id === s.adset.id ? { ...m, budget: to } : m)
-          // CBO: bawat ad set ng campaign na iyon ay nakikita ang bagong budget
-          : (m.campaignId === t.id ? { ...m, campaignBudget: to } : m)))
+      if (applied) {
+        LOCAL_BUDGET.set(t.id, { to, at: Date.now() }); markLocal()
+        setAdsets(prev => prev.map(m =>
+          t.level === "adset"
+            ? (m.id === s.adset.id ? { ...m, budget: to } : m)
+            // CBO: bawat ad set ng campaign na iyon ay nakikita ang bagong budget
+            : (m.campaignId === t.id ? { ...m, campaignBudget: to } : m)))
+      }
 
       if (targets.length === 1 && applied) {
         const n = (s.reg?.scales.length ?? 0) + 1     // kasama na ang kagagawa lang
@@ -1106,7 +1163,12 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
       // mong lumipat ng tab at buksan muli ang parehong campaign.
       const cached = DRILL_CACHE.get(key)
       if (cached) DRILL_CACHE.set(key, { ...cached, rows: flip(cached.rows) })
-    } catch (e: any) { setErrors(p => [...p, `${ad.name}: kill failed — ${String(e?.message).slice(0, 80)}`]) }
+      playToggle(false)
+      showKillToast(ad.name, "ad is now PAUSED on Facebook", true)
+    } catch (e: any) {
+      setErrors(p => [...p, `${ad.name}: kill failed — ${String(e?.message).slice(0, 80)}`])
+      playError(); showKillToast(ad.name, `could NOT be paused — ${String(e?.message).slice(0, 60)}`, false)
+    }
     setAdActBusy("")
   }
 
@@ -1148,10 +1210,13 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
         accountName: s.adset.account.name, surface: mode,
         summary: canRevert ? `Undone · back to ${peso(last.from)}` : "Record removed only (budget not reverted)",
         details: { pct: last.pct, from: last.to, to: last.from, revertedOnMeta: canRevert } })
-      if (canRevert) setAdsets(prev => prev.map(m =>
-        t.level === "adset"
-          ? (m.id === s.adset.id ? { ...m, budget: last.from } : m)
-          : (m.campaignId === t.id ? { ...m, campaignBudget: last.from } : m)))
+      if (canRevert) {
+        LOCAL_BUDGET.set(t.id, { to: last.from, at: Date.now() }); markLocal()
+        setAdsets(prev => prev.map(m =>
+          t.level === "adset"
+            ? (m.id === s.adset.id ? { ...m, budget: last.from } : m)
+            : (m.campaignId === t.id ? { ...m, campaignBudget: last.from } : m)))
+      }
     } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: undo — ${String(e?.message).slice(0, 90)}`]) }
     setUndoBusy("")
   }
@@ -1254,8 +1319,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
           {(isMonitoring || (!isCampaign && s.reg)) && /active/i.test(s.adset.status) && (
             <button onClick={() => { if (confirm(`Kill (pause) ${unitLabel} "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
               disabled={pausing === s.adset.id}
-              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
-              <Pause className="w-3 h-3" /> {pausing === s.adset.id ? "…" : "Kill"}
+              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-70 disabled:cursor-wait min-w-[62px] justify-center transition-transform active:scale-95">
+              {pausing === s.adset.id
+                ? <><RefreshCw className="w-3 h-3 animate-spin" /> Killing…</>
+                : <><Pause className="w-3 h-3" /> Kill</>}
             </button>
           )}
           {/* Scaling/Monitoring: ad sets + ads sa ilalim ng campaign. Testing:
@@ -1287,8 +1354,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
           {isCampaign && !isMonitoring && s.kind === "kill" && /active/i.test(s.adset.status) && (
             <button onClick={() => { if (confirm(`Pause campaign "${s.adset.name}" on Facebook?`)) pauseAdset(s, false) }}
               disabled={pausing === s.adset.id}
-              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
-              <Pause className="w-3 h-3" /> {pausing === s.adset.id ? "…" : "Pause now"}
+              className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-70 disabled:cursor-wait min-w-[86px] justify-center transition-transform active:scale-95">
+              {pausing === s.adset.id
+                ? <><RefreshCw className="w-3 h-3 animate-spin" /> Pausing…</>
+                : <><Pause className="w-3 h-3" /> Pause now</>}
             </button>
           )}
         </span>
@@ -1406,8 +1475,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
                           <span className="flex items-center gap-1">
                             {/active/i.test(r.status) && (
                               <button onClick={() => killAd(s, r)} disabled={adActBusy === r.id}
-                                className="text-[10px] flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
-                                <Pause className="w-2.5 h-2.5" /> {adActBusy === r.id ? "…" : "Kill"}
+                                className="text-[10px] flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-70 disabled:cursor-wait min-w-[52px] justify-center transition-transform active:scale-95">
+                                {adActBusy === r.id
+                                  ? <><RefreshCw className="w-2.5 h-2.5 animate-spin" /> Killing…</>
+                                  : <><Pause className="w-2.5 h-2.5" /> Kill</>}
                               </button>
                             )}
                             {/* Testing lang: ang panalong ad ay inililipat sa scaling
@@ -1518,16 +1589,29 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager }: {
           <span><b>Auto-pause is ON</b> ({Object.entries(rules.autoRules).filter(([, v]) => v).map(([k]) => k).join(", ") || "no rules enabled"}) — cap {rules.autoDailyCap}/day, {autoLog.date === today ? autoLog.items.length : 0} paused today. Runs only while this tab is open.</span>
         </div>
       )}
-      {autoLog.date === today && autoLog.items.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-[13px] text-slate-600 space-y-1">
-          <p className="font-semibold text-slate-700">Paused today (undo re-activates on Facebook):</p>
-          {autoLog.items.map(it => (
-            <p key={it.id} className="flex items-center gap-2">{it.name}
-              <button onClick={() => undoPause(it)} className="text-[11px] flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-300 hover:bg-slate-50"><Undo2 className="w-3 h-3" /> Undo</button>
+      {/* Patunay na tumalab — nakalutang sa ibaba-kanan, may kusang paglaho. */}
+      {killToast && (
+        <div className={`fixed bottom-4 right-4 z-[70] rounded-xl shadow-lg px-4 py-3 w-[330px] border flex items-start gap-2.5
+          ${killToast.ok ? "bg-white border-emerald-200" : "bg-white border-rose-200"}`}>
+          {killToast.ok
+            ? <Check className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            : <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />}
+          <div className="min-w-0">
+            <p className={`text-sm font-bold ${killToast.ok ? "text-emerald-700" : "text-rose-700"}`}>
+              {killToast.ok ? "Done — confirmed by Facebook" : "Failed"}
             </p>
-          ))}
+            <p className="text-[13px] text-slate-600 break-words"><b>{killToast.name}</b> {killToast.what}</p>
+          </div>
+          <button onClick={() => setKillToast(null)} className="ml-auto text-slate-400 hover:text-slate-600 shrink-0"><X className="w-4 h-4" /></button>
         </div>
       )}
+
+      {/* Ang "Paused today" na listahan na may Undo ay INALIS (Ago 15 2026).
+          Ang pinatay ay dapat mawala — hindi manatili sa screen bilang listahan
+          na maaari mong buhaying muli nang aksidente. Nadoble pa ito kapag
+          paulit-ulit ang pagpindot. Ang tala ay nasa Activity Log; ang pagbubukas
+          muli ay sinasadya nang gawin sa Ads Manager. Nananatili ang `autoLog`
+          para sa daily cap ng auto-pause — bilang lang, hindi na UI. */}
 
       {/* Settings */}
       {settingsOpen && (
