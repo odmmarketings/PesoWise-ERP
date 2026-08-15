@@ -412,16 +412,29 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
 
   // ── BUYER SCOREBOARD — laging LAHAT ng owner (ito mismo ang paghahambing) ──
   const scoreboard = useMemo(() => {
-    const m = new Map<string, { owner: string; spend: number; netValue: number; value: number; purchases: number; brands: Set<string>; win: number; lose: number }>()
+    // ⚠ `r.spend > 0` LANG ang sinasala rito para sa performance, pero ang
+    // BUDGET ay dapat mabilang kahit hindi pa gumagastos ngayong araw — kaya
+    // hiwalay ang pass sa ibaba. Kung hindi, ang bagong buksan na campaign na
+    // wala pang gastos ay parang walang budget.
+    const m = new Map<string, { owner: string; spend: number; netValue: number; value: number; purchases: number; budget: number; brands: Set<string>; win: number; lose: number }>()
     for (const r of rows.filter(r => r.spend > 0)) {
       const o = r.accountOwner || "—"
       const rts = rtsOf(r)
-      const e = m.get(o) ?? { owner: o, spend: 0, netValue: 0, value: 0, purchases: 0, brands: new Set<string>(), win: 0, lose: 0 }
+      const e = m.get(o) ?? { owner: o, spend: 0, netValue: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
       const net = netOf(r.purchaseValue, r.spend, rts)
       e.spend += r.spend; e.netValue += r.purchaseValue * (1 - rts); e.value += r.purchaseValue; e.purchases += r.purchases
+      if (/active/i.test(r.status)) e.budget += r.budget
       e.brands.add(r.accountName)
       if (r.spend >= rules.evalMinSpend && net >= rules.scaleRoas) e.win++
       if (r.spend >= rules.evalMinSpend && net < rules.killRoas) e.lose++
+      m.set(o, e)
+    }
+    // Pangalawang pass: budget ng mga AKTIBO, kasama ang wala pang gastos.
+    for (const r of rows) {
+      if (!/active/i.test(r.status) || r.spend > 0) continue
+      const o = r.accountOwner || "—"
+      const e = m.get(o) ?? { owner: o, spend: 0, netValue: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
+      e.budget += r.budget; e.brands.add(r.accountName)
       m.set(o, e)
     }
     return [...m.values()].sort((a, b) => b.spend - a.spend)
@@ -453,7 +466,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
           </button>
         ))}
         <span className="ml-auto text-[12px] text-slate-400">
-          {rangeLabel} · {activeCount} active campaigns · budget in play <b className="text-slate-600">{peso(budgetInPlay)}</b>
+          {rangeLabel} · {activeCount} active campaigns
           {rtsMap.size === 0 && <> · <span className="text-amber-600">RTS loading — gross muna ang net</span></>}
         </span>
       </div>
@@ -466,13 +479,23 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
         <div className="bg-white rounded-2xl border border-slate-200 py-14 text-center text-slate-400 text-sm">No spend {rangeLabel}.</div>
       ) : (
         <>
-          {/* ── HERO — net muna, dahil net ang batayan ng bawat desisyon ── */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* ── HERO — net muna, dahil net ang batayan ng bawat desisyon ──
+              Ang AD BUDGET ay ang naka-set na daily budget ng mga AKTIBO ngayon:
+              ang itatakbo bukas kung walang gagalawin — magkaibang tanong sa
+              "magkano ang nagastos". Ang pares na Budget/Spend ang nagsasabi
+              kung gaano kabilis ubusin ng araw ang nakalaan (pacing). */}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
             <Kpi label={`Net ROAS ${rangeLabel}`} value={dec(netAll) + "x"} sub={`gross ${dec(grossAll)}x`}
               accent={netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
+            <Kpi label="Ad Budget / day" value={peso(budgetInPlay)}
+              sub={budgetInPlay > 0 ? `${Math.round((agg.spend / budgetInPlay) * 100)}% spent · ${activeCount} active` : `${activeCount} active`}
+              accent="from-slate-700 to-slate-800" />
             <Kpi label="Ad Spend" value={peso(agg.spend)} sub={`incl. VAT ${peso(agg.spend * VAT)}`} accent="from-blue-600 to-blue-700" />
-            <Kpi label="Sales" value={peso(totalValue)} sub={`${num(agg.purchases)} purchases`} accent="from-violet-500 to-violet-600" />
-            <Kpi label="Cost / Purchase" value={peso(cpp)} sub={agg.purchases > 0 ? `avg value ${peso(totalValue / agg.purchases)}` : undefined} accent="from-slate-700 to-slate-800" />
+            <Kpi label="Sales" value={peso(totalValue)} sub={`net ${peso(agg.netValue)} after RTS`} accent="from-violet-500 to-violet-600" />
+            <Kpi label="Total Purchases" value={num(agg.purchases)}
+              sub={agg.purchases > 0 ? `avg value ${peso(totalValue / agg.purchases)}` : undefined} accent="from-fuchsia-500 to-pink-600" />
+            <Kpi label="Cost / Purchase" value={peso(cpp)} sub={`ceiling ${peso(rules.cppMax)}`}
+              accent={cpp > 0 && cpp > rules.cppMax ? "from-rose-500 to-rose-600" : "from-cyan-500 to-cyan-600"} />
             <Kpi label="🔥 Burning" value={peso(sumSpend(losers))} sub={`${losers.length} below ${rules.killRoas} net`} accent="from-rose-500 to-rose-600" />
             <Kpi label="🏆 Winning" value={peso(sumSpend(winners))} sub={`${winners.length} at ${rules.scaleRoas}+ net`} accent="from-emerald-500 to-emerald-600" />
           </div>
@@ -569,14 +592,20 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
               <div className="overflow-x-auto scrollbar-dark">
                 <table className="w-full text-sm">
                   <thead><tr className="bg-slate-50 border-b border-slate-200 text-left text-[11px] text-slate-500">
-                    {["Buyer", "Brands", "Spend", "Net ROAS", "Winners", "Losers"].map(h => <th key={h} className="px-4 py-2 font-semibold whitespace-nowrap">{h}</th>)}
+                    {["Buyer", "Brands", "Budget / day", "Spend", "Purchases", "CPP", "Net ROAS", "Win", "Lose"].map(h => <th key={h} className="px-4 py-2 font-semibold whitespace-nowrap">{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {scoreboard.map(s => (
                       <tr key={s.owner} className="border-b border-slate-100">
                         <td className="px-4 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{s.owner}</td>
                         <td className="px-4 py-2.5 text-slate-600">{s.brands.size}</td>
-                        <td className="px-4 py-2.5 tabular-nums text-slate-700">{peso(s.spend)}</td>
+                        <td className="px-4 py-2.5 tabular-nums text-slate-700">{peso(s.budget)}</td>
+                        <td className="px-4 py-2.5 tabular-nums text-slate-700">
+                          {peso(s.spend)}
+                          {s.budget > 0 && <span className="block text-[10px] text-slate-400">{Math.round((s.spend / s.budget) * 100)}% of budget</span>}
+                        </td>
+                        <td className="px-4 py-2.5 tabular-nums text-slate-700">{num(s.purchases)}</td>
+                        <td className="px-4 py-2.5 tabular-nums text-slate-700">{s.purchases > 0 ? peso(s.spend / s.purchases) : "—"}</td>
                         <td className="px-4 py-2.5">
                           <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${netBadge(s.spend > 0 ? s.netValue / (s.spend * VAT) : 0)}`}>
                             {dec(s.spend > 0 ? s.netValue / (s.spend * VAT) : 0)}x
@@ -586,6 +615,26 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                         <td className="px-4 py-2.5 text-rose-600 font-semibold">{s.lose}</td>
                       </tr>
                     ))}
+                    {scoreboard.length > 1 && (() => {
+                      const t = scoreboard.reduce((a, s) => ({ budget: a.budget + s.budget, spend: a.spend + s.spend, purchases: a.purchases + s.purchases, netValue: a.netValue + s.netValue, win: a.win + s.win, lose: a.lose + s.lose }), { budget: 0, spend: 0, purchases: 0, netValue: 0, win: 0, lose: 0 })
+                      return (
+                        <tr className="bg-slate-50 font-bold text-slate-800">
+                          <td className="px-4 py-2.5">ALL</td>
+                          <td className="px-4 py-2.5">{new Set(rows.map(r => r.accountName)).size}</td>
+                          <td className="px-4 py-2.5 tabular-nums">{peso(t.budget)}</td>
+                          <td className="px-4 py-2.5 tabular-nums">{peso(t.spend)}</td>
+                          <td className="px-4 py-2.5 tabular-nums">{num(t.purchases)}</td>
+                          <td className="px-4 py-2.5 tabular-nums">{t.purchases > 0 ? peso(t.spend / t.purchases) : "—"}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${netBadge(t.spend > 0 ? t.netValue / (t.spend * VAT) : 0)}`}>
+                              {dec(t.spend > 0 ? t.netValue / (t.spend * VAT) : 0)}x
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-emerald-600">{t.win}</td>
+                          <td className="px-4 py-2.5 text-rose-600">{t.lose}</td>
+                        </tr>
+                      )
+                    })()}
                   </tbody>
                 </table>
               </div>
