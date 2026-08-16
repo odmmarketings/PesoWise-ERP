@@ -174,10 +174,39 @@ export async function GET(req: NextRequest) {
 
       // ABO campaigns hold budget on the ad sets — sum so campaign budget isn't 0.
       const adsetActive: Record<string, number> = {}, adsetAll: Record<string, number> = {}
+      // ⚠ ANG DELIVERY AY GALING SA MGA ANAK. Ang `effective_status` ng isang
+      // CAMPAIGN ay hindi tumitingin pababa: mananatili itong ACTIVE kahit
+      // patay na lahat ng ad set nito — kaya "Active" ang nakikita mo sa isang
+      // campaign na wala nang naipapadala (iniulat ng may-ari, Ago 15 2026).
+      // Ganito rin ang ginagawa ng Ads Manager ni Meta: binibilang niya ang mga
+      // anak. Libre ito rito — hinihila na natin ang ad sets para sa budget.
+      const kidsOn: Record<string, number> = {}, kidsTotal: Record<string, number> = {}
       if (level === "campaign") {
         try {
-          const as = await fbGet(`${accountId}/adsets?fields=campaign_id,daily_budget,lifetime_budget,effective_status&limit=500&access_token=${enc}`)
-          for (const s of as.data || []) { const b = cents(s.daily_budget) || cents(s.lifetime_budget); if (!b) continue; adsetAll[s.campaign_id] = (adsetAll[s.campaign_id] || 0) + b; if (/active/i.test(s.effective_status)) adsetActive[s.campaign_id] = (adsetActive[s.campaign_id] || 0) + b }
+          const as = await fbGet(`${accountId}/adsets?fields=campaign_id,daily_budget,lifetime_budget,status,effective_status&limit=500&access_token=${enc}`)
+          for (const s of as.data || []) {
+            const cid = s.campaign_id
+            kidsTotal[cid] = (kidsTotal[cid] || 0) + 1
+            // `status` = ang sarili niyang on/off. Hindi `effective_status`:
+            // "CAMPAIGN_PAUSED" ang laman niyan kapag ang MAGULANG ang patay,
+            // at hindi iyon nagsasabi kung binuksan ba ang ad set mismo.
+            if (/active/i.test(s.status || "")) kidsOn[cid] = (kidsOn[cid] || 0) + 1
+            const b = cents(s.daily_budget) || cents(s.lifetime_budget); if (!b) continue
+            adsetAll[cid] = (adsetAll[cid] || 0) + b
+            if (/active/i.test(s.effective_status)) adsetActive[cid] = (adsetActive[cid] || 0) + b
+          }
+        } catch {}
+      }
+      // Ganoon din pababa: ang ad set ay nagsasabing "Ads off" kapag patay ang
+      // lahat ng ad nito. Isang dagdag na hila kada account sa antas na ito.
+      if (level === "adset") {
+        try {
+          const ad = await fbGet(`${accountId}/ads?fields=adset_id,status&limit=500&access_token=${enc}`)
+          for (const x of ad.data || []) {
+            const sid = x.adset_id
+            kidsTotal[sid] = (kidsTotal[sid] || 0) + 1
+            if (/active/i.test(x.status || "")) kidsOn[sid] = (kidsOn[sid] || 0) + 1
+          }
         } catch {}
       }
       // Include objects that exist but had no spend in range.
@@ -194,6 +223,12 @@ export async function GET(req: NextRequest) {
           budget: level === "campaign" ? (ownBudget || adsetActive[id] || adsetAll[id] || 0) : (level === "adset" ? ownBudget : 0),
           // ownBudget = this object's own budget (0 → inherits from campaign/ad sets). budgetKind = daily|lifetime.
           ownBudget, budgetKind: ownDaily ? "daily" : ownLife ? "lifetime" : "",
+          // Bilang ng anak — ito ang batayan ng "Ad set off" / "Ads off".
+          // -1 = hindi natin alam (walang hila sa antas na ito), at iyon ay
+          // ibang bagay sa 0 — hindi tayo dapat magsabi ng "Ads off" dahil lang
+          // walang datos.
+          kidsOn: level === "ad" ? -1 : (kidsOn[id] ?? 0),
+          kidsTotal: level === "ad" ? -1 : (kidsTotal[id] ?? 0),
           bidStrategy: m.bid_strategy || "", optimizationGoal: m.optimization_goal || "",
           createdTime: m.created_time || "", updatedTime: m.updated_time || "",
           campaignId: m.campaign_id || r.campaign_id || "", adsetId: m.adset_id || r.adset_id || "",

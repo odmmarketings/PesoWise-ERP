@@ -78,6 +78,58 @@ function objBucket(o: string): Exclude<Obj, "All"> {
   return "Other"
 }
 const statusColor = (s: string) => /active/i.test(s) ? "text-emerald-600 bg-emerald-50" : /paus/i.test(s) ? "text-amber-600 bg-amber-50" : "text-slate-500 bg-slate-100"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DELIVERY — ang hanay na "Status" ni Meta, gaya ng Ads Manager.
+//
+// ⚠ ANG `effective_status` NG CAMPAIGN AY HINDI TUMITINGIN PABABA. Nananatili
+// itong ACTIVE kahit patay na ang lahat ng ad set nito, kaya "Active" ang
+// nakikita mo sa campaign na wala nang naipapadala. Binibilang ng Ads Manager
+// ang mga anak para dito — ganoon din tayo (`kidsOn`/`kidsTotal` mula sa API).
+//
+// Ang mga anak naman ay SINASABI ni Meta kung sino ang may sala sa itaas:
+// CAMPAIGN_PAUSED at ADSET_PAUSED — ginagamit natin nang deretso.
+const DELIVERY_MAP: Record<string, string> = {
+  CAMPAIGN_PAUSED: "Campaign off",
+  ADSET_PAUSED: "Ad set off",
+  PENDING_REVIEW: "In review",
+  PENDING_BILLING_INFO: "Needs billing info",
+  DISAPPROVED: "Rejected",
+  PREAPPROVED: "Scheduled",
+  WITH_ISSUES: "Not delivering",
+  IN_PROCESS: "Processing",
+  ARCHIVED: "Archived",
+  DELETED: "Deleted",
+}
+type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number }
+export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad"): { label: string; tone: "on" | "off" | "warn" | "bad" } {
+  const eff = String(r.status || "").toUpperCase()
+  const own = String(r.configuredStatus || r.status || "").toUpperCase()
+
+  // 1. Ang sarili mong switch ang unang sagot — kung patay ka, "Off" ka.
+  if (/PAUSED/.test(own) && own !== "CAMPAIGN_PAUSED" && own !== "ADSET_PAUSED") return { label: "Off", tone: "off" }
+  // 2. May sinasabi ba si Meta na natatangi?
+  if (eff === "DISAPPROVED") return { label: "Rejected", tone: "bad" }
+  if (eff === "WITH_ISSUES") return { label: "Not delivering", tone: "bad" }
+  if (DELIVERY_MAP[eff] && eff !== "ACTIVE") {
+    const bad = eff === "PENDING_BILLING_INFO"
+    return { label: DELIVERY_MAP[eff], tone: bad ? "bad" : eff === "CAMPAIGN_PAUSED" || eff === "ADSET_PAUSED" || eff === "ARCHIVED" || eff === "DELETED" ? "off" : "warn" }
+  }
+  // 3. Buhay ako — pero may naipapadala ba talaga? Tanungin ang mga anak.
+  //    -1 = walang datos ng anak; huwag manghula.
+  const on = r.kidsOn ?? -1, total = r.kidsTotal ?? -1
+  if (level !== "ad" && total > 0 && on === 0) {
+    return { label: level === "campaign" ? "Ad set off" : "Ads off", tone: "warn" }
+  }
+  if (/ACTIVE/.test(own) || /ACTIVE/.test(eff)) return { label: "Active", tone: "on" }
+  return { label: eff ? eff.replace(/_/g, " ").toLowerCase() : "—", tone: "off" }
+}
+const DELIVERY_TONE: Record<string, string> = {
+  on: "text-emerald-600 bg-emerald-50",
+  off: "text-slate-500 bg-slate-100",
+  warn: "text-amber-600 bg-amber-50",
+  bad: "text-rose-600 bg-rose-50",
+}
 // Show the campaign status capitalised — "Active", "Paused", etc.
 const statusLabel = (s: string) => { const t = String(s).replace(/_/g, " ").toLowerCase(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t }
 // Ads Manager ROAS colour rule: >4.9 green · 3–4.9 yellow · <3 red.
@@ -402,10 +454,11 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
 
   // ── BRAND CARDS — kada ad account, hindi kada campaign ─────────────────────
   const brands = useMemo(() => {
-    const m = new Map<string, { name: string; accountId: string; owner: string; spend: number; value: number; netValue: number; purchases: number; active: number; rts: number }>()
+    const m = new Map<string, { name: string; accountId: string; owner: string; spend: number; value: number; netValue: number; purchases: number; active: number; total: number; rts: number }>()
     for (const x of withNet) {
-      const b = m.get(x.r.accountName) ?? { name: x.r.accountName, accountId: x.r.accountId, owner: x.r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, rts: x.rts }
+      const b = m.get(x.r.accountName) ?? { name: x.r.accountName, accountId: x.r.accountId, owner: x.r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, total: 0, rts: x.rts }
       b.spend += x.r.spend; b.value += x.r.purchaseValue; b.netValue += x.r.purchaseValue * (1 - x.rts); b.purchases += x.r.purchases
+      b.total++
       if (/active/i.test(x.r.status)) b.active++
       m.set(b.name, b)
     }
@@ -568,7 +621,18 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                   <p className="text-[11px] text-slate-500">
                     {b.purchases} purchases{b.purchases > 0 && <> · CPP {peso(b.spend / b.purchases)}</>}
                   </p>
-                  <p className="text-[11px] text-slate-400">{b.owner || "—"} · {b.active} active · RTS {(b.rts * 100).toFixed(1)}%</p>
+                  {/* Kulay ayon sa Meta: BERDE = may naipapadala. Ang patay ay
+                      HINDI pula — hindi iyon error, kaya amber lang: "may
+                      gastos ngayon pero wala nang tumatakbo" ay dapat mapansin,
+                      hindi ipagulat. Ang pula ay nakalaan sa tunay na sira. */}
+                  <p className="text-[11px] text-slate-400">
+                    {b.owner || "—"} ·{" "}
+                    <span className={`font-semibold ${b.active > 0 ? "text-emerald-600" : "text-amber-600"}`}>
+                      {b.active} active
+                    </span>
+                    {b.total > b.active && <span className="text-slate-400"> · {b.total - b.active} off</span>}
+                    {" "}· RTS {(b.rts * 100).toFixed(1)}%
+                  </p>
                 </button>
               ))}
             </div>
@@ -1006,7 +1070,7 @@ type MgrFocus = {
   /** Bakit ka dinala rito, hal. "2nd scale · ₱1,000 → ₱1,100". Nasa banner. */
   note?: string
 }
-type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string }
+type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
 /** Ilang araw nang umiiral ang object — 0 kung walang petsa mula kay Meta. */
 const daysOldOf = (iso: string) => {
@@ -1397,7 +1461,8 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const cols = level === "ad" ? [...baseCols, ...AD_EXTRA_COLS] : baseCols   // ad-only extras at the end
   const toMgr = (r: any): MgrRow => {
     const a = accById(r.__accId) || account
-    return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "" }
+    return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "",
+      kidsOn: typeof r.kidsOn === "number" ? r.kidsOn : -1, kidsTotal: typeof r.kidsTotal === "number" ? r.kidsTotal : -1 }
   }
   // ⚠ PAREHONG BITAG NA INAYOS SA DASHBOARD (Ago 6 2026), naiwan dito: ang
   // "Paused" ay humihingi rin ng `spend > 0`, kaya sa 145 na paused campaign ay
@@ -1809,7 +1874,17 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                             </button>
                           </div>
                         </td>
-                        <td className="px-4 py-3 border-r border-slate-100"><span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${statusColor(r.status)}`}>{statusLabel(r.status)}</span></td>
+                        <td className="px-4 py-3 border-r border-slate-100">
+                          {(() => {
+                            const d = deliveryOf(r, level)
+                            return (
+                              <span title={`Meta status: ${r.status}${r.kidsTotal >= 0 ? ` · ${r.kidsOn}/${r.kidsTotal} ${level === "campaign" ? "ad sets" : "ads"} on` : ""}`}
+                                className={`text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${DELIVERY_TONE[d.tone]}`}>
+                                {d.label}
+                              </span>
+                            )
+                          })()}
+                        </td>
                         <td className="px-4 py-3 whitespace-nowrap border-r border-slate-100">
                           {r.createdTime
                             ? <span title={`Started ${fmtD(r.createdTime)}`}
