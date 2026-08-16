@@ -1291,12 +1291,16 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         <span className="text-[11px] text-slate-400">
           {!isCampaign && <>{s.adset.campaignName} · </>}{s.adset.account.name}
         </span>
-        {/* EDAD — hiwalay at berde. Nakalubog dati sa kulay-abong linya ng
-            account at halos hindi mabasa; ito ang unang tinitingnan kapag
-            hinuhusgahan kung bago pa o matagal nang tumatakbo. */}
+        {/* EDAD — sariling pill, pero NEUTRAL ang kulay. Nakalubog ito dati sa
+            kulay-abong linya ng account at halos hindi mabasa, kaya hiniwalay;
+            berde naman ito noon at napagkakamalang katulad ng "Active" na
+            nakatabi lang (iniulat ng may-ari, Ago 17 2026). Ang edad ay DATOS,
+            hindi kalagayan — at sa Ads ay may kahulugan na ang bawat hue
+            (berde=aktibo, amber=paused/learning, rosas=masama, violet=creative
+            fatigue), kaya ang tanging tapat na pagpipilian ay walang hue. */}
         {s.adset.createdTime && (
           <span title={`Created ${s.adset.createdTime.slice(0, 10)}`}
-            className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+            className="text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 px-2 py-0.5 rounded-full whitespace-nowrap">
             {daysOld(s.adset.createdTime)}d old
           </span>
         )}
@@ -1787,7 +1791,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                           matagal nang tumatakbo? */}
                       {m.createdTime && (
                         <span className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+                          <span className="text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 px-2 py-0.5 rounded-full whitespace-nowrap">
                             {daysOld(m.createdTime)}d old
                           </span>
                           <span className="text-[11px] text-slate-400">created {m.createdTime.slice(0, 10)}</span>
