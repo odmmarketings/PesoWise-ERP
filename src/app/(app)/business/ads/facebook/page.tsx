@@ -1565,7 +1565,10 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   // Isang hila para sa bilang ng komento ng LAHAT ng nakikitang row — hindi isa
   // kada row (22 campaign = 22 request kung ganoon).
   const { counts: commentCounts, refresh: refreshCounts } = useCommentCounts(useMemo(() => levelRows.map(r => r.id), [levelRows]))
-  const { pins, toggle: togglePin, clearAll: clearPins, has: isPinned } = useAdsPins()
+  // Walang "N pinned · clear" na chip — tinanggal ito ng may-ari (Ago 17 2026).
+  // Ang pag-alis ng pin ay per-row pa rin sa pamamagitan ng pindutang pin mismo,
+  // kaya walang nawawalang kakayahan; ang toolbar lang ang mas tahimik.
+  const { pins, toggle: togglePin, has: isPinned } = useAdsPins()
 
   const [sort, setSort] = useState<SortState | null>({ key: "Amount Spent", dir: "desc" })
   const sortedRows = useMemo(() => sortRows(levelRows, sort, (r, k) =>
@@ -1839,12 +1842,6 @@ function AdsManager({ fb, from, to, focus, onJump }: {
               )}
               {/* Tunog ng on/off — nakabukas bilang default, pero hindi lahat ay
                   nasa tahimik na kuwarto. Naaalala sa browser na ito. */}
-              {pins.size > 0 && (
-                <button onClick={clearPins} title="Alisin ang lahat ng pin"
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-amber-600 hover:bg-amber-50">
-                  <Pin className="w-3.5 h-3.5 fill-current" /> {pins.size} pinned · clear
-                </button>
-              )}
               <button onClick={() => { const n = !sfx; setSfx(n); setSfxOn(n); if (n) playToggle(true) }}
                 title={sfx ? "Click sounds are on" : "Click sounds are off"}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-slate-500 hover:bg-white">
@@ -1897,9 +1894,17 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                     const active = origActive(r)
                     const selected = curSel.has(r.id)
                     const rowBg = selected ? "bg-blue-50" : (i % 2 === 0 ? "bg-white" : "bg-slate-50")
+                    // ⚠ WALANG `ring` SA <tr>. Ang table ay `border-collapse`, kaya
+                    // ang singsing ay hindi gumuguhit ng kahon sa paligid ng hilera
+                    // — ang itaas at ibabang gilid nito ay lumalabas bilang gintong
+                    // guhit sa PAGITAN ng mga hilera, at ang kaliwa't kanan ay
+                    // natatakpan ng mga sticky na cell (iniulat Ago 17 2026). Ang
+                    // marka ay isang gilid sa UNANG CELL — isang kahon lang ang
+                    // tinatamaan, kaya walang dumudugo, at pareho ang itsura sa
+                    // dalawang tema dahil ang HANGGANAN ang kulay, hindi ang tint.
                     return (
-                      <tr key={r.id} className={`group/row border-b border-slate-100 ${rowBg} hover:bg-blue-50/40 ${isPinned(r.id) ? "ring-1 ring-inset ring-amber-300/60" : ""}`}>
-                        <td className={`px-3 py-3 sticky left-0 z-10 ${rowBg} w-[44px] min-w-[44px] max-w-[44px]`}><input type="checkbox" checked={selected} onChange={() => toggleRow(r.id)} className="accent-blue-600" /></td>
+                      <tr key={r.id} className={`group/row border-b border-slate-100 ${rowBg} hover:bg-blue-50/40`}>
+                        <td className={`py-3 sticky left-0 z-10 ${rowBg} w-[44px] min-w-[44px] max-w-[44px] ${isPinned(r.id) ? "border-l-[3px] border-l-amber-400 pl-[9px] pr-3" : "px-3"}`}><input type="checkbox" checked={selected} onChange={() => toggleRow(r.id)} className="accent-blue-600" /></td>
                         <td className={`px-2 py-3 sticky left-[43px] z-10 ${rowBg} border-l border-slate-100 w-[52px] min-w-[52px] max-w-[52px]`}>
                           {/* Ang knob ay gumagalaw nang may kaunting lampas (spring
                               curve) at may kislap na singsing pagkatapos ng
