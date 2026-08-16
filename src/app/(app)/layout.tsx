@@ -8,6 +8,7 @@ import { UpgradeModal } from "@/components/modals/UpgradeModal"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { PagesProvider } from "@/lib/pages-store"
 import { syncRosterFromSupabase } from "@/lib/users-store"
+import { AdsPrefetcher } from "@/lib/use-ads-prefetch"
 import type { Plan } from "@/lib/types"
 
 // Kaparehong hugis ng cookie na itinatakda ng /api/auth/login, para pareho ang
@@ -145,7 +146,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         />
         <main className="flex-1 overflow-y-auto px-6 pt-4 pb-6">
           {authReady ? (
-            <PagesProvider>{children}</PagesProvider>
+            <PagesProvider>
+              {/* Pinapainit ang Facebook Ads mula sa pagbukas ng app — nasa
+                  ibang pahina ka pa lang, puno na ang cache pagdating mo. */}
+              <AdsPrefetcher />
+              {children}
+            </PagesProvider>
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="flex items-center gap-3 text-slate-400 text-sm">

@@ -19,6 +19,10 @@ import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { ScalingTracker, type TrackerFocus } from "@/components/business/ads/ScalingTracker"
 import { CommentsModal } from "@/components/business/ads/CommentsModal"
 import { useCommentCounts } from "@/lib/ads-comments-store"
+import {
+  MGR_CACHE, MGR_INFLIGHT, MGR_TTL, DASH_CACHE, DASH_INFLIGHT, DASH_TTL,
+  LVL_CACHE, LVL_INFLIGHT, type DashPart,
+} from "@/lib/ads-cache"
 import { logAds, logAdsMany, useRuleEditors, useAdsActivity, ACTION_LABEL } from "@/lib/ads-activity-store"
 import { playToggle, playError, sfxOn, setSfxOn } from "@/lib/ui-feedback"
 import { loadHouseRules, netOf, usePageRts } from "@/lib/scaling-signals"
@@ -152,26 +156,18 @@ let fbTabMounted = false
 // Facebook Ads ay laging bagong 63-request na hila. Kada ACCOUNT ang yunit
 // (tulad ng Ads Manager) kaya ang bahaging nahila na ay hindi na inuulit,
 // at pinagdurugtong lang sa pagpapakita. Ang Refresh ang pumipilit.
-type DashPart = {
-  rows: Row[]
-  trend: { date: string; spend: number; sales: number }[]
-  daily: { date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]
-  spendByDate: Record<string, number>
-}
-const DASH_CACHE = new Map<string, { ts: number; part: DashPart }>()
-const DASH_INFLIGHT = new Map<string, Promise<DashPart>>()
+// ⚠ NASA `@/lib/ads-cache` NA ANG MGA CACHE. Kailangan silang maabot ng
+// prefetcher sa app layout — habang nasa Finance ka pa lang, pinupuno na niya
+// ang mga ito, kaya walang hihintayin pagpindot mo sa tab.
 // 30 minuto, hindi 5. Ligtas ang mahabang TTL dahil sa stale-while-revalidate:
 // LAGI kang may nakikitang laman agad, at kung luma na ito ay tahimik itong
 // pinapalitan. Ang maikling TTL ay hindi nagpapasariwa nang mas mabilis —
 // nagpapadalas lang ito ng hila para sa datos na nasa kamay na.
-const DASH_TTL = 30 * 60_000
 
 // Ang Ad Sets / Ads na antas SA LOOB ng Dashboard tab ay nasa component state
 // dati (`lvlData`), kaya namamatay sa bawat pagpalit ng tab — 21 request ulit
 // sa tuwing babalik ka at pipindutin muli ang Ad Sets. Kada account din ang
 // yunit dito, para ang pag-filter ng account/owner ay hindi na humihila.
-const LVL_CACHE = new Map<string, { ts: number; rows: Row[] }>()
-const LVL_INFLIGHT = new Map<string, Promise<Row[]>>()
 
 export default function FacebookAdsPage() {
   const fb = useFBAccounts()
@@ -1106,10 +1102,6 @@ const PREVIEW_FORMATS = [
 // `MGR_INFLIGHT` = sumasakay ang pangalawang humihingi sa tumatakbo nang hila,
 // kaya hindi naaabot ang FB #17 rate limit. `load(true)` (pagkatapos ng tunay
 // na pagbabago sa Meta) ang naglilinis ng LAHAT.
-type MgrCached = { ts: number; rows: any[] }
-const MGR_CACHE = new Map<string, MgrCached>()
-const MGR_INFLIGHT = new Map<string, Promise<any[]>>()
-const MGR_TTL = 30 * 60_000   // tingnan ang DASH_TTL: mahaba dahil tahimik ang refresh
 
 function AdsManager({ fb, from, to, focus, onJump }: {
   fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null
