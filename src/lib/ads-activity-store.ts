@@ -15,7 +15,7 @@ import { notify } from "@/lib/notify"
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type AdsAction =
-  | "status" | "budget" | "scale" | "scale_undo" | "kill"
+  | "status" | "budget" | "scale" | "scale_undo" | "kill" | "rename"
   | "register" | "unregister" | "ad_moved"
   | "rule_create" | "rule_update" | "rule_delete" | "rule_status" | "rule_scope"
 
@@ -58,6 +58,7 @@ const NOTIFY_MAP: Record<string, { sev: "info" | "warning" | "critical"; label: 
   scale: { sev: "warning", label: "scaled" },
   scale_undo: { sev: "warning", label: "undid a scale on" },
   budget: { sev: "warning", label: "changed the budget of" },
+  rename: { sev: "info", label: "renamed" },
   rule_create: { sev: "info", label: "created rule" },
   rule_update: { sev: "info", label: "edited rule" },
   rule_delete: { sev: "warning", label: "deleted rule" },
@@ -209,6 +210,7 @@ export function useRuleEditors() {
 export const ACTION_LABEL: Record<string, string> = {
   status: "Turned on / off",
   budget: "Budget changed",
+  rename: "Renamed",
   scale: "Scaled",
   scale_undo: "Scale undone",
   kill: "Killed (paused)",

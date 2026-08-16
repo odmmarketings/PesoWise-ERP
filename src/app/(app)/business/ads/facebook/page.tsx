@@ -139,8 +139,13 @@ export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad"): 
   const L = r.learning
   if (level !== "campaign" && L) {
     if (L.status === "LEARNING") {
-      const n = Math.max(0, L.conversions)
-      return { label: `Learning ${n}/${LEARN_TARGET}`, tone: "warn" }
+      // ⚠ ANG BILANG AY SA AD SET LANG. Ang mga event ay naiipon sa AD SET, kaya
+      // ang paglalagay ng "12/50" sa bawat ad sa ilalim nito ay pag-uulit ng
+      // iisang numero — at mukhang sariling progreso ng ad, gayong hindi.
+      // Sa ad, "Learning" lang: totoo, at hindi nagsisinungaling kung kanino
+      // ang bilang.
+      if (level !== "adset") return { label: "Learning", tone: "warn" }
+      return { label: `Learning ${Math.max(0, L.conversions)}/${LEARN_TARGET}`, tone: "warn" }
     }
     // FAIL = "Learning limited" sa wika ng Ads Manager. Hindi ito error kaya
     // hindi pula — pero babala: hindi na mag-o-optimize nang maayos hangga't
@@ -1192,6 +1197,39 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   useEffect(() => { setSfx(sfxOn()) }, [])
   // Usapan sa isang row (ang paglundag ay walang state — diretso na).
   const [commentFor, setCommentFor] = useState<MgrRow | null>(null)
+  // Pagpapalit ng pangalan sa mismong hilera.
+  const [renameId, setRenameId] = useState("")
+  const [renameVal, setRenameVal] = useState("")
+
+  /** Ipinapadala kay Meta ang bagong pangalan. Optimistic, may pagbawi kung pumalya. */
+  async function saveName(r: MgrRow) {
+    const name = renameVal.trim()
+    setRenameId("")
+    if (!name || name === r.name) return
+    const token = accById(r.accountId)?.token || ""
+    if (!token) { flash("⚠ No token for this account"); return }
+    const before = r.name
+    // Agad sa screen — at sa CACHE din, kung hindi ay babalik ang lumang
+    // pangalan pagkatapos mong lumipat ng tab (parehong bitag ng kill).
+    const patch = (rows: any[]) => rows.map(x => x.id === r.id ? { ...x, name } : x)
+    setRows(patch)
+    for (const [k, v] of MGR_CACHE) if (k.endsWith(`|${r.accountId}`)) MGR_CACHE.set(k, { ...v, rows: patch(v.rows) })
+    try {
+      const j = await fetch(`/api/fb/manage`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, action: "update", id: r.id, name }),
+      }).then(rr => rr.json())
+      if (!j.success) throw new Error(j.error || "Rename failed")
+      logAds({ action: "rename", level, objectId: r.id, objectName: name, accountName: r.accountName,
+        summary: `"${before}" → "${name}"`, surface: "ads-manager", details: { from: before, to: name } })
+      flash("Renamed.")
+    } catch (e: any) {
+      const undo = (rows: any[]) => rows.map(x => x.id === r.id ? { ...x, name: before } : x)
+      setRows(undo)
+      for (const [k, v] of MGR_CACHE) if (k.endsWith(`|${r.accountId}`)) MGR_CACHE.set(k, { ...v, rows: undo(v.rows) })
+      playError(); flash("⚠ " + (e?.message || "Rename failed"))
+    }
+  }
   // Automated rules (Meta adrules_library): More ▾ → Create a new rule / Manage rules
   const [moreOpen, setMoreOpen] = useState(false)
   const [rulesView, setRulesView] = useState<RulesView>("")
@@ -1885,11 +1923,32 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                               ? <img src={r.thumbnail} alt="" loading="lazy" className="w-9 h-9 rounded object-cover border border-slate-200 shrink-0" />
                               : <div className="w-9 h-9 rounded bg-slate-100 border border-slate-200 shrink-0" />)}
                             <div className="min-w-0">
-                              <button onClick={() => level !== "ad" && drillInto(r)} disabled={level === "ad"} title={level === "campaign" ? "View ad sets" : level === "adset" ? "View ads" : r.name}
-                                className={`flex items-center gap-1 font-medium text-left max-w-[130px] sm:max-w-[220px] ${level !== "ad" ? "text-blue-600 hover:underline" : "text-slate-800"}`}>
-                                {level !== "ad" && <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
-                                <span className="truncate">{r.name}</span>
-                              </button>
+                              {renameId === r.id ? (
+                                // Palitan ang pangalan sa mismong hilera — Enter
+                                // para i-save, Escape para bumalik. Walang modal
+                                // para sa isang linyang teksto.
+                                <input autoFocus value={renameVal}
+                                  onChange={e => setRenameVal(e.target.value)}
+                                  onBlur={() => saveName(r)}
+                                  onKeyDown={e => {
+                                    if (e.key === "Enter") { e.preventDefault(); saveName(r) }
+                                    if (e.key === "Escape") { e.preventDefault(); setRenameId("") }
+                                  }}
+                                  className="w-[130px] sm:w-[220px] h-7 rounded border border-blue-400 px-1.5 text-sm" />
+                              ) : (
+                                <span className="flex items-center gap-1 min-w-0">
+                                  <button onClick={() => level !== "ad" && drillInto(r)} disabled={level === "ad"} title={level === "campaign" ? "View ad sets" : level === "adset" ? "View ads" : r.name}
+                                    className={`flex items-center gap-1 font-medium text-left max-w-[112px] sm:max-w-[200px] ${level !== "ad" ? "text-blue-600 hover:underline" : "text-slate-800"}`}>
+                                    {level !== "ad" && <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
+                                    <span className="truncate">{r.name}</span>
+                                  </button>
+                                  <button onClick={() => { setRenameId(r.id); setRenameVal(r.name) }}
+                                    title={`Rename this ${level === "campaign" ? "campaign" : level === "adset" ? "ad set" : "ad"} on Facebook`}
+                                    className="shrink-0 p-0.5 rounded text-slate-300 hover:text-blue-600 opacity-0 group-hover/row:opacity-100 focus:opacity-100">
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                </span>
+                              )}
                               {(isAll || r.bidStrategy) && <div className="text-[10px] text-slate-400 truncate max-w-[130px] sm:max-w-[220px]">{isAll ? r.accountName : r.bidStrategy.replace(/_/g, " ").toLowerCase()}</div>}
                             </div>
                             {/* Usapan ng team sa object na ito — may bilang kapag
@@ -1922,7 +1981,11 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                             return (
                               <span title={`Meta status: ${r.status}`
                                 + (r.kidsTotal >= 0 ? ` · ${r.kidsOn}/${r.kidsTotal} ${level === "campaign" ? "ad sets" : "ads"} on` : "")
-                                + (r.learning?.status === "LEARNING" ? ` · learning: ${r.learning.conversions} of ~50 optimisation events` : "")
+                                + (r.learning?.status === "LEARNING"
+                                  ? (level === "adset"
+                                    ? ` · learning: ${r.learning.conversions} of ~50 optimisation events`
+                                    : ` · its ad set has ${r.learning.conversions} of ~50 optimisation events`)
+                                  : "")
                                 + (r.learning?.status === "FAIL" ? " · left learning without enough events — widen the audience, raise the budget, or merge ad sets" : "")
                                 + (level === "ad" && r.learning ? " (from its ad set)" : "")}
                                 className={`text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${DELIVERY_TONE[d.tone]}`}>
