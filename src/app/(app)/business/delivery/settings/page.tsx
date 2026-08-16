@@ -1,7 +1,10 @@
 "use client"
 import { useMemo, useState } from "react"
-import { Settings, Plus, Trash2, UserPlus, ShieldCheck } from "lucide-react"
+import { Settings, Plus, Trash2, UserPlus, ShieldCheck, Award, RotateCcw, Check } from "lucide-react"
 import { useDeliveryTeam, resolveDeliveryRole, type DeliveryTeamRole } from "@/lib/delivery-team-store"
+import {
+  useDeliverySettings, DEFAULT_KPI_WEIGHTS, KPI_WEIGHT_LABELS, type KpiWeights,
+} from "@/lib/delivery-store"
 import { useErpUsers, isMotherAccount } from "@/lib/users-store"
 import { currentUserEmail } from "@/lib/current-user"
 import { ComingSoon } from "@/components/business/ComingSoon"
@@ -10,7 +13,7 @@ import { ComingSoon } from "@/components/business/ComingSoon"
 // supervisors). Email-based para mailista ang agents kahit wala pa silang PesoWise
 // accounts. Admin (Mother Account) lang ang nakakapag-edit; iba ay read-only.
 
-const TABS = ["Team & Roles", "Assignment Rules"] as const
+const TABS = ["Team & Roles", "KPI Scoring", "Assignment Rules"] as const
 type Tab = typeof TABS[number]
 
 const INP = "h-9 rounded-lg border border-slate-300 px-2.5 text-sm bg-white focus:outline-none focus:border-blue-400"
@@ -44,6 +47,7 @@ export default function DeliverySettingsPage() {
       </div>
 
       {tab === "Team & Roles" && <TeamTab store={store} admin={admin} />}
+      {tab === "KPI Scoring" && <KpiTab admin={admin} />}
       {tab === "Assignment Rules" && (
         <ComingSoon
           title="Assignment Rules"
@@ -56,6 +60,93 @@ export default function DeliverySettingsPage() {
           ]}
         />
       )}
+    </div>
+  )
+}
+
+// ── KPI Scoring — configurable weights (spec §16: "adjustable by Admin rather
+// than permanently hard-coded"). Ang score ay weighted average, kaya hindi
+// kailangang eksaktong 100 ang kabuuan — pero pinapaalala kung hindi.
+function KpiTab({ admin }: { admin: boolean }) {
+  const { weights, loaded, saveWeights } = useDeliverySettings()
+  const [draft, setDraft] = useState<KpiWeights | null>(null)
+  const [saved, setSaved] = useState(false)
+  const w = draft ?? weights
+  const total = Object.values(w).reduce((s, v) => s + (Number(v) || 0), 0)
+  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(weights)
+
+  const set = (k: keyof KpiWeights, v: string) =>
+    setDraft({ ...w, [k]: Math.max(0, Math.min(100, parseInt(v) || 0)) })
+
+  const save = async () => {
+    if (!draft) return
+    await saveWeights(draft)
+    setDraft(null); setSaved(true); setTimeout(() => setSaved(false), 2500)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 max-w-2xl">
+        <p className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+          <Award className="w-4 h-4 text-blue-500" /> Agent KPI Score Weights
+        </p>
+        <p className="text-[11px] text-slate-400 mt-1 mb-4">
+          Ang KPI Score ay weighted average ng mga sukatang ito. Kapag walang problematic case
+          ang isang agent, hindi kasama ang Recovery Rate sa score niya — hindi siya paparusahan
+          sa trabahong hindi naman sa kanya. {!loaded && "Loading…"}
+        </p>
+
+        <div className="space-y-3">
+          {(Object.keys(KPI_WEIGHT_LABELS) as (keyof KpiWeights)[]).map(k => (
+            <div key={k} className="flex items-center gap-3">
+              <label className="flex-1 text-sm text-slate-700">{KPI_WEIGHT_LABELS[k]}</label>
+              <input type="range" min={0} max={100} step={5} disabled={!admin}
+                className="w-40 accent-blue-600" value={w[k]} onChange={e => set(k, e.target.value)} />
+              <div className="flex items-center gap-1">
+                <input type="number" min={0} max={100} disabled={!admin}
+                  className="h-9 w-16 rounded-lg border border-slate-300 px-2 text-sm text-right tabular-nums disabled:bg-slate-100"
+                  value={w[k]} onChange={e => set(k, e.target.value)} />
+                <span className="text-sm text-slate-400">%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className={`mt-4 rounded-lg border px-3 py-2 text-sm ${total === 100 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+          Total: <strong className="tabular-nums">{total}%</strong>
+          {total !== 100 && " — hindi eksaktong 100%, pero gagana pa rin (proporsiyonal ang timbang)."}
+        </div>
+
+        {admin && (
+          <div className="flex items-center gap-2 mt-4">
+            <button onClick={save} disabled={!dirty}
+              className="h-10 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50 flex items-center gap-1.5">
+              <Check className="w-4 h-4" /> Save Weights
+            </button>
+            <button onClick={() => setDraft({ ...DEFAULT_KPI_WEIGHTS })}
+              className="h-10 px-4 rounded-lg border border-slate-300 text-sm font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5">
+              <RotateCcw className="w-4 h-4" /> Reset to defaults
+            </button>
+            {saved && <span className="text-sm text-emerald-600 font-medium">Saved.</span>}
+          </div>
+        )}
+        {!admin && <p className="text-[11px] text-slate-400 mt-3">Read-only — Mother Account lang ang nakakapagbago ng weights.</p>}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 max-w-2xl">
+        <p className="text-sm font-semibold text-slate-700 mb-2">Paano kinakalkula</p>
+        <ul className="text-sm text-slate-500 space-y-1.5">
+          <li>• <strong className="text-slate-700">Delivery Rate</strong> = delivered ÷ assigned</li>
+          <li>• <strong className="text-slate-700">Contact Rate</strong> = may call attempt o last contact ÷ assigned</li>
+          <li>• <strong className="text-slate-700">Recovery Rate</strong> = recovery outcome na "Recovered / Delivered" ÷ problematic assigned</li>
+          <li>• <strong className="text-slate-700">Productivity</strong> = nagalaw na records (hindi na Pending) ÷ assigned</li>
+          <li>• <strong className="text-slate-700">Follow-up completion</strong> = due follow-ups na naaksyunan ÷ due follow-ups</li>
+        </ul>
+        <p className="text-[11px] text-slate-400 mt-3">
+          Ang RTS Rate ay ipinapakita sa scorecard pero HINDI kasama sa score — resulta iyon ng
+          courier at customer, hindi lang ng agent.
+        </p>
+      </div>
     </div>
   )
 }

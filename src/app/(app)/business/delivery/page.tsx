@@ -13,7 +13,10 @@ import { useActivePages } from "@/lib/pages-store"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { currentUserEmail } from "@/lib/current-user"
 import { useDeliveryTeam, resolveDeliveryRole } from "@/lib/delivery-team-store"
-import { useDeliveryOrders, TERMINAL_STATUSES, todayStr, type DeliveryOrder } from "@/lib/delivery-store"
+import {
+  useDeliveryOrders, useDeliverySettings, computeAgentKpi,
+  TERMINAL_STATUSES, RECOVERED_OUTCOMES, todayStr, type DeliveryOrder,
+} from "@/lib/delivery-store"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // LOGISTICS DASHBOARD — real-time na tanaw ng delivery operations: KPI cards,
@@ -52,12 +55,15 @@ const isRts = (r: DeliveryOrder, live: Map<string, any>) => {
   return s === "Returned" || s === "Returning" || r.agent_status === "Returned/RTS"
 }
 const isContacted = (r: DeliveryOrder) => r.call_attempts > 0 || r.last_contact_at !== ""
+/** Nabawi = may hatol na "Recovered / Delivered" (Phase 2 recovery workflow). */
+const isRecovered = (r: DeliveryOrder) => RECOVERED_OUTCOMES.includes(r.recovery_outcome)
 
 export default function LogisticsDashboardPage() {
   const activePages = useActivePages()
   const pagesWithCreds = useMemo(() => activePages.filter(p => p.api_key && (p.pancake_page_id || p.shop_id)), [activePages])
   const store = useDeliveryOrders()
   const teamStore = useDeliveryTeam()
+  const settings = useDeliverySettings()
   const me = currentUserEmail().toLowerCase()
   const role = resolveDeliveryRole(currentUserEmail(), teamStore.team)
   const isAgent = role === "agent"
@@ -123,7 +129,7 @@ export default function LogisticsDashboardPage() {
     const ofd = scoped.filter(r => ["Out for Delivery", "In-Transit", "Shipped Out", "Picked Up"].includes(statusOf(r, liveById))).length
     const contacted = scoped.filter(isContacted).length
     const problematic = scoped.filter(r => r.assignment_type === "problematic")
-    const recovered = problematic.filter(r => r.agent_status === "Recovery" || r.agent_status === "Delivered").length
+    const recovered = problematic.filter(isRecovered).length
     const count = (s: string) => scoped.filter(r => r.agent_status === s).length
     return {
       total, delivered, rts, ofd, contacted,
@@ -144,7 +150,7 @@ export default function LogisticsDashboardPage() {
       if (isContacted(r)) row.contacted++
       if (isDelivered(r, liveById)) row.delivered++
       if (isRts(r, liveById)) row.rts++
-      if (r.assignment_type === "problematic" && (r.agent_status === "Recovery" || r.agent_status === "Delivered")) row.recovered++
+      if (r.assignment_type === "problematic" && isRecovered(r)) row.recovered++
       days.set(d, row)
     }
     return Array.from(days.entries()).sort((a, b) => b[0].localeCompare(a[0]))
@@ -162,25 +168,27 @@ export default function LogisticsDashboardPage() {
     const untouched = open.filter(r => r.agent_status === "Pending" && r.assigned_date < today)
     const unassignedProblematic = liveRows.filter(r =>
       ["Problematic", "Returning", "Returned"].includes(r.parcel_status) && !store.orders[String(r.id)]).length
-    return { overdue, reschedToday, untouched, unassignedProblematic }
+    // Problematic cases na wala pang hatol — ito ang bumabara sa Recovery Rate.
+    const openRecovery = scoped.filter(r => r.assignment_type === "problematic" && !r.recovery_outcome).length
+    return { overdue, reschedToday, untouched, unassignedProblematic, openRecovery }
   }, [scoped, liveRows, store.orders, today])
 
   // ── Leaderboard (admin/supervisor lang) ─────────────────────────────────────
+  // Iisa lang ang formula sa buong module: computeAgentKpi() — kaya laging tugma
+  // ang numero rito at sa Agent Performance page.
   const leaderboard = useMemo(() => {
     if (isAgent) return []
-    const m = new Map<string, { name: string; assigned: number; contacted: number; delivered: number; rts: number; recovered: number }>()
+    const byAgent = new Map<string, DeliveryOrder[]>()
     for (const r of scoped) {
       const key = r.assigned_to_email || "—"
-      const row = m.get(key) || { name: r.assigned_to_name || r.assigned_to_email || "—", assigned: 0, contacted: 0, delivered: 0, rts: 0, recovered: 0 }
-      row.assigned++
-      if (isContacted(r)) row.contacted++
-      if (isDelivered(r, liveById)) row.delivered++
-      if (isRts(r, liveById)) row.rts++
-      if (r.assignment_type === "problematic" && (r.agent_status === "Recovery" || r.agent_status === "Delivered")) row.recovered++
-      m.set(key, row)
+      byAgent.set(key, [...(byAgent.get(key) || []), r])
     }
-    return Array.from(m.values()).sort((a, b) => b.delivered - a.delivered)
-  }, [scoped, liveById, isAgent])
+    return Array.from(byAgent.entries())
+      .map(([email, rows]) => computeAgentKpi(
+        email, rows[0]?.assigned_to_name || email, rows, settings.weights,
+        r => isDelivered(r, liveById), r => isRts(r, liveById)))
+      .sort((a, b) => b.score - a.score)
+  }, [scoped, liveById, isAgent, settings.weights])
 
   // ── Chart collapse (persisted, warehouse idiom) ─────────────────────────────
   const [showCharts, setShowCharts] = useState(true)
@@ -295,11 +303,12 @@ export default function LogisticsDashboardPage() {
         <p className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
           <AlertTriangle className="w-4 h-4 text-amber-500" /> Operational Alerts
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2.5 text-sm">
           <AlertCard n={alerts.overdue.length} label="Overdue follow-ups" sub="next follow-up date lumipas na" href="/business/delivery/operations" tone={alerts.overdue.length > 0 ? "bad" : "ok"} />
           <AlertCard n={alerts.reschedToday.length} label="Reschedules due (unconfirmed)" sub="due today o lumipas, hindi pa kumpirmado" href="/business/delivery/operations" tone={alerts.reschedToday.length > 0 ? "warn" : "ok"} />
           <AlertCard n={alerts.untouched.length} label="Assigned but untouched" sub="Pending pa rin mula kahapon o mas matagal" href="/business/delivery/operations" tone={alerts.untouched.length > 0 ? "warn" : "ok"} />
           <AlertCard n={alerts.unassignedProblematic} label="Unassigned problematic" sub="live Problematic/RTS na walang agent" href="/business/delivery/problematic" tone={alerts.unassignedProblematic > 0 ? "bad" : "ok"} />
+          <AlertCard n={alerts.openRecovery} label="Recovery cases w/o verdict" sub="walang recovery outcome — hindi pa bilang" href="/business/delivery/problematic" tone={alerts.openRecovery > 0 ? "warn" : "ok"} />
         </div>
       </div>
 
@@ -360,31 +369,42 @@ export default function LogisticsDashboardPage() {
       {/* Agent leaderboard */}
       {!isAgent && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <p className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
-            <Users className="w-4 h-4 text-blue-500" /> Agent Leaderboard
-          </p>
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-blue-500" /> Agent Leaderboard
+            </p>
+            <Link href="/business/delivery/performance" className="text-xs font-semibold text-blue-600 hover:text-blue-800 underline underline-offset-2">
+              Full scorecards & KPI breakdown →
+            </Link>
+          </div>
           <div className="overflow-x-auto scrollbar-dark">
             <table className="w-full text-sm border border-slate-200">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-left">
-                  {["Agent", "Assigned", "Contacted", "Contact %", "Delivered", "Delivery %", "RTS", "RTS %", "Recovered"].map(h => (
+                  {["Agent", "Assigned", "Contacted", "Contact %", "Delivered", "Delivery %", "RTS", "RTS %", "Recovered", "Recovery %", "KPI Score"].map(h => (
                     <th key={h} className="px-3 py-2 text-xs font-bold text-slate-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {leaderboard.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">No agent data in this range.</td></tr>}
+                {leaderboard.length === 0 && <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-400">No agent data in this range.</td></tr>}
                 {leaderboard.map((a, i) => (
-                  <tr key={a.name + i} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40`}>
+                  <tr key={a.email + i} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40`}>
                     <td className="px-3 py-2 font-medium text-slate-700">{a.name}</td>
                     <td className="px-3 py-2 tabular-nums">{a.assigned}</td>
                     <td className="px-3 py-2 tabular-nums">{a.contacted}</td>
-                    <td className="px-3 py-2 tabular-nums">{pct(a.contacted, a.assigned)}</td>
+                    <td className="px-3 py-2 tabular-nums">{a.contactRate.toFixed(1)}%</td>
                     <td className="px-3 py-2 tabular-nums">{a.delivered}</td>
-                    <td className="px-3 py-2 tabular-nums">{pct(a.delivered, a.assigned)}</td>
+                    <td className="px-3 py-2 tabular-nums">{a.deliveryRate.toFixed(1)}%</td>
                     <td className="px-3 py-2 tabular-nums">{a.rts}</td>
-                    <td className="px-3 py-2 tabular-nums">{pct(a.rts, a.assigned)}</td>
+                    <td className="px-3 py-2 tabular-nums">{a.rtsRate.toFixed(1)}%</td>
                     <td className="px-3 py-2 tabular-nums">{a.recovered}</td>
+                    <td className="px-3 py-2 tabular-nums">{a.problematic > 0 ? `${a.recoveryRate.toFixed(1)}%` : "—"}</td>
+                    <td className="px-3 py-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold tabular-nums ${a.score >= 80 ? "bg-emerald-50 text-emerald-700" : a.score >= 60 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>
+                        {a.score.toFixed(1)}%
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

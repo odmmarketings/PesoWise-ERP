@@ -10,9 +10,10 @@ import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { currentUserEmail } from "@/lib/current-user"
 import { useDeliveryTeam, resolveDeliveryRole, type DeliveryAgent } from "@/lib/delivery-team-store"
 import {
-  useDeliveryOrders, planAutoAssign, fetchOrderActivity, stampNow, todayStr,
-  AGENT_STATUS_BADGE, TERMINAL_STATUSES,
-  type AssignmentType, type AgentStatus, type DeliveryOrder, type SnapshotInput, type DeliveryActivity,
+  useDeliveryOrders, planAutoAssign, fetchOrderActivity, stampNow, recoveryStage,
+  AGENT_STATUS_BADGE, TERMINAL_STATUSES, RECOVERY_OUTCOMES, RECOVERY_BADGE,
+  type AssignmentType, type AgentStatus, type DeliveryOrder, type SnapshotInput,
+  type DeliveryActivity, type RecoveryOutcome,
 } from "@/lib/delivery-store"
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -30,6 +31,8 @@ export type QueueConfig = {
   /** Aling live parcel statuses ang pasok sa Unassigned pool ng queue na ito. */
   eligibleParcelStatuses: string[]
   agentStatuses: AgentStatus[]
+  /** Problematic queue lang: recovery outcome form + columns. */
+  recovery?: boolean
 }
 
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -95,6 +98,8 @@ const COLS: ColDef[] = [
   { k: "tracking", l: "Tracking Number", kind: "text", get: w => w.live?.tracking_no || w.rec?.tracking_no || "" },
   { k: "delivery_status", l: "Delivery Status", kind: "select", get: w => liveStatus(w) },
   { k: "agent_status", l: "Agent Status", kind: "select", get: w => w.rec?.agent_status || "" },
+  { k: "recovery_outcome", l: "Recovery Outcome", kind: "select", get: w => w.rec?.recovery_outcome || "" },
+  { k: "recovery_stage", l: "Recovery Stage", kind: "select", get: w => (w.rec ? recoveryStage(w.rec) : "") },
   { k: "last_contact", l: "Last Contact", kind: "text", get: w => w.rec?.last_contact_at || "" },
   { k: "attempts", l: "Call Attempts", kind: "text", get: w => w.rec ? String(w.rec.call_attempts || 0) : "" },
   { k: "follow_up", l: "Next Follow-Up", kind: "date", get: w => w.rec?.next_follow_up || "" },
@@ -104,6 +109,8 @@ const COLS: ColDef[] = [
   { k: "last_updated", l: "Last Updated", kind: "text", get: w => w.rec?.updated_by ? `${w.rec.updated_by} · ${String(w.rec.updated_at).slice(0, 16).replace("T", " ")}` : "" },
 ]
 const DEFAULT_ON = ["order_date", "page", "customer", "phone", "courier", "amount", "delivery_status", "agent_status", "agent", "last_contact", "follow_up"]
+// Sa Problematic queue, ang hatol (recovery outcome) ang pinakamahalagang kolum.
+const DEFAULT_ON_RECOVERY = [...DEFAULT_ON.filter(k => k !== "last_contact"), "recovery_outcome", "recovery_stage"]
 
 const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 
@@ -122,7 +129,7 @@ export function DeliveryWorkspace({ config }: { config: QueueConfig }) {
   const [loading, setLoading] = useState(false)
   const [loadErr, setLoadErr] = useState("")
   const [lane, setLane] = useState<"assigned" | "unassigned">("assigned")
-  const [visible, setVisible] = useState<Set<string>>(new Set(DEFAULT_ON))
+  const [visible, setVisible] = useState<Set<string>>(new Set(config.recovery ? DEFAULT_ON_RECOVERY : DEFAULT_ON))
   const [draft, setDraft] = useState<Record<string, { a: string; b: string }>>({})
   const [applied, setApplied] = useState<Record<string, { a: string; b: string }>>({})
   const [perPage, setPerPage] = useState(100)
@@ -211,11 +218,16 @@ export function DeliveryWorkspace({ config }: { config: QueueConfig }) {
   }, [queueRecs])
 
   // ── Filters (fulfillment machinery) ─────────────────────────────────────────
+  // Ang recovery columns ay Problematic queue lang — walang saysay sa delivering.
+  const cols = useMemo(
+    () => COLS.filter(c => config.recovery || !c.k.startsWith("recovery_")),
+    [config.recovery])
   const colBy = (k: string) => COLS.find(c => c.k === k)!
   const cellVal = (w: WsRow, k: string) => colBy(k).get(w)
   const optsFor = (k: string) => {
     if (k === "delivery_status") return PARCEL_STATUS_OPTIONS
     if (k === "agent_status") return config.agentStatuses as string[]
+    if (k === "recovery_outcome") return RECOVERY_OUTCOMES as readonly string[] as string[]
     if (k === "agent") return teamStore.team.map(t => t.name || t.email)
     return Array.from(new Set(laneRows.map(w => String(cellVal(w, k))).filter(Boolean))).sort()
   }
@@ -251,7 +263,7 @@ export function DeliveryWorkspace({ config }: { config: QueueConfig }) {
   const paginated = filtered.slice((pageSafe - 1) * perPage, pageSafe * perPage)
   const showFrom = filtered.length === 0 ? 0 : (pageSafe - 1) * perPage + 1
   const showTo = Math.min(pageSafe * perPage, filtered.length)
-  const visCols = COLS.filter(c => visible.has(c.k))
+  const visCols = cols.filter(c => visible.has(c.k))
   const selRows = filtered.filter(w => sel.has(w.id))
   const pageAllSel = paginated.length > 0 && paginated.every(w => sel.has(w.id))
   const pageSomeSel = paginated.some(w => sel.has(w.id))
@@ -367,7 +379,7 @@ export function DeliveryWorkspace({ config }: { config: QueueConfig }) {
         <div className="pt-4">
           <p className="text-sm text-slate-700 mb-2"><strong>Toggle column:</strong> <span className="text-slate-400 italic text-xs">Click to hide or show column</span></p>
           <div className="flex flex-wrap gap-1.5">
-            {COLS.map(c => (
+            {cols.map(c => (
               <button key={c.k} onClick={() => setVisible(v => { const n = new Set(v); if (n.has(c.k)) n.delete(c.k); else n.add(c.k); return n })}
                 className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${visible.has(c.k) ? "bg-teal-500 border-teal-500 text-white" : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
                 {c.l}
@@ -500,7 +512,9 @@ export function DeliveryWorkspace({ config }: { config: QueueConfig }) {
                             ? (v ? <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${PARCEL_BADGE[String(v)] || "bg-slate-100 text-slate-600"}`}>{v}</span> : "")
                             : c.k === "agent_status"
                               ? (v ? <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${AGENT_STATUS_BADGE[v as AgentStatus] || "bg-slate-100 text-slate-600"}`}>{v}</span> : "")
-                              : c.kind === "money" ? peso(Number(v)) : (v || "")}
+                              : c.k === "recovery_outcome"
+                                ? (v ? <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${RECOVERY_BADGE[String(v)] || "bg-slate-100 text-slate-600"}`}>{v}</span> : <span className="text-slate-300">open</span>)
+                                : c.kind === "money" ? peso(Number(v)) : (v || "")}
                         </td>
                       )
                     })}
@@ -686,6 +700,8 @@ function ViewDeliveryScreen({ row, config, canEdit, onBack, onSave }: {
   const [resched, setResched] = useState(rec?.reschedule_date || "")
   const [reschedOk, setReschedOk] = useState(rec?.reschedule_confirmed || false)
   const [cancelWhy, setCancelWhy] = useState(rec?.cancel_reason || "")
+  const [outcome, setOutcome] = useState<RecoveryOutcome>(rec?.recovery_outcome || "")
+  const [recNotes, setRecNotes] = useState(rec?.recovery_notes || "")
   const [err, setErr] = useState("")
   const [conflict, setConflict] = useState<DeliveryOrder | null>(null)
   const [saving, setSaving] = useState(false)
@@ -705,11 +721,15 @@ function ViewDeliveryScreen({ row, config, canEdit, onBack, onSave }: {
     if (status === "Unreachable" && !followUp) { setErr("Next follow-up date is required for Unreachable."); return }
     if (status === "Canceled" && !cancelWhy.trim()) { setErr("Cancellation reason is required."); return }
     if (status === "Other" && !statusNote.trim()) { setErr("A note is required for status \"Other\"."); return }
+    if (config.recovery && (outcome === "Customer Refused" || outcome === "Failed Recovery") && !recNotes.trim()) {
+      setErr(`Recovery notes are required for "${outcome}" — kailangang malaman kung bakit hindi nabawi.`); return
+    }
     const patch: Partial<DeliveryOrder> = {
       agent_status: status, notes, status_note: statusNote,
       next_follow_up: followUp, reschedule_date: resched, reschedule_confirmed: reschedOk,
       cancel_reason: cancelWhy,
     }
+    if (config.recovery) { patch.recovery_outcome = outcome; patch.recovery_notes = recNotes }
     // Auto-stamps: Contacted/Reminded = na-reach ang customer ngayon; Unreachable = +1 attempt.
     if (status === "Contacted" || status === "Reminded" || status === "Rescheduled" || status === "Recovery")
       patch.last_contact_at = stampNow()
@@ -814,6 +834,44 @@ function ViewDeliveryScreen({ row, config, canEdit, onBack, onSave }: {
                 <F l="Next Follow-Up"><input type="date" className={`${ED} max-w-[240px]`} disabled={!canEdit} value={followUp} onChange={e => setFollowUp(e.target.value)} /></F>
               )}
               <F l="Notes"><textarea className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm min-h-[90px] focus:outline-none focus:border-blue-400 disabled:bg-slate-100" disabled={!canEdit} value={notes} onChange={e => setNotes(e.target.value)} /></F>
+
+              {/* ── RECOVERY WORKFLOW (Problematic queue lang) ──
+                  Hiwalay sa agent_status: ang outcome ang HATOL sa case, at ito
+                  ang basehan ng Recovery Rate — hindi hula mula sa daily status. */}
+              {config.recovery && (
+                <>
+                  <div className="border-t border-slate-100 pt-4">
+                    <p className="text-sm font-bold text-slate-800 mb-1">RECOVERY WORKFLOW</p>
+                    <p className="text-[11px] text-slate-400 mb-3">
+                      Current stage: <span className="font-semibold text-slate-600">{recoveryStage(rec)}</span>
+                      {" · "}RTS → Assigned → Contact Attempt → Contacted → Rescheduled → Re-delivery → Delivered
+                    </p>
+                  </div>
+                  <F l="Recovery Outcome">
+                    <div className="flex flex-wrap gap-1.5">
+                      <button disabled={!canEdit} onClick={() => setOutcome("")}
+                        className={`px-3 py-1.5 rounded-lg border text-sm font-semibold ${outcome === "" ? "bg-slate-700 border-slate-700 text-white" : `border-slate-300 text-slate-600 ${canEdit ? "hover:bg-slate-50" : "opacity-60"}`}`}>
+                        Open (no verdict)
+                      </button>
+                      {RECOVERY_OUTCOMES.map(o => (
+                        <button key={o} disabled={!canEdit} onClick={() => setOutcome(o)}
+                          className={`px-3 py-1.5 rounded-lg border text-sm font-semibold ${outcome === o ? "bg-purple-600 border-purple-600 text-white" : `border-slate-300 text-slate-600 ${canEdit ? "hover:bg-slate-50" : "opacity-60"}`}`}>
+                          {o}
+                        </button>
+                      ))}
+                    </div>
+                  </F>
+                  <F l="Recovery Notes">
+                    <textarea className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm min-h-[70px] focus:outline-none focus:border-blue-400 disabled:bg-slate-100"
+                      disabled={!canEdit} value={recNotes} onChange={e => setRecNotes(e.target.value)}
+                      placeholder="Ano ang nangyari sa recovery attempt?" />
+                  </F>
+                  {rec.recovery_outcome_at && (
+                    <F l="Outcome Logged"><div className={`${RO} max-w-[280px]`}>{String(rec.recovery_outcome_at).slice(0, 16).replace("T", " ")}</div></F>
+                  )}
+                </>
+              )}
+
               {err && <p className="text-sm text-red-600">{err}</p>}
               {canEdit && (
                 <div className="flex items-center gap-2 pt-2">

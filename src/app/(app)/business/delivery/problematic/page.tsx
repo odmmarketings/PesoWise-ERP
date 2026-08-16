@@ -11,6 +11,7 @@ const CONFIG: QueueConfig = {
   icon: AlertTriangle,
   eligibleParcelStatuses: ["Problematic", "Returning", "Returned"],
   agentStatuses: PROBLEMATIC_STATUSES,
+  recovery: true,
 }
 
 export default function ProblematicOperationsPage() {

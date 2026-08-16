@@ -72,6 +72,50 @@ export const AGENT_STATUS_COLOR: Record<AgentStatus, string> = {
 /** Terminal = tapos na ang trabaho ng agent dito (hindi na kasama sa "open load"). */
 export const TERMINAL_STATUSES: AgentStatus[] = ["Delivered", "Canceled", "Returned/RTS", "Resolved"]
 
+// ── RTS Recovery workflow (Problematic queue) ────────────────────────────────
+// Ang recovery_outcome ang HATOL sa isang problematic case — hiwalay sa
+// agent_status (na araw-araw na galaw). Dito kinukuha ang Recovery Rate, kaya
+// hindi na hula mula sa agent_status. '' = bukas pa ang case.
+export const RECOVERY_OUTCOMES = [
+  "Recovered / Delivered", "Rescheduled", "Still Pending", "Unreachable",
+  "Customer Refused", "Canceled", "Returned", "Failed Recovery",
+] as const
+export type RecoveryOutcome = (typeof RECOVERY_OUTCOMES)[number] | ""
+
+/** Ang mga outcome na BILANG ng nabawi (numerator ng Recovery Rate). */
+export const RECOVERED_OUTCOMES: RecoveryOutcome[] = ["Recovered / Delivered"]
+/** Sarado na ang case (hindi na kasama sa "still working" na bilang). */
+export const CLOSED_RECOVERY_OUTCOMES: RecoveryOutcome[] = [
+  "Recovered / Delivered", "Customer Refused", "Canceled", "Returned", "Failed Recovery",
+]
+
+export const RECOVERY_BADGE: Record<string, string> = {
+  "Recovered / Delivered": "bg-emerald-50 text-emerald-700",
+  "Rescheduled": "bg-amber-50 text-amber-700",
+  "Still Pending": "bg-slate-100 text-slate-600",
+  "Unreachable": "bg-orange-50 text-orange-700",
+  "Customer Refused": "bg-rose-50 text-rose-700",
+  "Canceled": "bg-red-50 text-red-600",
+  "Returned": "bg-rose-100 text-rose-700",
+  "Failed Recovery": "bg-red-100 text-red-700",
+}
+
+/** Recovery funnel — pinakamalapit sa spec na daloy: RTS → assigned → contact →
+ *  contacted → rescheduled → re-delivery → delivered. Hinuhugot sa mga field na
+ *  meron na (walang hiwalay na stage column na kailangang panatilihing tapat). */
+export function recoveryStage(r: DeliveryOrder): string {
+  if (r.recovery_outcome === "Recovered / Delivered" || r.agent_status === "Delivered") return "Recovered"
+  if (r.recovery_outcome && CLOSED_RECOVERY_OUTCOMES.includes(r.recovery_outcome)) return "Closed (not recovered)"
+  if (r.agent_status === "Rescheduled" || r.recovery_outcome === "Rescheduled") return "Rescheduled"
+  if (r.agent_status === "Contacted" || r.agent_status === "Recovery") return "Customer Contacted"
+  if (r.call_attempts > 0 || r.agent_status === "Unreachable") return "Contact Attempt"
+  return "Assigned for Recovery"
+}
+export const RECOVERY_STAGES = [
+  "Assigned for Recovery", "Contact Attempt", "Customer Contacted",
+  "Rescheduled", "Recovered", "Closed (not recovered)",
+]
+
 export interface DeliveryHistoryEntry { action: string; detail: string; by: string; at: string }
 
 export interface DeliveryOrder {
@@ -105,6 +149,10 @@ export interface DeliveryOrder {
   cancel_reason: string
   status_note: string
   notes: string
+  // recovery workflow (Problematic queue)
+  recovery_outcome: RecoveryOutcome
+  recovery_outcome_at: string
+  recovery_notes: string
   history: DeliveryHistoryEntry[]
   updated_by: string
   updated_at: string
@@ -142,6 +190,8 @@ function rowToOrder(r: any): DeliveryOrder {
     last_contact_at: r.last_contact_at || "", next_follow_up: r.next_follow_up || "",
     reschedule_date: r.reschedule_date || "", reschedule_confirmed: r.reschedule_confirmed === true,
     cancel_reason: r.cancel_reason || "", status_note: r.status_note || "", notes: r.notes || "",
+    recovery_outcome: (RECOVERY_OUTCOMES as readonly string[]).includes(r.recovery_outcome) ? r.recovery_outcome : "",
+    recovery_outcome_at: r.recovery_outcome_at || "", recovery_notes: r.recovery_notes || "",
     history: Array.isArray(r.history) ? r.history : [],
     updated_by: r.updated_by || "", updated_at: r.updated_at || "",
   }
@@ -333,15 +383,20 @@ export function useDeliveryOrders() {
     const entries: DeliveryHistoryEntry[] = []
     if (patch.agent_status && patch.agent_status !== cur.agent_status)
       entries.push({ action: "Status changed", detail: `${cur.agent_status} → ${patch.agent_status}`, by, at: now })
-    else
-      entries.push({ action: "Updated", detail: "", by, at: now })
+    if (patch.recovery_outcome !== undefined && patch.recovery_outcome !== cur.recovery_outcome)
+      entries.push({ action: "Recovery outcome", detail: `${cur.recovery_outcome || "open"} → ${patch.recovery_outcome || "open"}`, by, at: now })
+    if (entries.length === 0) entries.push({ action: "Updated", detail: "", by, at: now })
 
     const row: Record<string, any> = { updated_by: by, updated_at: now, history: [...cur.history, ...entries] }
     const cols: (keyof DeliveryOrder)[] = [
       "agent_status", "call_attempts", "last_contact_at", "next_follow_up",
       "reschedule_date", "reschedule_confirmed", "cancel_reason", "status_note", "notes",
+      "recovery_outcome", "recovery_notes",
     ]
     for (const k of cols) if (patch[k] !== undefined) row[k] = patch[k]
+    // Stamp kung kailan naibaba ang hatol — ito ang basehan ng recovery KPIs kada araw.
+    if (patch.recovery_outcome !== undefined && patch.recovery_outcome !== cur.recovery_outcome)
+      row.recovery_outcome_at = patch.recovery_outcome ? now : null
 
     const { data, error } = await supabase.from("delivery_orders").update(row)
       .eq("order_id", orderId).eq("updated_at", expectedUpdatedAt).select("order_id")
@@ -352,8 +407,10 @@ export function useDeliveryOrders() {
       if (conflict) setOrders(prev => ({ ...prev, [orderId]: conflict }))
       return { ok: false, conflict }
     }
-    if (patch.agent_status && patch.agent_status !== cur.agent_status)
-      await insertActivity([{ order_id: orderId, action: "Status changed", detail: `${cur.agent_status} → ${patch.agent_status}` }])
+    const acts = entries
+      .filter(e => e.action !== "Updated")
+      .map(e => ({ order_id: orderId, action: e.action, detail: e.detail }))
+    if (acts.length) await insertActivity(acts)
     // FUNCTIONAL update — huwag bumuo mula sa lumang snapshot.
     setOrders(prev => {
       const next = { ...prev, [orderId]: { ...prev[orderId], ...row, order_id: orderId } as DeliveryOrder }
@@ -392,6 +449,126 @@ export function useDeliveryActivity(limit = 200) {
   }, [limit])
   useEffect(() => { refresh() }, [refresh])
   return { activity, refresh }
+}
+
+// ── KPI scoring (configurable weights) ───────────────────────────────────────
+// Isang JSONB blob sa delivery_settings. Ang weights ay porsyento — hindi
+// hardcoded ang formula kaya kayang baguhin ng management ang timbang kada
+// sukatan nang hindi kinakailangang mag-deploy.
+export interface KpiWeights {
+  delivery: number      // Delivery Rate
+  contact: number       // Contact Rate
+  recovery: number      // Recovery Rate (problematic cases lang)
+  productivity: number  // Worked / Assigned
+  followup: number      // Follow-ups na natapos sa oras
+}
+export const DEFAULT_KPI_WEIGHTS: KpiWeights = {
+  delivery: 35, contact: 25, recovery: 20, productivity: 10, followup: 10,
+}
+export const KPI_WEIGHT_LABELS: Record<keyof KpiWeights, string> = {
+  delivery: "Delivery Rate", contact: "Contact Rate", recovery: "Recovery Rate",
+  productivity: "Productivity (worked / assigned)", followup: "Follow-up completion",
+}
+
+export function useDeliverySettings() {
+  const [weights, setWeights] = useState<KpiWeights>(DEFAULT_KPI_WEIGHTS)
+  const [loaded, setLoaded] = useState(false)
+
+  const refresh = useCallback(async () => {
+    const businessId = await getBusinessId()
+    if (!businessId) { setLoaded(true); return }
+    const supabase = createSupabaseBrowserClient()
+    const { data } = await supabase.from("delivery_settings").select("data").eq("business_id", businessId).maybeSingle()
+    const w = (data as any)?.data?.kpi?.weights
+    if (w) setWeights({ ...DEFAULT_KPI_WEIGHTS, ...w })
+    setLoaded(true)
+  }, [])
+  useEffect(() => { refresh() }, [refresh])
+
+  const saveWeights = useCallback(async (next: KpiWeights) => {
+    const businessId = await getBusinessId()
+    if (!businessId) return
+    const supabase = createSupabaseBrowserClient()
+    setWeights(next)
+    await supabase.from("delivery_settings").upsert(
+      { business_id: businessId, data: { kpi: { weights: next } }, updated_at: nowIso() },
+      { onConflict: "business_id" })
+  }, [])
+
+  return { weights, loaded, refresh, saveWeights }
+}
+
+// ── Per-agent KPI computation (iisa lang ang formula sa buong module) ────────
+export interface AgentKpi {
+  email: string; name: string
+  assigned: number; worked: number
+  delivered: number; rts: number
+  problematic: number; recovered: number
+  calls: number; contacted: number; notContacted: number
+  pending: number; rescheduled: number; canceled: number; returned: number
+  followUpsDue: number; followUpsDone: number
+  deliveryRate: number; rtsRate: number; contactRate: number
+  recoveryRate: number; productivity: number; followUpRate: number
+  score: number
+}
+
+const rate = (num: number, den: number) => (den > 0 ? (num / den) * 100 : 0)
+
+/**
+ * Buuin ang scorecard ng isang agent mula sa kanyang mga record.
+ * `deliveredOf` / `rtsOf` ay ipinapasa ng caller dahil ang totoong delivery
+ * status ay galing sa live Pancake join na hawak ng page, hindi ng store.
+ */
+export function computeAgentKpi(
+  email: string, name: string, rows: DeliveryOrder[], weights: KpiWeights,
+  deliveredOf: (r: DeliveryOrder) => boolean, rtsOf: (r: DeliveryOrder) => boolean,
+  today = todayStr(),
+): AgentKpi {
+  const assigned = rows.length
+  // "Worked" = may ginawa na ang agent (hindi na nakaupo sa Pending nang walang galaw).
+  const worked = rows.filter(r => r.agent_status !== "Pending" || r.call_attempts > 0 || r.notes !== "").length
+  const delivered = rows.filter(deliveredOf).length
+  const rts = rows.filter(rtsOf).length
+  const problematic = rows.filter(r => r.assignment_type === "problematic")
+  const recovered = problematic.filter(r => RECOVERED_OUTCOMES.includes(r.recovery_outcome)).length
+  const contacted = rows.filter(r => r.call_attempts > 0 || r.last_contact_at !== "").length
+  const calls = rows.reduce((s, r) => s + (r.call_attempts || 0), 0)
+    + rows.filter(r => r.last_contact_at !== "").length   // konektadong tawag na walang attempt counter
+  const count = (s: AgentStatus) => rows.filter(r => r.agent_status === s).length
+  // Follow-up: due na ba, at nagalaw ba pagkatapos ng petsa?
+  const withFollowUp = rows.filter(r => r.next_follow_up && r.next_follow_up <= today)
+  const followUpsDone = withFollowUp.filter(r =>
+    TERMINAL_STATUSES.includes(r.agent_status) || String(r.updated_at).slice(0, 10) >= r.next_follow_up).length
+
+  const deliveryRate = rate(delivered, assigned)
+  const rtsRate = rate(rts, assigned)
+  const contactRate = rate(contacted, assigned)
+  const recoveryRate = rate(recovered, problematic.length)
+  const productivity = rate(worked, assigned)
+  const followUpRate = withFollowUp.length > 0 ? rate(followUpsDone, withFollowUp.length) : 100
+
+  // Ang recovery ay hindi kasama sa timbang kapag walang problematic case ang
+  // agent — kung hindi, mapaparusahan siya sa trabahong hindi naman sa kanya.
+  const parts: [number, number][] = [
+    [deliveryRate, weights.delivery],
+    [contactRate, weights.contact],
+    [productivity, weights.productivity],
+    [followUpRate, weights.followup],
+  ]
+  if (problematic.length > 0) parts.push([recoveryRate, weights.recovery])
+  const totalWeight = parts.reduce((s, [, w]) => s + w, 0)
+  const score = totalWeight > 0 ? parts.reduce((s, [v, w]) => s + v * w, 0) / totalWeight : 0
+
+  return {
+    email, name, assigned, worked, delivered, rts,
+    problematic: problematic.length, recovered,
+    calls, contacted, notContacted: assigned - contacted,
+    pending: count("Pending"), rescheduled: count("Rescheduled"),
+    canceled: count("Canceled"), returned: count("Returned/RTS"),
+    followUpsDue: withFollowUp.length, followUpsDone,
+    deliveryRate, rtsRate, contactRate, recoveryRate, productivity, followUpRate,
+    score,
+  }
 }
 
 /** Activity ng isang order (HISTORY sidebar ng detail screen). */
