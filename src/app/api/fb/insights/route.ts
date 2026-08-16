@@ -166,8 +166,11 @@ export async function GET(req: NextRequest) {
       const byId: Record<string, any> = {}
       while (url) { const j = await fbGet(url); for (const r of j.data || []) byId[r[idF]] = r; url = j.paging?.next ? j.paging.next.replace(`${BASE}/`, "") : "" }
 
+      // `learning_stage_info` ay AD SET lang ang may hawak — doon nangyayari ang
+      // learning phase ni Meta. Ang campaign ay walang ganito, at ang ad ay
+      // nagmamana mula sa ad set niya (hinihila sa ibaba).
       const metaFields = level === "ad" ? "id,name,status,effective_status,created_time,updated_time,adset_id,campaign_id,creative{thumbnail_url}"
-        : level === "adset" ? "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,optimization_goal,created_time,updated_time,campaign_id"
+        : level === "adset" ? "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,optimization_goal,created_time,updated_time,campaign_id,learning_stage_info"
           : "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time,updated_time"
       const meta: Record<string, any> = {}
       try { const m = await fbGet(`${metaHost}/${edge}?fields=${metaFields}&limit=500&access_token=${enc}`); for (const x of m.data || []) meta[x.id] = x } catch {}
@@ -209,6 +212,15 @@ export async function GET(req: NextRequest) {
           }
         } catch {}
       }
+      // Ang AD ay nagmamana ng learning ng ad set niya — ganoon din ang ipinapakita
+      // ng Ads Manager. Kaya kailangan ng listahan ng ad set kapag ad ang antas.
+      const learnByAdset: Record<string, any> = {}
+      if (level === "ad") {
+        try {
+          const as = await fbGet(`${accountId}/adsets?fields=id,learning_stage_info&limit=500&access_token=${enc}`)
+          for (const s of as.data || []) if (s.learning_stage_info) learnByAdset[s.id] = s.learning_stage_info
+        } catch {}
+      }
       // Include objects that exist but had no spend in range.
       for (const id of Object.keys(meta)) if (!byId[id]) byId[id] = { [idF]: id, [nameF]: meta[id].name }
 
@@ -229,6 +241,17 @@ export async function GET(req: NextRequest) {
           // walang datos.
           kidsOn: level === "ad" ? -1 : (kidsOn[id] ?? 0),
           kidsTotal: level === "ad" ? -1 : (kidsTotal[id] ?? 0),
+          // Learning phase. Sa ad set ay galing sa sarili niyang field; sa ad ay
+          // sa MAGULANG na ad set. `status`: LEARNING | SUCCESS | FAIL.
+          // `conversions` = ilang optimization event na — ito ang paunlad tungo
+          // sa ~50 na kailangan ni Meta para matapos ang learning.
+          learning: (() => {
+            const l = level === "adset" ? m.learning_stage_info
+              : level === "ad" ? learnByAdset[m.adset_id || r.adset_id || ""]
+                : null
+            if (!l?.status) return null
+            return { status: String(l.status), conversions: Number(l.conversions ?? 0) }
+          })(),
           bidStrategy: m.bid_strategy || "", optimizationGoal: m.optimization_goal || "",
           createdTime: m.created_time || "", updatedTime: m.updated_time || "",
           campaignId: m.campaign_id || r.campaign_id || "", adsetId: m.adset_id || r.adset_id || "",

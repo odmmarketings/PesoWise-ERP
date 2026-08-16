@@ -106,7 +106,14 @@ const DELIVERY_MAP: Record<string, string> = {
   ARCHIVED: "Archived",
   DELETED: "Deleted",
 }
-type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number }
+// LEARNING — sa AD SET nangyayari (ang ad ay nagmamana). Ang `status` ni Meta:
+//   LEARNING  → nag-aaral pa, hindi pa matatag ang delivery
+//   FAIL      → "Learning limited": lumabas sa learning nang KULANG ang events
+//               (~50 kada 7 araw ang kailangan), kaya mahina ang optimization
+//   SUCCESS   → tapos na; normal na "Active" ang ipapakita
+const LEARN_TARGET = 50
+type Learning = { status: string; conversions: number } | null
+type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; learning?: Learning }
 export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad"): { label: string; tone: "on" | "off" | "warn" | "bad" } {
   const eff = String(r.status || "").toUpperCase()
   const own = String(r.configuredStatus || r.status || "").toUpperCase()
@@ -125,6 +132,21 @@ export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad"): 
   const on = r.kidsOn ?? -1, total = r.kidsTotal ?? -1
   if (level !== "ad" && total > 0 && on === 0) {
     return { label: level === "campaign" ? "Ad set off" : "Ads off", tone: "warn" }
+  }
+  // 4. Buhay at may naipapadala — pero nag-aaral pa ba? Ang learning ay
+  //    pumapalit sa "Active" sa Ads Manager, hindi dinadagdag sa tabi nito.
+  //    Campaign lang ang walang ganito (walang learning sa antas na iyon).
+  const L = r.learning
+  if (level !== "campaign" && L) {
+    if (L.status === "LEARNING") {
+      const n = Math.max(0, L.conversions)
+      return { label: `Learning ${n}/${LEARN_TARGET}`, tone: "warn" }
+    }
+    // FAIL = "Learning limited" sa wika ng Ads Manager. Hindi ito error kaya
+    // hindi pula — pero babala: hindi na mag-o-optimize nang maayos hangga't
+    // hindi tumaas ang events (dagdagan ang budget, palawakin ang audience,
+    // o pagsamahin ang mga ad set).
+    if (L.status === "FAIL") return { label: "Learning limited", tone: "warn" }
   }
   if (/ACTIVE/.test(own) || /ACTIVE/.test(eff)) return { label: "Active", tone: "on" }
   return { label: eff ? eff.replace(/_/g, " ").toLowerCase() : "—", tone: "off" }
@@ -1067,7 +1089,7 @@ type MgrFocus = {
   /** Bakit ka dinala rito, hal. "2nd scale · ₱1,000 → ₱1,100". Nasa banner. */
   note?: string
 }
-type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number }
+type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number; learning: { status: string; conversions: number } | null }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
 /** Ilang araw nang umiiral ang object — 0 kung walang petsa mula kay Meta. */
 const daysOldOf = (iso: string) => {
@@ -1455,7 +1477,8 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const toMgr = (r: any): MgrRow => {
     const a = accById(r.__accId) || account
     return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "",
-      kidsOn: typeof r.kidsOn === "number" ? r.kidsOn : -1, kidsTotal: typeof r.kidsTotal === "number" ? r.kidsTotal : -1 }
+      kidsOn: typeof r.kidsOn === "number" ? r.kidsOn : -1, kidsTotal: typeof r.kidsTotal === "number" ? r.kidsTotal : -1,
+      learning: r.learning && r.learning.status ? { status: String(r.learning.status), conversions: Number(r.learning.conversions || 0) } : null }
   }
   // ⚠ PAREHONG BITAG NA INAYOS SA DASHBOARD (Ago 6 2026), naiwan dito: ang
   // "Paused" ay humihingi rin ng `spend > 0`, kaya sa 145 na paused campaign ay
@@ -1897,7 +1920,11 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                           {(() => {
                             const d = deliveryOf(r, level)
                             return (
-                              <span title={`Meta status: ${r.status}${r.kidsTotal >= 0 ? ` · ${r.kidsOn}/${r.kidsTotal} ${level === "campaign" ? "ad sets" : "ads"} on` : ""}`}
+                              <span title={`Meta status: ${r.status}`
+                                + (r.kidsTotal >= 0 ? ` · ${r.kidsOn}/${r.kidsTotal} ${level === "campaign" ? "ad sets" : "ads"} on` : "")
+                                + (r.learning?.status === "LEARNING" ? ` · learning: ${r.learning.conversions} of ~50 optimisation events` : "")
+                                + (r.learning?.status === "FAIL" ? " · left learning without enough events — widen the audience, raise the budget, or merge ad sets" : "")
+                                + (level === "ad" && r.learning ? " (from its ad set)" : "")}
                                 className={`text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${DELIVERY_TONE[d.tone]}`}>
                                 {d.label}
                               </span>
