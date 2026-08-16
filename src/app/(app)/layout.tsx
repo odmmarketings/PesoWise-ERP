@@ -25,6 +25,15 @@ function writeSessionCookies(accessToken: string, refreshToken: string) {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // Desktop: tuluyang pagsasara ng sidebar. Hiwalay ito sa `sidebarOpen`, na
+  // drawer ng cellphone — magkaibang galaw, magkaibang laki ng screen.
+  const [collapsed, setCollapsed] = useState(false)
+  useEffect(() => { try { setCollapsed(localStorage.getItem("pesowise_sidebar_collapsed") === "1") } catch {} }, [])
+  const toggleCollapsed = () => setCollapsed(c => {
+    const n = !c
+    try { localStorage.setItem("pesowise_sidebar_collapsed", n ? "1" : "0") } catch {}
+    return n
+  })
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [user, setUser] = useState<{
     name: string; email: string; plan: Plan; trial_ends_at: string | null
@@ -134,7 +143,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-[47] lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
-      <div className={`fixed lg:static inset-y-0 left-0 z-[48] transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+      {/* Sa desktop ay maaaring isara nang tuluyan para sa full-width na
+          talahanayan (ang Ads Manager ay 20+ na hanay). Naaalala ang pinili —
+          kung isinara mo, sarado pa rin sa susunod mong pagbukas. */}
+      <div className={`fixed lg:static inset-y-0 left-0 z-[48] transition-transform duration-200
+        ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+        ${collapsed ? "lg:hidden" : ""}`}>
         <Sidebar plan={user.plan} userName={user.name} onLogout={handleLogout} />
       </div>
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -142,6 +156,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           plan={user.plan}
           trialEndsAt={user.trial_ends_at}
           onToggleSidebar={() => setSidebarOpen(s => !s)}
+          onToggleCollapsed={toggleCollapsed}
+          collapsed={collapsed}
           onUpgrade={() => setShowUpgrade(true)}
         />
         <main className="flex-1 overflow-y-auto px-6 pt-4 pb-6">
