@@ -1111,9 +1111,8 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const [flashOn, setFlashOn] = useState<Record<string, "ACTIVE" | "PAUSED">>({})
   const [sfx, setSfx] = useState(true)
   useEffect(() => { setSfx(sfxOn()) }, [])
-  // Usapan + paglundag papuntang tracker — parehong nakakabit sa isang row.
+  // Usapan sa isang row (ang paglundag ay walang state — diretso na).
   const [commentFor, setCommentFor] = useState<MgrRow | null>(null)
-  const [jumpFor, setJumpFor] = useState<MgrRow | null>(null)
   // Automated rules (Meta adrules_library): More ▾ → Create a new rule / Manage rules
   const [moreOpen, setMoreOpen] = useState(false)
   const [rulesView, setRulesView] = useState<RulesView>("")
@@ -1851,15 +1850,27 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                                 <span className="text-slate-400 text-xs font-normal">{level === "campaign" ? "Using ad set budget" : "Using campaign budget"}</span>
                               )
                             ) : c.l === "ROAS" ? (
-                              // ⚠ ANG ROAS ANG PINTUAN. Ito mismo ang numerong
-                              // tinitingnan mo bago magpasyang "dalhin ko ito sa
-                              // Scaling" — kaya dito nakakabit ang paglundag,
-                              // hindi sa isang buton na malayo sa dahilan.
-                              <button onClick={() => setJumpFor(r)} title="Jump to Testing / Scaling / Monitoring, filtered"
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${roasBg(r.roas)} hover:ring-2 hover:ring-blue-400 transition`}>
-                                {c.f(r)}
-                                <ChevronRight className="w-3 h-3 opacity-50" />
-                              </button>
+                              // ⚠ ANG ROAS ANG PINTUAN — at IISA ang patutunguhan
+                              // kada antas, kaya walang tanong: ang campaign ay
+                              // dumederetso sa Scaling, ang ad set sa Testing.
+                              // Ang dating chooser ay isang pindot na dagdag para
+                              // sa sagot na alam na (desisyon ng may-ari, Ago 15).
+                              // Ang antas ng AD ay walang tracker, kaya numero
+                              // lang ito roon — hindi buton na walang gagawin.
+                              level === "ad" ? (
+                                <span className={`inline-block px-2 py-0.5 rounded-md font-semibold ${roasBg(r.roas)}`}>{c.f(r)}</span>
+                              ) : (
+                                <button
+                                  onClick={() => onJump(level === "campaign" ? "scaling" : "testing", {
+                                    accountName: r.accountName, owner: r.accountOwner || undefined,
+                                    objectId: r.id, objectName: r.name,
+                                  })}
+                                  title={`View in ${level === "campaign" ? "Scaling" : "Testing"} — filtered to ${r.accountName}`}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${roasBg(r.roas)} hover:ring-2 hover:ring-blue-400 transition`}>
+                                  {c.f(r)}
+                                  <ChevronRight className="w-3 h-3 opacity-50" />
+                                </button>
+                              )
                             ) : c.f(r)}
                           </td>
                         ))}
@@ -1896,45 +1907,6 @@ function AdsManager({ fb, from, to, focus, onJump }: {
           account={commentFor.accountName} href="/business/ads/facebook"
           onClose={() => setCommentFor(null)} onPosted={refreshCounts} />
       )}
-
-      {/* Saan ka dadalhin ng ROAS — ikaw ang pumipili, at sala na pagdating. */}
-      {jumpFor && (() => {
-        const f: TrackerFocus = { accountName: jumpFor.accountName, owner: jumpFor.accountOwner || undefined, objectId: jumpFor.id, objectName: jumpFor.name }
-        // Ang antas ang nagsasabi kung saan may saysay: ang Testing ay AD SET,
-        // ang Scaling at Monitoring ay CAMPAIGN. Ang hindi angkop ay naka-dim,
-        // may dahilan — mas mabuti kaysa mawala nang walang paliwanag.
-        const opts: { tab: Tab; label: string; hint: string; ok: boolean }[] = [
-          { tab: "testing", label: "View in Testing", hint: "ad-set level", ok: level === "adset" },
-          { tab: "scaling", label: "View in Scaling", hint: "campaign level", ok: level === "campaign" },
-          { tab: "monitoring", label: "View in Monitoring", hint: "campaign level · all campaigns", ok: level === "campaign" },
-        ]
-        return (
-          <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => setJumpFor(null)}>
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
-              <div>
-                <p className="font-bold text-slate-800">Where to?</p>
-                <p className="text-[12px] text-slate-500 truncate">{jumpFor.name} · {jumpFor.accountName}</p>
-              </div>
-              <div className="space-y-2">
-                {opts.map(o => (
-                  <button key={o.tab} disabled={!o.ok}
-                    onClick={() => { onJump(o.tab, f); setJumpFor(null) }}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 text-left hover:border-blue-300 hover:bg-blue-50 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:bg-transparent">
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-semibold text-slate-800">{o.label}</span>
-                      <span className="block text-[11px] text-slate-400">
-                        {o.ok ? `Filtered to ${jumpFor.accountName}` : `Not for ${level}s — ${o.hint}`}
-                      </span>
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
-                  </button>
-                ))}
-              </div>
-              <button onClick={() => setJumpFor(null)} className="w-full h-9 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50">Cancel</button>
-            </div>
-          </div>
-        )
-      })()}
 
       <AutomatedRules accounts={mgrAccounts} currentAccountId={isAll ? "" : accId} level={level}
         selectedRows={levelRows.filter(r => curSel.has(r.id)).map(r => ({ id: r.id, accId: r.accountId }))}
