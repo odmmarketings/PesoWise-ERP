@@ -1591,7 +1591,62 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const mgrTotal = computeTotal(levelRows)
 
   // ── selection: toggle a row, clear a level (with cascade), quick-drill via name ──
-  const toggleRow = (id: string) => setCurSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  // ANAK → MAGULANG. Ang `rows` ay laman ng KASALUKUYANG ANTAS lang, kaya kapag
+  // nasa campaign ka ay wala kang paraan para malaman kung kaninong campaign ang
+  // isang napiling ad set. Itinatala natin ang pagkakamag-anak habang dumadaan
+  // ang mga hilera, kaya alam pa rin ito pagkabalik sa itaas.
+  const parentOf = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    if (level === "campaign") return
+    for (const raw of rows) {
+      const r = toMgr(raw)
+      const p = level === "adset" ? r.campaignId : r.adsetId
+      if (p) parentOf.current.set(r.id, p)
+    }
+  }, [rows, level])
+
+  /**
+   * Inaalis ang mga piling ULILA — ang mga anak na ang magulang ay wala na sa
+   * pinili. Ito ang asal ng totoong Ads Manager: ang pinili sa itaas ang
+   * nagtatakda ng nasa ibaba, kaya pagbitaw sa campaign ay bitaw din sa mga ad
+   * set nito (at sa mga ad ng mga ad set na iyon).
+   *
+   * ⚠ HINDI ITO KAGANDAHAN LANG NG BILANG. Sa antas ng Ads, si `selAdsets` ang
+   * sumasala (tingnan ang `levelRows`), kaya ang naiwang ulilang ad set ay
+   * nagpapakita ng mga ad ng LUMANG campaign habang iba na ang naka-tsek —
+   * mukhang tama, mali naman (iniulat ng may-ari, Ago 17 2026).
+   *
+   * Tinatanggal ang hindi kilalang magulang. Ibig sabihin ng hindi kilala ay
+   * hindi pa naipapakita ang hilerang iyon, kaya hindi ito kayang piliin ng
+   * kamay — hulaan ang tanging ibubunga ng pagpapanatili.
+   */
+  const pruneOrphans = (camps: Set<string>, sets: Set<string>) => {
+    const keptSets = new Set([...sets].filter(id => {
+      const p = parentOf.current.get(id)
+      return p ? camps.has(p) : false
+    }))
+    const keptAds = new Set([...selAds].filter(id => {
+      const p = parentOf.current.get(id)
+      return p ? keptSets.has(p) : false
+    }))
+    if (keptSets.size !== sets.size) setSelAdsets(keptSets)
+    if (keptAds.size !== selAds.size) setSelAds(keptAds)
+  }
+
+  const toggleRow = (id: string) => {
+    const next = new Set(curSel); next.has(id) ? next.delete(id) : next.add(id)
+    setCurSel(next)
+    if (level === "campaign") pruneOrphans(next, selAdsets)
+    else if (level === "adset") pruneOrphans(selCampaigns, next)
+  }
+  /** Ang tsek sa ulo ng talahanayan — kapareho ng cascade ng isa-isang tsek. */
+  const toggleAll = (on: boolean) => {
+    const next = on ? new Set(levelRows.map(r => r.id)) : new Set<string>()
+    setCurSel(next)
+    if (level === "campaign") pruneOrphans(next, selAdsets)
+    else if (level === "adset") pruneOrphans(selCampaigns, next)
+  }
   const clearCampaigns = () => { setSelCampaigns(new Set()); setSelAdsets(new Set()); setSelAds(new Set()) }
   const clearAdsets = () => { setSelAdsets(new Set()); setSelAds(new Set()) }
   const clearAds = () => setSelAds(new Set())
@@ -1861,7 +1916,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-30">
                   <tr className="bg-slate-100 border-b border-slate-200 text-left">
-                    <th className="px-3 py-2.5 sticky left-0 z-40 bg-slate-100 w-[44px] min-w-[44px] max-w-[44px]"><input type="checkbox" checked={allChecked} onChange={e => setCurSel(e.target.checked ? new Set(levelRows.map(r => r.id)) : new Set())} className="accent-blue-600" /></th>
+                    <th className="px-3 py-2.5 sticky left-0 z-40 bg-slate-100 w-[44px] min-w-[44px] max-w-[44px]"><input type="checkbox" checked={allChecked} onChange={e => toggleAll(e.target.checked)} className="accent-blue-600" /></th>
                     <th className="px-2 py-2.5 font-semibold text-slate-600 sticky left-[43px] z-20 bg-slate-100 border-l border-slate-200 w-[52px] min-w-[52px] max-w-[52px]">
                       <button onClick={() => setSort(s => nextSort(s, "On"))} className="flex items-center gap-1 hover:text-blue-600">On <SortArrow active={sort?.key === "On"} dir={sort?.dir || "desc"} /></button>
                     </th>
