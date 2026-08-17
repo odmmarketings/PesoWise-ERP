@@ -1291,19 +1291,19 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         <span className="text-[11px] text-slate-400">
           {!isCampaign && <>{s.adset.campaignName} · </>}{s.adset.account.name}
         </span>
-        {/* EDAD — highlighter yellow na may itim na teksto, hatol ng may-ari
-            (Ago 17 2026). Berde ito dati at napagkakamalang katulad ng "Active"
-            na nakatabi lang; naging neutral saglit, pero ang piniling sagot ay
-            ang kulay ng pang-highlight — hindi ito ginagamit saanman sa Ads,
-            kaya hindi ito maipagkakamali sa kalagayan.
-            ⚠ Sinadyang GANAP na hex, hindi token ng Tailwind. Ang dark layer ay
-            pumapalit sa mga token gaya ng `bg-slate-100`; ang ganap na halaga ay
-            hindi nito nasasagasaan, kaya iisa ang neon sa dalawang tema — na
-            siyang punto. Kailangan ang gilid: 1.06:1 lang ang neon kontra puti,
-            kaya sa light mode ay naglalaho ang hugis kung wala ito. */}
+        {/* EDAD — ITIM na pill, NEON na teksto. Hatol ng may-ari (Ago 17 2026).
+            Berde ito dati at napagkakamalang katulad ng "Active" na nakatabi
+            lang; naging neutral, tapos buong-neon; ang tumagal ay ang baligtad.
+            ⚠ Sinadyang GANAP na hex ang neon, hindi token ng Tailwind. Ang dark
+            layer ay pumapalit sa mga token; hindi nito nasasagasaan ang ganap na
+            halaga, kaya iisa ang itsura sa dalawang tema — na siyang punto.
+            (Wala ring `.dark .bg-black`, kaya tunay na itim ito saanman.)
+            ⚠ Kailangan ang neon na gilid. Sa dark ay halos kasing-itim ng pahina
+            ang pill, kaya ang gilid ang tanging nagbibigay ng hugis; sa light
+            naman ay malakas na mag-isa ang itim kontra puti. */}
         {s.adset.createdTime && (
           <span title={`Created ${s.adset.createdTime.slice(0, 10)}`}
-            className="text-[11px] font-bold bg-[#EFFF00] text-black border border-[#b8c400] px-2 py-0.5 rounded-full whitespace-nowrap">
+            className="text-[11px] font-bold bg-black text-[#EFFF00] border border-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
             {daysOld(s.adset.createdTime)}d old
           </span>
         )}
@@ -1794,7 +1794,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                           matagal nang tumatakbo? */}
                       {m.createdTime && (
                         <span className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[11px] font-bold bg-[#EFFF00] text-black border border-[#b8c400] px-2 py-0.5 rounded-full whitespace-nowrap">
+                          <span className="text-[11px] font-bold bg-black text-[#EFFF00] border border-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
                             {daysOld(m.createdTime)}d old
                           </span>
                           <span className="text-[11px] text-slate-400">created {m.createdTime.slice(0, 10)}</span>
