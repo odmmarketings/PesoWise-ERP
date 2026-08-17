@@ -478,7 +478,7 @@ export default function TmOperationsPage() {
           <div className="flex items-center gap-2">
             <Button onClick={() => setScreen("add")}><Plus className="w-4 h-4" /> Add Sale</Button>
             <button onClick={() => { salesHook.refresh(); leadsHook.refresh() }} title="Refresh"
-              className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors">
+              className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50/70 hover:text-slate-700 transition-colors">
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
@@ -558,7 +558,7 @@ export default function TmOperationsPage() {
                 {filtered.length === 0 ? (
                   <tr><td colSpan={19} className="text-center py-12 text-slate-400">No sales found for the selected filters</td></tr>
                 ) : filtered.map(s => (
-                  <tr key={s.id} className={`hover:bg-slate-50 ${s.sales_status === "Cancelled" ? "opacity-60" : ""}`}>
+                  <tr key={s.id} className={`hover:bg-slate-50/70 ${s.sales_status === "Cancelled" ? "opacity-60" : ""}`}>
                     <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{s.sale_date}</td>
                     <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{s.sale_time}</td>
                     <td className="px-3 py-2.5 text-slate-800 font-medium whitespace-nowrap">{s.customer_name}</td>

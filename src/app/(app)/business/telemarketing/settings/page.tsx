@@ -141,7 +141,7 @@ export default function TmSettingsPage() {
         <div className="flex flex-wrap gap-2 my-4">
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${tab === t ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+              className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${tab === t ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50/70"}`}>
               {t}
             </button>
           ))}
@@ -189,7 +189,7 @@ function AgentsTab({ api, teams, flash }: { api: AgentsApi; teams: string[]; fla
         rows={api.agents.length === 0 ? (
           <tr><td colSpan={8} className="text-center py-10 text-slate-400">No agents yet. Add your first telemarketer.</td></tr>
         ) : api.agents.map((a, i) => (
-          <tr key={a.id} className="hover:bg-slate-50">
+          <tr key={a.id} className="hover:bg-slate-50/70">
             <td className="px-3 py-2.5 text-slate-400">{i + 1}</td>
             <td className="px-3 py-2.5 font-medium text-slate-800">{a.agent_name}</td>
             <td className="px-3 py-2.5 text-slate-600">{a.team || "—"}</td>
@@ -397,7 +397,7 @@ function AgentTargetRow({ agent, month, tgt, onSave }: {
   const set = (k: keyof AgentTargetDraft, v: number) => setD(p => ({ ...p, [k]: v }))
 
   return (
-    <tr className="hover:bg-slate-50 align-top">
+    <tr className="hover:bg-slate-50/70 align-top">
       <td className="px-3 py-2.5 font-medium text-slate-800 whitespace-nowrap">
         {agent.agent_name}
         {agent.team && <span className="block text-[11px] text-slate-400 font-normal">{agent.team}</span>}
@@ -633,7 +633,7 @@ function GeneralTab({ settings, flash }: { settings: SettingsApi; flash: (m: str
                   if (next.length === 0) { flash("At least one working day is required."); return }
                   save({ work_days: next }, "Working days updated.")
                 }}
-                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${on ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"}`}>
+                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${on ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50/70"}`}>
                 {name}
               </button>
             )

@@ -431,7 +431,7 @@ export default function TmDashboardPage() {
             <option value="Cross-sell">Cross-sell</option>
           </select>
           <button onClick={refreshAll} title="Refresh telemarketing data"
-            className="h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">
+            className="h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50/70">
             <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
           </button>
         </div>
@@ -568,7 +568,7 @@ export default function TmDashboardPage() {
               </thead>
               <tbody>
                 {agentTable.rows.map(r => (
-                  <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/70">
                     <td className="px-3 py-2.5 font-medium text-slate-700">{r.name}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{fmtNum(r.upOrders)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{fmtPeso(r.upAmt)}</td>

@@ -443,20 +443,20 @@ export function useTmSettings() {
   const [general, setGeneral] = useState<TmGeneral>(DEFAULT_GENERAL)
   const [loaded, setLoaded] = useState(false)
 
-  useEffect(() => {
-    (async () => {
-      const [hb, rs, dc, kw, gn] = await Promise.all([
-        getSettingBlob<TmHourBlocks>("tm_settings", "hour_blocks"),
-        getSettingBlob<TmReportSchedule>("tm_settings", "report_schedule"),
-        getSettingBlob<TmDiscordCfg>("tm_settings", "discord"),
-        getSettingBlob<TmKpiWeights>("tm_settings", "kpi_weights"),
-        getSettingBlob<TmGeneral>("tm_settings", "general"),
-      ])
-      if (hb) setHourBlocks(hb); if (rs) setReportSchedule(rs); if (dc) setDiscord(dc)
-      if (kw) setKpiWeights(kw); if (gn) setGeneral({ ...DEFAULT_GENERAL, ...gn })
-      setLoaded(true)
-    })()
+  // Exposed so a page's refresh button can re-pull the blobs alongside its row stores.
+  const refresh = useCallback(async () => {
+    const [hb, rs, dc, kw, gn] = await Promise.all([
+      getSettingBlob<TmHourBlocks>("tm_settings", "hour_blocks"),
+      getSettingBlob<TmReportSchedule>("tm_settings", "report_schedule"),
+      getSettingBlob<TmDiscordCfg>("tm_settings", "discord"),
+      getSettingBlob<TmKpiWeights>("tm_settings", "kpi_weights"),
+      getSettingBlob<TmGeneral>("tm_settings", "general"),
+    ])
+    if (hb) setHourBlocks(hb); if (rs) setReportSchedule(rs); if (dc) setDiscord(dc)
+    if (kw) setKpiWeights(kw); if (gn) setGeneral({ ...DEFAULT_GENERAL, ...gn })
+    setLoaded(true)
   }, [])
+  useEffect(() => { refresh() }, [refresh])
 
   const saveHourBlocks = useCallback((v: TmHourBlocks) => { setHourBlocks(v); setSettingBlob("tm_settings", "hour_blocks", v) }, [])
   const saveReportSchedule = useCallback((v: TmReportSchedule) => { setReportSchedule(v); setSettingBlob("tm_settings", "report_schedule", v) }, [])
@@ -464,7 +464,7 @@ export function useTmSettings() {
   const saveKpiWeights = useCallback((v: TmKpiWeights) => { setKpiWeights(v); setSettingBlob("tm_settings", "kpi_weights", v) }, [])
   const saveGeneral = useCallback((v: TmGeneral) => { setGeneral(v); setSettingBlob("tm_settings", "general", v) }, [])
 
-  return { hourBlocks, reportSchedule, discord, kpiWeights, general, loaded, saveHourBlocks, saveReportSchedule, saveDiscord, saveKpiWeights, saveGeneral }
+  return { hourBlocks, reportSchedule, discord, kpiWeights, general, loaded, refresh, saveHourBlocks, saveReportSchedule, saveDiscord, saveKpiWeights, saveGeneral }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -526,12 +526,18 @@ export function hourLabel(h: number): string {
 }
 
 // Remaining working days in a month, counting today (spec §7). workDays: 0=Sun…6=Sat.
+// `from` defaults to today. A month already finished has none left; a month not yet
+// started has all of them — without those two guards a closed month reports a full
+// month of days and every pace figure derived from it comes out understated.
 export function remainingWorkingDays(month: string, workDays: number[] = DEFAULT_GENERAL.work_days, from?: string): number {
-  const start = from && from.slice(0, 7) === month ? new Date(`${from}T00:00:00`) : new Date(`${month}-01T00:00:00`)
+  const ref = from || todayStr()
+  const refMonth = ref.slice(0, 7)
+  if (refMonth > month) return 0
   const [y, m] = month.split("-").map(Number)
   const last = new Date(y, m, 0).getDate()
+  const firstDay = refMonth === month ? Number(ref.slice(8, 10)) || 1 : 1
   let count = 0
-  for (let d = start.getDate(); d <= last; d++) {
+  for (let d = firstDay; d <= last; d++) {
     if (workDays.includes(new Date(y, m - 1, d).getDay())) count++
   }
   return count

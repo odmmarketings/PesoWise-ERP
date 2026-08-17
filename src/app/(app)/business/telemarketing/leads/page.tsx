@@ -423,7 +423,7 @@ function ViewLeadScreen({ lead, agents, calls, sales, isMother, agentName, onBac
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {leadCalls.map(c => (
-                  <tr key={c.id} className="hover:bg-slate-50">
+                  <tr key={c.id} className="hover:bg-slate-50/70">
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{c.call_date}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{c.call_time}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{c.agent_name}</td>
@@ -458,7 +458,7 @@ function ViewLeadScreen({ lead, agents, calls, sales, isMother, agentName, onBac
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {leadSales.map(s => (
-                  <tr key={s.id} className="hover:bg-slate-50">
+                  <tr key={s.id} className="hover:bg-slate-50/70">
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{s.sale_date} {s.sale_time}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{s.agent_name}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{s.sale_type}</td>
@@ -699,7 +699,7 @@ export default function TmLeadsPage() {
             )}
             <Button onClick={() => setShowAdd(true)}><Plus className="w-4 h-4" /> Add Lead</Button>
             <button onClick={doRefresh} title="Refresh" disabled={refreshing}
-              className="w-10 h-10 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+              className="w-10 h-10 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50/70 disabled:opacity-50">
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
             </button>
           </div>
@@ -724,7 +724,7 @@ export default function TmLeadsPage() {
             <button key={c.key} disabled={c.disabled} onClick={() => setChip(c.key)}
               title={c.disabled ? "Your account is not matched to a telemarketing agent" : undefined}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                chip === c.key ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>
+                chip === c.key ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50/70"}`}>
               {c.label}
             </button>
           ))}
@@ -784,7 +784,7 @@ export default function TmLeadsPage() {
               ) : visible.length === 0 ? (
                 <tr><td colSpan={14} className="text-center py-12 text-slate-400">No leads found{hasFilters ? " for the current filters" : ""}.</td></tr>
               ) : visible.map(l => (
-                <tr key={l.id} className={`hover:bg-slate-50 ${selected.has(l.id) ? "bg-blue-50/50" : ""}`}>
+                <tr key={l.id} className={`hover:bg-slate-50/70 ${selected.has(l.id) ? "bg-blue-50/50" : ""}`}>
                   <td className="px-2 py-2.5 text-center">
                     <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} className="accent-blue-600 w-4 h-4 align-middle" />
                   </td>
