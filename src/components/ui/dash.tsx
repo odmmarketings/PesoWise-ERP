@@ -118,7 +118,13 @@ export function StatCard({
         {loading
           ? <Skeleton className="h-6 sm:h-7 w-24 sm:w-32 ml-auto text-white" />
           : <p className="pw-num text-lg sm:text-2xl font-bold text-white leading-none tabular-nums truncate">{shown}</p>}
-        <p className="text-[11px] text-white/75 font-semibold mt-1 tracking-wider uppercase leading-tight truncate">
+        {/* ⚠ DALAWANG LINYA, HINDI `truncate`. Sa 375px ang kolum ay 164px, at
+            ang "UNFULFILLED / LAST MONTH (301)" ay hindi kasya sa isang linya —
+            ang truncate ay pumupatay ng kalahati ng pangalan. Sinukat: 20px na
+            padding + 18px na halaga + 4px + dalawang linyang 13px = 68px, kasya
+            sa 70px na card. Kaya dalawang linya ang pinapayagan, at ang ikatlo
+            lang ang pinuputol. */}
+        <p className="text-[11px] text-white/75 font-semibold mt-1 tracking-wider uppercase leading-tight line-clamp-2">
           {label}{meta ? ` (${meta})` : ""}
           {pct ? <span className="ml-1 font-bold text-white/95">{pct}</span> : null}
         </p>
