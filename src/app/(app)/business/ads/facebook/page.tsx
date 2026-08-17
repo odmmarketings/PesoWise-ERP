@@ -2057,7 +2057,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                         <td className="px-4 py-3 whitespace-nowrap border-r border-slate-100">
                           {r.createdTime
                             ? <span title={`Started ${fmtD(r.createdTime)}`}
-                                className="text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 px-2 py-0.5 rounded-full">
+                                className="text-[11px] font-bold bg-[#EFFF00] text-black border border-[#b8c400] px-2 py-0.5 rounded-full">
                                 {daysOldOf(r.createdTime)}d old
                               </span>
                             : <span className="text-slate-400 text-xs">—</span>}
