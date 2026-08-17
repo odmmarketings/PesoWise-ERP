@@ -23,13 +23,17 @@ interface TopbarProps {
 export function Topbar({ plan, trialEndsAt, onToggleSidebar, onUpgrade, onToggleCollapsed, collapsed }: TopbarProps) {
   const daysLeft = trialEndsAt ? getDaysRemaining(trialEndsAt) : 0
 
+  // Bahagyang lumulusot ang laman sa likod habang nag-i-scroll — tanda na may
+  // higit pa sa itaas. `bg-white/95` ay may dark rule na, kaya hindi ito
+  // nagiging maputing guhit sa madilim na tema.
   return (
-    <header className="h-16 bg-white border-b border-slate-200 flex items-center px-4 gap-4 sticky top-0 z-30">
+    <header className="h-16 bg-white/95 backdrop-blur-md border-b border-slate-200 flex items-center px-4 gap-4 sticky top-0 z-30">
       {/* Cellphone: drawer. Desktop: tuluyang pagsasara. Dalawang buton, hindi
           isang buton na nanghuhula ng laki ng screen. */}
       <button
         onClick={onToggleSidebar}
-        className="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600"
+        aria-label="Open menu"
+        className="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors active:scale-95"
       >
         <Menu className="w-5 h-5" />
       </button>
@@ -37,7 +41,8 @@ export function Topbar({ plan, trialEndsAt, onToggleSidebar, onUpgrade, onToggle
         <button
           onClick={onToggleCollapsed}
           title={collapsed ? "Show menu" : "Hide menu — full width"}
-          className="hidden lg:block p-2 rounded-lg hover:bg-slate-100 text-slate-600"
+          aria-label={collapsed ? "Show menu" : "Hide menu"}
+          className="hidden lg:block p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors active:scale-95"
         >
           {collapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
         </button>
