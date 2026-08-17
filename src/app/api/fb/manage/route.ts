@@ -48,7 +48,7 @@ async function fbCall(path: string, method: "POST" | "DELETE", params: Record<st
 export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch {}
-  const { token, action, id, status, name, daily_budget, account_id, objective, rule } = body
+  const { token, action, id, status, name, daily_budget, lifetime_budget, account_id, objective, rule } = body
   if (!token || !action) return NextResponse.json({ success: false, error: "Missing token / action" }, { status: 400 })
 
   try {
@@ -63,6 +63,18 @@ export async function POST(req: NextRequest) {
         const p: Record<string, string> = {}
         if (name != null) p.name = String(name)
         if (daily_budget != null) p.daily_budget = String(Math.round(Number(daily_budget) * 100)) // pesos → centavos
+        // Ang lifetime-budget na object ay TUMATANGGI sa daily_budget. Dating
+        // hindi tinatanggap ang field na ito, kaya ang pag-scale ng ganoong
+        // object ay nagpapadala ng WALANG laman na update — at ang walang laman
+        // ay TAGUMPAY para kay Meta, kaya naitatala ang pagtaas na hindi naman
+        // nangyari (nahuli Ago 17 2026).
+        if (lifetime_budget != null) p.lifetime_budget = String(Math.round(Number(lifetime_budget) * 100))
+        // ⚠ HUWAG MAG-ULAT NG TAGUMPAY SA WALANG GINAWA. Ang POST na walang
+        // field ay ibinabalik ni Meta na OK, at doon nagmumula ang "na-scale
+        // naman, bakit pareho pa rin ang budget".
+        if (Object.keys(p).length === 0) {
+          return NextResponse.json({ success: false, error: "update called with nothing to change" }, { status: 400 })
+        }
         await fbCall(id, "POST", p, token)
         return NextResponse.json({ success: true })
       }

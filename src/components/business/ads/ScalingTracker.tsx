@@ -55,18 +55,37 @@ type AdsetModel = {
   id: string; name: string; campaignName: string
   campaignId: string
   account: FBAccount
+  /** `effective_status` ni Meta — ISINASAMA ang magulang (hal. CAMPAIGN_PAUSED). */
   status: string
+  /**
+   * Ang SARILING switch nito (`status` ni Meta), hiwalay sa magulang.
+   * ⚠ KAILANGAN ITO. Ang `effective_status` ay nagsasabi ng "CAMPAIGN_PAUSED"
+   * para sa ad set na NAKABUKAS naman — patay lang ang campaign nito. Kung
+   * `effective_status` lang ang titingnan, pareho ang mukha ng "pinatay ko ito"
+   * at ng "buhay ito, ang campaign lang ang patay" — samantalang magkaibang-iba
+   * ang gagawin mo (buksan ang campaign, o kalimutan na). Napatunayan Ago 17
+   * 2026: 9 sa 17 nakarehistrong ad set ang ganito.
+   */
+  ownStatus: string
   budget: number            // sariling budget ng ad set (ABO). 0 = CBO.
   campaignBudget: number    // budget ng campaign (CBO). Dito ang hawak kapag 0 ang taas.
+  /**
+   * "daily" | "lifetime" | "" para sa dalawang budget sa itaas.
+   * ⚠ Ang pag-scale ay nagpapadala ng `daily_budget`. Kung LIFETIME pala ang
+   * hawak ng target, mali ang field — kaya kailangang malaman muna, hindi
+   * hulaan.
+   */
+  budgetKind: string
+  campaignBudgetKind: string
   createdTime: string       // ISO mula kay Meta — pinakabago ang una sa picker
   rtsRate: number
   dailies: Map<string, Daily>
 }
 /** Saan itataas ang budget: sa ad set (ABO) o sa campaign (CBO)? */
-function budgetTarget(m: AdsetModel): { level: "adset" | "campaign" | "none"; id: string; amount: number } {
-  if (m.budget > 0) return { level: "adset", id: m.id, amount: m.budget }
-  if (m.campaignBudget > 0) return { level: "campaign", id: m.campaignId, amount: m.campaignBudget }
-  return { level: "none", id: "", amount: 0 }
+function budgetTarget(m: AdsetModel): { level: "adset" | "campaign" | "none"; id: string; amount: number; kind: string } {
+  if (m.budget > 0) return { level: "adset", id: m.id, amount: m.budget, kind: m.budgetKind || "daily" }
+  if (m.campaignBudget > 0) return { level: "campaign", id: m.campaignId, amount: m.campaignBudget, kind: m.campaignBudgetKind || "daily" }
+  return { level: "none", id: "", amount: 0, kind: "" }
 }
 // `w1` = NGAYONG ARAW. Nauna ito sa lahat: iyon ang unang tinitingnan kapag
 // binuksan mo ang tab, at dati ay nasa reason text lang — wala sa hanay ng
@@ -473,11 +492,16 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             campaignName: isCampaign ? (name || mm.name || "") : (campaignName || cm.name || ""),
             campaignId: isCampaign ? id : campaignId,
             account: a, status: mm.status || "—",
+            // Ang sariling switch, hiwalay sa magulang na dala ng effective_status.
+            ownStatus: mm.configuredStatus || mm.status || "",
             // `ownBudget` LANG — ang `budget` ng rich mode ay maaaring minana o
             // inipon mula sa ad sets, at hindi iyon ang maitataas nang direkta.
             // Sa campaign level, ang sarili niyang budget ANG budget.
             budget: isCampaign ? 0 : (mm.ownBudget || 0),
             campaignBudget: isCampaign ? (mm.ownBudget || 0) : (cm.ownBudget || 0),
+            // Kasabay ng bawat budget, ang URI nito — daily o lifetime.
+            budgetKind: isCampaign ? "" : (mm.budgetKind || ""),
+            campaignBudgetKind: isCampaign ? (mm.budgetKind || "") : (cm.budgetKind || ""),
             createdTime: mm.createdTime || "",
             rtsRate: rts,
             dailies: new Map(),
@@ -751,7 +775,29 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                 : ` No budget found on the ad set or campaign — raise it in Ads Manager.`) })
         continue
       }
-      if (!isActive) continue   // paused na — walang iki-kill o iba-bantay
+      // ── HINDI AKTIBO ───────────────────────────────────────────────────────
+      // ⚠ ANG INIREHISTRO AY DAPAT MAY ROW KAHIT PATAY. Dating tahimik na
+      // `continue` ito, kaya ang inirehistro mong hindi aktibo ay NAGLALAHO —
+      // hindi mo ito makikita, hindi mo maaalis, at mukhang hindi mo pala
+      // nairehistro. Nasukat Ago 17 2026 sa tunay na datos: 15 sa 17 sa Testing
+      // (2 lang ang lumalabas) at 3 sa 11 sa Scaling.
+      //
+      // At may PAGKAKAIBA na dapat sabihin: ang `effective_status` ay nagsasabi
+      // ng CAMPAIGN_PAUSED para sa ad set na NAKABUKAS naman — 9 sa 15 sa itaas
+      // ay ganito. "Patay ang campaign nito" ay ibang problema sa "pinatay ko
+      // ito": ang isa ay isang switch lang ang layo sa pagtakbo.
+      if (!isActive) {
+        if (!reg) continue   // hindi nakarehistro at patay — wala talagang dapat ipakita
+        const parentOff = /CAMPAIGN_PAUSED|ADSET_PAUSED/i.test(m.status) && /active/i.test(m.ownStatus)
+        out.push({ ...base, kind: "watch", rule: parentOff ? "parentOff" : "paused",
+          reason: parentOff
+            ? `This ${unitLabel} is switched ON, but its ${/CAMPAIGN_PAUSED/i.test(m.status) ? "campaign" : "ad set"} is paused — so it delivers nothing. `
+              + `Turn the parent back on in Ads Manager, or unregister this.`
+            : `Paused — you turned this ${unitLabel} off, so it is not being judged. `
+              + `It stays here because you registered it; unregister to remove it.`
+              + (sinceReg && sinceReg.spend > 0 ? ` Last known: net ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)} since ${reg.registered_at}.` : ``) })
+        continue
+      }
 
       if (windows.w3.netRoas < rules.bleedRoas && windows.w3.spend >= rules.bleedSpend) {
         out.push({ ...base, kind: "kill", rule: "bleeding",
@@ -959,8 +1005,14 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       && !log.items.some(x => x.id === s.adset.id))
     const room = rules.autoDailyCap - log.items.length
     for (const s of eligible.slice(0, Math.max(0, room))) pauseAdset(s, true)
+    // ⚠ HINDI `killRows.length`. Dalawang bagay ang nakakalimutan ng haba lang:
+    // (1) ang pagbukas mo ng isang rule habang bukas na ang master — walang
+    // nagbabago sa bilang, kaya hindi tumatakbo hangga't wala nang iba; at
+    // (2) ang pagpalit ng isang kill row ng iba (pareho ang haba, ibang laman).
+    // Ang mga ID at ang mga rule na naka-on ang tunay na pagkakakilanlan.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rules.autoMaster, loading, killRows.length])
+  }, [rules.autoMaster, rules.autoRules.bleeding, rules.autoRules.lowRoas, rules.autoRules.noSales,
+    rules.autoDailyCap, loading, killRows.map(s => `${s.adset.id}:${s.rule}`).sort().join(",")])
 
   // ── Rehistro: pumili ng ad set na susundan (Scaling tab lang) ──────────────
   const [pickOpen, setPickOpen] = useState(false)
@@ -1051,9 +1103,15 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         from = t.amount; to = t.amount   // naitala pero hindi muling itinaas
       } else {
         try {
+          // ⚠ ANG FIELD AY SUMUSUNOD SA URI NG BUDGET. Dating `daily_budget`
+          // palagi — kaya ang lifetime-budget na target ay tatanggihan ni Meta,
+          // o mas malala, bibigyan ng daily budget na hindi hiningi. Wala pang
+          // lifetime sa 28 nakarehistro (nasukat Ago 17 2026), pero hindi iyon
+          // dahilan para manghula.
+          const field = t.kind === "lifetime" ? "lifetime_budget" : "daily_budget"
           const j = await fetch("/api/fb/manage", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: s.adset.account.token, action: "update", id: t.id, daily_budget: to }),
+            body: JSON.stringify({ token: s.adset.account.token, action: "update", id: t.id, [field]: to }),
           }).then(r => r.json())
           applied = !!j.success
           if (!j.success) setErrors(p => [...p, `${s.adset.name}: ${t.level} budget update failed — ${String(j.error).slice(0, 90)}`])
@@ -1291,6 +1349,19 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         <span className="text-[11px] text-slate-400">
           {!isCampaign && <>{s.adset.campaignName} · </>}{s.adset.account.name}
         </span>
+        {/* HINDI UMAANDAR — sabihin sa mukha ng row, hindi lang sa reason text.
+            Dalawang magkaibang kuwento: "pinatay ko ito" laban sa "buhay ito,
+            ang magulang ang patay" — isang switch lang ang layo ng pangalawa sa
+            pagtakbo, kaya hindi dapat pareho ang mukha nila. */}
+        {!/active/i.test(s.adset.status) && (
+          <span title={`Meta: ${s.adset.status}${s.adset.ownStatus ? ` · its own switch: ${s.adset.ownStatus}` : ""}`}
+            className={`text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
+              s.rule === "parentOff" ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
+            {s.rule === "parentOff"
+              ? (/CAMPAIGN_PAUSED/i.test(s.adset.status) ? "Campaign off" : "Ad set off")
+              : "Paused"}
+          </span>
+        )}
         {/* EDAD — MADILIM na pill, NEON na teksto. Hatol ng may-ari (Ago 17
             2026). Berde ito dati at napagkakamalang katulad ng "Active" na
             nakatabi lang; naging neutral, tapos buong-neon, tapos baligtad na
@@ -1335,7 +1406,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           {/* Scaling tab: Scale (itinataas ang campaign budget). Testing tab:
               KILL — ang testing na pumalya ay pinapatay, hindi ini-scale; ang
               nanalo ay inililipat sa scaling campaign sa Ads Manager. */}
-          {isCampaign && s.reg && budgetTarget(s.adset).level !== "none" && (
+          {/* ⚠ Walang Scale sa hindi umaandar. Dating wala itong tsek sa status,
+              kaya may Scale pa ang patay na campaign — ang pagtataas ng budget
+              ng hindi gumagastos ay walang ibig sabihin, at ang pindutan ay
+              nangangako ng galaw na wala namang mangyayari. */}
+          {isCampaign && s.reg && /active/i.test(s.adset.status) && budgetTarget(s.adset).level !== "none" && (
             <button onClick={() => setScaleFor(s)} disabled={busy === "scale"}
               title="Raises the CAMPAIGN budget (CBO)"
               className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
@@ -1921,7 +1996,23 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         </div>
       ) : (
         <>
-          {view.length === 0 && registry.loaded && !registry.error && !isMonitoring && (
+          {/* ⚠ "Nothing registered yet" AY DAPAT TOTOO. Dating `view.length === 0`
+              ang batayan — pero sinasala ng `view` ang owner at ang ad account,
+              kaya ang 11 nakarehistrong campaign na nakatago ng isang filter ay
+              nagbubunga ng "wala kang nairehistro": kasinungalingan na mukhang
+              nawalan ng datos. Ang REHISTRO ang tinatanong ngayon, hindi ang
+              tanawin — at may hiwalay nang sabi para sa "nasala lang". */}
+          {view.length > 0 || !registry.loaded || registry.error || isMonitoring ? null
+            : registry.regs.some(r => r.level === level) ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-[13px] text-amber-800 flex flex-wrap items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span><b>{registry.regs.filter(r => r.level === level).length} registered</b>, but the current filter hides all of them.</span>
+              <button onClick={() => { setFOwner("All"); setFAccount("ALL") }}
+                className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-amber-300 hover:bg-amber-100 whitespace-nowrap">
+                Show all →
+              </button>
+            </div>
+          ) : (
             <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-[13px] text-blue-800">
               <b>Nothing registered yet.</b> Click <b>Register {isCampaign ? "campaigns" : "ad sets"}</b> to pick what to follow —
               monitoring starts the day you register.
