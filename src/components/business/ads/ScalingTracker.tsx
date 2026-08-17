@@ -1298,12 +1298,14 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             layer ay pumapalit sa mga token; hindi nito nasasagasaan ang ganap na
             halaga, kaya iisa ang itsura sa dalawang tema — na siyang punto.
             (Wala ring `.dark .bg-black`, kaya tunay na itim ito saanman.)
-            ⚠ Kailangan ang neon na gilid. Sa dark ay halos kasing-itim ng pahina
-            ang pill, kaya ang gilid ang tanging nagbibigay ng hugis; sa light
-            naman ay malakas na mag-isa ang itim kontra puti. */}
+            ⚠ WALANG GILID — inalis ng may-ari. Sa dark ay banayad na lang ang
+            pill kontra hilera (1.2:1), pero hindi ito kailangan: 15.39:1 ang
+            neon kahit direkta kontra hilera, kaya mababasa pa rin. Sa light ay
+            ang ITIM ang mahalaga (21:1) — 1.11:1 lang ang neon kontra puti,
+            kaya huwag na huwag aalisin ang itim na pill. */}
         {s.adset.createdTime && (
           <span title={`Created ${s.adset.createdTime.slice(0, 10)}`}
-            className="text-[11px] font-bold bg-black text-[#EFFF00] border border-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
+            className="text-[11px] font-bold bg-black text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
             {daysOld(s.adset.createdTime)}d old
           </span>
         )}
@@ -1794,7 +1796,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                           matagal nang tumatakbo? */}
                       {m.createdTime && (
                         <span className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[11px] font-bold bg-black text-[#EFFF00] border border-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
+                          <span className="text-[11px] font-bold bg-black text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
                             {daysOld(m.createdTime)}d old
                           </span>
                           <span className="text-[11px] text-slate-400">created {m.createdTime.slice(0, 10)}</span>
