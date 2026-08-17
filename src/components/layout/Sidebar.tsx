@@ -237,11 +237,19 @@ export function Sidebar({ plan, userName, onLogout }: SidebarProps) {
 
   return (
     <aside className="w-64 h-screen bg-slate-900 flex flex-col text-slate-300 flex-shrink-0">
-      {/* Logo */}
-      <div className="h-16 flex items-center px-6 border-b border-slate-800">
-        <Link href="/business/dashboard" className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-green-600 flex items-center justify-center text-white font-bold text-sm">₱</div>
-          <span className="font-bold text-white text-lg">PesoWise ERP</span>
+      {/* Logo. Ang "ERP" ay pinapahina para ang PANGALAN ang mabasa muna —
+          wordmark ito, hindi pangungusap. Ang marka ay may gradient at singsing
+          kaya may lalim sa madilim na tabing imbes na patag na kahon. */}
+      <div className="h-16 flex items-center px-5 border-b border-slate-800 shrink-0">
+        <Link href="/business/dashboard" className="group flex items-center gap-2.5 rounded-lg -mx-1 px-1 py-1">
+          <span className="grid place-items-center w-8 h-8 rounded-lg text-white font-bold text-[15px] shrink-0
+            bg-gradient-to-br from-emerald-400 to-green-600 ring-1 ring-inset ring-white/25
+            shadow-[0_2px_8px_rgba(16,185,129,0.35)]
+            transition-transform duration-200 group-hover:scale-105">₱</span>
+          <span className="font-bold text-lg leading-none tracking-tight">
+            <span className="text-white">PesoWise</span>
+            <span className="text-slate-500 font-semibold ml-1 text-sm align-middle">ERP</span>
+          </span>
         </Link>
       </div>
 
@@ -253,14 +261,23 @@ export function Sidebar({ plan, userName, onLogout }: SidebarProps) {
             return (
               <div key={section.section} className="pt-3">
                 {/* Section header */}
+                {/* Ang tuldok ay lumalabas kapag ang KASALUKUYANG pahina ay nasa
+                    loob ng seksyong ito — kaya kahit tiklop, alam mo kung saan ka. */}
                 <button
                   onClick={() => toggleSection(section.section)}
-                  className="w-full flex items-center justify-between px-3 py-1 mb-1 group"
+                  aria-expanded={!collapsed}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-1 mb-1 rounded-md group hover:bg-slate-800/40 transition-colors"
                 >
-                  <span className="text-[11px] font-semibold tracking-widest text-slate-500 group-hover:text-slate-400 transition-colors">
+                  <span className={cn(
+                    "text-[11px] font-semibold tracking-widest transition-colors truncate",
+                    sectionActive ? "text-slate-300" : "text-slate-500 group-hover:text-slate-400"
+                  )}>
                     {section.section}
                   </span>
-                  <ChevronDown className={cn("w-3 h-3 text-slate-600 transition-transform", collapsed && "-rotate-90")} />
+                  <span className="flex items-center gap-1.5 shrink-0">
+                    {sectionActive && collapsed && <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
+                    <ChevronDown className={cn("w-3 h-3 text-slate-600 group-hover:text-slate-400 transition-[transform,color] duration-200", collapsed && "-rotate-90")} />
+                  </span>
                 </button>
                 {/* Section items */}
                 {!collapsed && (
@@ -285,16 +302,22 @@ export function Sidebar({ plan, userName, onLogout }: SidebarProps) {
                               <span className="flex-1 text-left leading-tight">{item.label}</span>
                               <ChevronDown className={cn("w-3.5 h-3.5 text-slate-500 transition-transform", !open && "-rotate-90")} />
                             </button>
+                            {/* Guhit na patayo sa kaliwa ng mga anak — ang pagkakabit
+                                sa magulang ay nakikita, hindi hinuhulaan mula sa indent. */}
                             {open && (
-                              <div className="space-y-0.5">
+                              <div className="relative space-y-0.5 pw-rise">
+                                <span aria-hidden className="absolute left-[22px] top-1 bottom-1 w-px bg-slate-800" />
                                 {item.children.map(c => (
                                   <Link key={c.href} href={c.href}
+                                    aria-current={c.href === bestHref ? "page" : undefined}
                                     className={cn(
-                                      "flex items-center pl-10 pr-3 py-2 text-sm rounded-lg transition-colors",
-                                      c.href === bestHref ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-slate-200"
+                                      "relative flex items-center pl-10 pr-3 py-2 text-sm rounded-lg transition-colors",
+                                      c.href === bestHref
+                                        ? "bg-blue-600 text-white font-medium shadow-[0_1px_6px_rgba(37,99,235,0.4)]"
+                                        : "hover:bg-slate-800 text-slate-400 hover:text-slate-200"
                                     )}
                                   >
-                                    <span className="flex-1 leading-tight">{c.label}</span>
+                                    <span className="flex-1 leading-tight truncate">{c.label}</span>
                                   </Link>
                                 ))}
                               </div>
@@ -306,14 +329,20 @@ export function Sidebar({ plan, userName, onLogout }: SidebarProps) {
                         <Link
                           key={item.href}
                           href={locked ? "#" : item.href}
+                          aria-current={active ? "page" : undefined}
                           className={cn(
-                            "flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors",
-                            active ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-slate-200",
+                            "group/nav relative flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-[background-color,color,box-shadow] duration-150",
+                            active
+                              // Ang aktibo ay may sariling lalim: banayad na gradient at
+                              // anino, hindi patag na bloke ng asul.
+                              ? "bg-gradient-to-r from-blue-600 to-blue-500 text-white font-medium shadow-[0_1px_8px_rgba(37,99,235,0.45)]"
+                              : "hover:bg-slate-800 text-slate-400 hover:text-slate-200",
                             locked && "opacity-50 cursor-not-allowed"
                           )}
                         >
-                          <item.icon className="w-4 h-4 flex-shrink-0" />
-                          <span className="flex-1 leading-tight">{item.label}</span>
+                          <item.icon className={cn("w-4 h-4 flex-shrink-0 transition-transform duration-150",
+                            !active && "group-hover/nav:scale-110")} />
+                          <span className="flex-1 leading-tight truncate">{item.label}</span>
                           {locked && (
                             <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-medium">PRO</span>
                           )}
