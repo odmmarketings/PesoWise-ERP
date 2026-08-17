@@ -133,10 +133,14 @@ export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad", n
   //    ang lumalabas sa hindi pa umaandar (iniulat ng may-ari, Ago 17 2026).
   //    Nauuna ang pause at ang tanggi rito — kapag hinintuan mo ang naka-schedule
   //    ay "Off" ang sabi ng Ads Manager, hindi "Scheduled".
-  //    Naka-slate, hindi amber: walang mali — hindi pa lang panahon.
+  //    BERDE ang Scheduled, kapareho ng Active — hatol ng may-ari (Ago 17 2026).
+  //    Malusog ito: nakabukas, tama ang pagkakatakda, wala lang gagawin hangga't
+  //    hindi sumasapit ang oras. Ang kulay-abo ay para sa hindi na tatakbo, at
+  //    hindi iyon ang kalagayan nito. (Kulay-abo ito sa Ads Manager ni Meta —
+  //    sinadya nating lumihis.) Ang COMPLETED ay kulay-abo pa rin: tapos na iyon.
   const start = r.startTime ? Date.parse(r.startTime) : NaN
   const stop = r.stopTime ? Date.parse(r.stopTime) : NaN
-  if (!Number.isNaN(start) && start > now) return { label: "Scheduled", tone: "off" }
+  if (!Number.isNaN(start) && start > now) return { label: "Scheduled", tone: "on" }
   if (!Number.isNaN(stop) && stop <= now) return { label: "Completed", tone: "off" }
   // 4. Buhay ako — pero may naipapadala ba talaga? Tanungin ang mga anak.
   //    -1 = walang datos ng anak; huwag manghula.
