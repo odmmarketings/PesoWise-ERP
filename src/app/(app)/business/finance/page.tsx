@@ -2,6 +2,8 @@
 import { useState, useMemo, useEffect, useCallback } from "react"
 import { PieChart, ChevronDown, TrendingUp, TrendingDown, Wallet, ShoppingCart, Megaphone, RefreshCw, Truck, Percent } from "lucide-react"
 import { format, startOfMonth } from "date-fns"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts"
+import { StatCard, ChartPanel, LoadingBar } from "@/components/ui/dash"
 import { useBookkeeping } from "@/lib/bookkeeping-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
 import { useActivePages } from "@/lib/pages-store"
@@ -42,30 +44,43 @@ function BankCard({ bank, dateLabel }: { bank: BankData; dateLabel: string }) {
   const isNegative = bank.runningBalance < 0
 
   return (
-    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white transition-shadow hover:shadow-md">
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-start justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left"
+        aria-expanded={open}
+        className="w-full flex items-start justify-between gap-3 px-4 sm:px-5 py-4 hover:bg-slate-50 transition-colors text-left"
       >
-        <div>
-          <p className="text-sm font-bold text-slate-800">{bank.name}</p>
+        {/* Ang kulay ng bangko ay isang manipis na guhit sa kaliwa, hindi buong
+            bloke — pinapayagan itong makilala nang hindi nakikipagkumpitensya sa
+            halaga, na siyang tunay na sagot ng card. */}
+        <span className={`w-1 self-stretch rounded-full ${bank.color} shrink-0 opacity-80`} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold text-slate-800 truncate">{bank.name}</p>
           <p className="text-xs text-slate-500 mt-0.5">
             Running Balance:{" "}
-            <span className={`font-semibold underline underline-offset-2 ${isNegative ? "text-red-500" : "text-slate-700"}`}>
+            <span className={`font-semibold tabular-nums ${isNegative ? "text-red-500" : "text-slate-700"}`}>
               {isNegative ? "-" : ""}{fmtPeso(Math.abs(bank.runningBalance))}
             </span>
           </p>
         </div>
-        <ChevronDown className={`w-4 h-4 text-slate-400 mt-1 transition-transform flex-shrink-0 ${open ? "rotate-180" : ""}`} />
+        <span className="flex items-center gap-1.5 shrink-0 mt-0.5">
+          <span className="text-[10px] font-semibold text-slate-400 hidden sm:inline">
+            {bank.transactions.length} type{bank.transactions.length === 1 ? "" : "s"}
+          </span>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        </span>
       </button>
 
       {open && (
-        <div className="border-t border-slate-100 px-5 pb-5">
+        <div className="pw-rise border-t border-slate-100 px-4 sm:px-5 pb-5">
           <div className="text-center py-3 border border-slate-200 rounded-lg mt-4 mb-0 bg-slate-50">
             <p className="text-xs font-semibold text-slate-600">{dateLabel}</p>
           </div>
 
-          <table className="w-full text-sm mt-0 border border-slate-200 rounded-lg overflow-hidden">
+          {/* Sa cellphone, ang tatlong kolum ng pera ay pwedeng lumampas sa lapad —
+              pinapayagan ang scroll sa loob nito imbes na sirain ang card. */}
+          <div className="overflow-x-auto scrollbar-dark -mx-1 px-1">
+          <table className="w-full text-sm mt-0 border border-slate-200 rounded-lg overflow-hidden min-w-[380px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-600">Type of Expense</th>
@@ -89,11 +104,12 @@ function BankCard({ bank, dateLabel }: { bank: BankData; dateLabel: string }) {
               ))}
               <tr className="border-t-2 border-slate-300 bg-slate-50">
                 <td className="px-4 py-2.5 text-xs font-bold text-slate-800 uppercase">Total</td>
-                <td className="px-4 py-2.5 text-sm font-bold text-slate-800">{fmtPeso(totalDebit)}</td>
-                <td className="px-4 py-2.5 text-sm font-bold text-slate-800">{fmtPeso(totalCredit)}</td>
+                <td className="px-4 py-2.5 text-sm font-bold text-slate-800 tabular-nums">{fmtPeso(totalDebit)}</td>
+                <td className="px-4 py-2.5 text-sm font-bold text-slate-800 tabular-nums">{fmtPeso(totalCredit)}</td>
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
@@ -222,16 +238,40 @@ export default function BusinessFinancePage() {
     { label: "SHIPPING FEE", amount: shippingTotal, color: "bg-indigo-500", icon: Truck, tip: "Live J&T + SPX courier fees (Sales Tracker source) + Book Keeping shipping-flagged debits." },
   ]
 
+  // ── MGA CHART ──────────────────────────────────────────────────────────────
+  // ⚠ WALANG BAGONG PINAGKUKUNAN. Ang dalawang chart ay ang MISMONG numerong
+  // pinipinta na ng mga card sa itaas, nakahanay lang para makita ang laki ng
+  // isa kontra sa iba — na hindi kayang sabihin ng walong hiwalay na card.
+  const spendMix = useMemo(() => [
+    { name: "COG", amount: m.cog, fill: "#f97316" },
+    { name: "Adspent", amount: adspentTotal, fill: "#a855f7" },
+    { name: "Shipping", amount: shippingTotal, fill: "#6366f1" },
+    { name: "12% VAT", amount: vat, fill: "#f43f5e" },
+    { name: "OPEX", amount: m.opex, fill: "#64748b" },
+  ].filter(d => d.amount > 0).sort((a, b) => b.amount - a.amount),
+    [m.cog, m.opex, adspentTotal, shippingTotal, vat])
+
+  const bankMix = useMemo(() => banks
+    .map(b => ({ name: b.name, amount: b.runningBalance }))
+    .sort((a, b) => b.amount - a.amount), [banks])
+  const anyBankMoved = bankMix.some(b => b.amount !== 0)
+
   return (
     <div className="w-full space-y-4">
 
-      <div className="flex items-center justify-between flex-wrap gap-2 pb-4 mb-1 border-b border-slate-100">
-        <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><PieChart className="w-5 h-5" /> FINANCE OVERVIEW</h1>
+      <div className="relative flex items-center justify-between flex-wrap gap-2 pb-4 mb-1 border-b border-slate-100">
+        <LoadingBar show={loadingRows} />
+        <h1 className="text-base sm:text-lg font-bold text-blue-600 flex items-center gap-2 tracking-tight min-w-0">
+          <span className="grid place-items-center w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 shrink-0">
+            <PieChart className="w-4 h-4" />
+          </span>
+          <span className="truncate">FINANCE OVERVIEW</span>
+        </h1>
         <div className="flex items-center gap-2">
           <DateRangePicker a={dateA} b={dateB} variant="header"
             onApply={(a, b) => { setDateA(a || defaultDateA()); setDateB(b || defaultDateB()) }} placeholder="This month" />
           <button onClick={loadRows} title="Refresh live courier / adspent data"
-            className="h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">
+            className="flex items-center justify-center h-9 w-9 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors active:scale-95">
             <RefreshCw className={`w-4 h-4 ${loadingRows ? "animate-spin" : ""}`} />
           </button>
         </div>
@@ -248,18 +288,57 @@ export default function BusinessFinancePage() {
 
       {/* 2 kada hanay sa cellphone — hindi kasya ang halaga sa 3 kolum sa 375px */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-        {financeCards.map(card => (
-          <div key={card.label} title={card.tip}
-            className={`relative overflow-hidden ${card.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-default hover:opacity-95 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]`}>
-            <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
-              <card.icon strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
-            </div>
-            <div className="text-right ml-auto z-10">
-              <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>
-              <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">{card.label}</p>
-            </div>
-          </div>
+        {financeCards.map((card, i) => (
+          <StatCard key={card.label} label={card.label} color={card.color} icon={card.icon}
+            raw={card.amount} format={fmtPeso} value={fmtPeso(card.amount)}
+            title={card.tip} index={i} />
         ))}
+      </div>
+
+      {/* ── MGA CHART — SARADO SA SIMULA ───────────────────────────────────
+          Hindi naka-mount hangga't hindi binubuksan; naaalala ang pinili mo. */}
+      <div className="space-y-2.5">
+        <ChartPanel title="Where the money went" storageKey="pw_fin_mix"
+          subtitle="The same figures as the cards above, side by side"
+          count={spendMix.length}>
+          {spendMix.length === 0 ? (
+            <p className="text-sm text-slate-400 italic py-8 text-center">No expenses recorded in this range.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(180, spendMix.length * 46)}>
+              <BarChart data={spendMix} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} axisLine={false}
+                  tickFormatter={(v: number) => v >= 1000 ? `${Math.round(v / 1000)}k` : String(v)} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={76} />
+                <Tooltip formatter={(v: any) => fmtPeso(Number(v))} />
+                <Bar dataKey="amount" radius={[0, 5, 5, 0]} animationDuration={520}>
+                  {spendMix.map(d => <Cell key={d.name} fill={d.fill} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartPanel>
+
+        <ChartPanel title="Balance per bank" storageKey="pw_fin_banks"
+          subtitle="Inflow − outflow in range · red means it went out more than it came in"
+          count={bankMix.length}>
+          {!anyBankMoved ? (
+            <p className="text-sm text-slate-400 italic py-8 text-center">No bank movement in this range.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(180, bankMix.length * 42)}>
+              <BarChart data={bankMix} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} axisLine={false}
+                  tickFormatter={(v: number) => Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : String(v)} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={96} />
+                <Tooltip formatter={(v: any) => fmtPeso(Number(v))} />
+                <Bar dataKey="amount" radius={[0, 5, 5, 0]} animationDuration={520}>
+                  {bankMix.map(b => <Cell key={b.name} fill={b.amount < 0 ? "#ef4444" : "#10b981"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartPanel>
       </div>
 
       <hr className="border-slate-200" />
@@ -283,13 +362,16 @@ export default function BusinessFinancePage() {
 
       {/* Sa cellphone, pumapatong ang label at halaga — kaya nagsasalansan
           (label sa itaas, halaga sa ibaba) sa maliit na screen. */}
-      <div className="relative overflow-hidden bg-slate-800 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      {/* Ang kabuuan. Ito ang huling sagot ng pahina, kaya ito lang ang may
+          sariling laki at sariling anino — hindi ito isa pa sa mga card. */}
+      <div className="pw-rise relative overflow-hidden bg-slate-800 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3
+        ring-1 ring-inset ring-white/10 shadow-lg">
         <CardDecoration icon={Wallet} className="-left-3 -top-3" />
         <div className="z-10">
           <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Actual Company Fund</p>
           <p className="text-xs text-slate-500 mt-1">{banks.length} bank{banks.length === 1 ? "" : "s"} combined · inflow − outflow</p>
         </div>
-        <p className={`text-2xl sm:text-3xl font-bold z-10 ${totalFund < 0 ? "text-red-400" : "text-white"}`}>
+        <p className={`text-2xl sm:text-3xl font-bold z-10 tabular-nums ${totalFund < 0 ? "text-red-400" : "text-white"}`}>
           {totalFund < 0 ? "-" : ""}{fmtPeso(Math.abs(totalFund))}
         </p>
       </div>

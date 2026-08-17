@@ -3,9 +3,14 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
 import { Activity, TrendingUp, ShoppingBag, Package, Truck, RotateCcw, AlertCircle, XCircle, ArrowDownUp, Clock, RefreshCw } from "lucide-react"
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns"
+import {
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell,
+} from "recharts"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
+import { StatCard, ChartPanel, Skeleton, LoadingBar } from "@/components/ui/dash"
 
 function defaultDateA() { return format(startOfMonth(new Date()), "yyyy-MM-dd") }
 function defaultDateB() { return format(new Date(), "yyyy-MM-dd") }
@@ -78,7 +83,7 @@ function FilterButton({ label, active, onClick }: { label: string; active: boole
 
   return (
     <button ref={btnRef} onClick={onClick} onMouseEnter={handleEnter} onMouseLeave={handleLeave}
-      className={`px-4 py-1.5 font-medium border-r border-slate-200 last:border-r-0 transition-colors ${active ? "bg-slate-800 text-white" : "text-slate-500 hover:bg-slate-50"}`}>
+      className={`px-4 py-1.5 font-medium border-r border-slate-200 last:border-r-0 whitespace-nowrap transition-colors ${active ? "bg-slate-800 text-white" : "text-slate-500 hover:bg-slate-50"}`}>
       {label}
       {rendered && pos && tip && typeof document !== "undefined" && createPortal(
         <div style={{ position: "fixed", left: pos.left, top: pos.top, transform: "translateX(-50%)" }}
@@ -384,28 +389,59 @@ export default function BusinessDashboardPage() {
   const deliveredPct = agg.totalOrders > 0 ? ((agg.delivered / agg.totalOrders) * 100).toFixed(2) + "%" : "0%"
   const rtsPct = agg.totalOrders > 0 ? ((totalRTS / agg.totalOrders) * 100).toFixed(2) + "%" : "0%"
 
+  // ── ANG MGA CHART ────────────────────────────────────────────────────────
+  // ⚠ WALANG BAGONG HILA. Ang dalawang chart sa ibaba ay binubuo mula sa
+  // `dailyData` at `agg` na NASA STATE NA — ang mga numerong pinipinta na ng
+  // mga card at ng breakdown modal. Kaya walang dagdag na request kay Pancake,
+  // at IMPOSIBLENG hindi tumugma ang chart sa card: iisa ang pinagmulan.
+  const trendData = useMemo(() => dailyRows.map(r => ({
+    // "08-14" — ang taon ay hindi kailangan sa axis, at kumakain ng lapad sa cellphone.
+    day: r.date.slice(5),
+    amount: r.amount,
+    parcels: r.count,
+  })), [dailyRows])
+
+  // Ang bawat hakbang ng parcel, sa PAGKAKASUNOD ng tunay na paglalakbay —
+  // hindi ayon sa laki. Ang hugis ng pagbaba ang kuwento: saan nauubos.
+  const funnelData = useMemo(() => [
+    { name: "Shipped", count: agg.shipped, amount: agg.shippedSales, fill: "#14b8a6" },
+    { name: "In-Transit", count: agg.inTransit, amount: agg.inTransitSales, fill: "#0d9488" },
+    { name: "On-Delivery", count: agg.onDelivery, amount: agg.onDeliverySales, fill: "#f97316" },
+    { name: "Delivered", count: agg.delivered, amount: agg.deliveredSales, fill: "#a855f7" },
+    { name: "For Return", count: agg.returning, amount: agg.returningSales, fill: "#fb923c" },
+    { name: "Returned", count: agg.returned, amount: agg.returnedSales, fill: "#ef4444" },
+  ], [agg])
+  const funnelHasData = funnelData.some(d => d.count > 0)
+
   return (
     <div className="w-full space-y-4">
 
-      {/* Title + Date */}
-      <div className="flex items-center justify-between flex-wrap gap-2 pb-4 mb-1 border-b border-slate-100">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Activity className="w-5 h-5" /> SALES WAREHOUSE LOGISTICS</h1>
-          {loading && (
-            <div className="flex items-center gap-1.5 text-xs text-blue-600">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              <span>Loading...</span>
-            </div>
+      {/* Title + Date. Ang gumagapang na guhit sa ilalim ang tanda ng paghila —
+          nasa gilid ng pahina, hindi sa gitna ng datos, kaya hindi ito nakakaabala
+          habang binabasa mo ang mga numerong dumating na. */}
+      <div className="relative flex items-center justify-between flex-wrap gap-2 pb-4 mb-1 border-b border-slate-100">
+        <LoadingBar show={loading || loadingDetails} />
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-base sm:text-lg font-bold text-blue-600 flex items-center gap-2 tracking-tight">
+            <span className="grid place-items-center w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 shrink-0">
+              <Activity className="w-4 h-4" />
+            </span>
+            <span className="truncate">SALES WAREHOUSE LOGISTICS</span>
+          </h1>
+          {(loading || loadingDetails) && (
+            <span className="hidden sm:inline text-xs text-blue-600 font-medium">
+              {loading ? "Counting orders…" : "Computing amounts…"}
+            </span>
           )}
-          {!loading && lastFetched && (
-            <span className="text-xs text-slate-400">Updated {lastFetched}</span>
+          {!loading && !loadingDetails && lastFetched && (
+            <span className="hidden sm:inline text-xs text-slate-400 whitespace-nowrap">Updated {lastFetched}</span>
           )}
         </div>
         <div className="flex items-center gap-2">
           <DateRangePicker a={dateA} b={dateB} variant="header"
             onApply={(a, b) => { setDateA(a || defaultDateA()); setDateB(b || defaultDateB()) }} placeholder="This month" />
           <button onClick={loadData} disabled={loading} title="Refresh"
-            className="flex items-center justify-center h-9 w-9 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
+            className="flex items-center justify-center h-9 w-9 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 shadow-sm disabled:opacity-50 transition-colors active:scale-95">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
@@ -465,19 +501,10 @@ export default function BusinessDashboardPage() {
       {/* TODAY'S SALES — isang card lang ito, kaya buong lapad sa cellphone at
           1/3 lang sa desktop (para tumugma sa hanay sa ilalim). */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-        <div className="relative overflow-hidden bg-slate-800 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]">
-          <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
-            <ShoppingBag strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
-          </div>
-          <div className="text-right ml-auto z-10">
-            {loadingDetails
-              ? <RefreshCw className="w-5 h-5 text-white/80 animate-spin ml-auto" />
-              : <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(agg.todaySales)}</p>}
-            <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">
-              TODAY&apos;S SALES ({loadingDetails ? "…" : agg.todayOrders})
-            </p>
-          </div>
-        </div>
+        <StatCard label="TODAY'S SALES" color="bg-slate-800" icon={ShoppingBag}
+          raw={agg.todaySales} format={fmtPeso} value={fmtPeso(agg.todaySales)}
+          meta={loadingDetails ? "…" : String(agg.todayOrders)}
+          loading={loadingDetails} index={0} />
       </div>
 
       {/* Divider + As of label */}
@@ -494,22 +521,14 @@ export default function BusinessDashboardPage() {
           { label: "TOTAL SALES", count: agg.totalOrders, amount: agg.totalSales, color: "bg-blue-500", icon: TrendingUp },
           { label: "FULFILLED", count: agg.fulfilled, amount: agg.fulfilledSales, color: "bg-emerald-500", icon: Package },
           { label: "UNFULFILLED", count: agg.unfulfilled, amount: agg.unfulfilledSales, color: "bg-amber-400", icon: Clock },
-        ].map(card => (
-          <div key={card.label}
+        ].map((card, i) => (
+          // Ang bilang ay handa na sa phase 1; ang halaga ay naghihintay sa tumpak
+          // na pagkuwenta ng phase 2 imbes na magpakita ng aggregate na mali.
+          <StatCard key={card.label} label={card.label} color={card.color} icon={card.icon}
+            raw={card.amount} format={fmtPeso} value={fmtPeso(card.amount)}
+            meta={String(card.count)} loading={loadingDetails} index={i + 1}
             onClick={card.label === "TOTAL SALES" ? () => setSalesModalOpen(true) : undefined}
-            className={`relative overflow-hidden ${card.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]`}>
-            <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
-              <card.icon strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
-            </div>
-            {/* Ang bilang ay handa na sa phase 1; ang halaga ay naghihintay sa tumpak
-                na pagkuwenta ng phase 2 imbes na magpakita ng aggregate na mali. */}
-            <div className="text-right ml-auto z-10">
-              {loadingDetails
-                ? <RefreshCw className="w-5 h-5 text-white/80 animate-spin ml-auto" />
-                : <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>}
-              <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">{card.label} ({card.count})</p>
-            </div>
-          </div>
+            title={card.label === "TOTAL SALES" ? "Open the per-day breakdown" : undefined} />
         ))}
       </div>
 
@@ -540,36 +559,82 @@ export default function BusinessDashboardPage() {
           { label: "FOR RETURN", sub: "Returning — pabalik palang", count: agg.returning, amount: agg.returningSales, color: "bg-orange-400", pct: null, icon: RotateCcw, late: false },
           { label: "RETURNED", sub: "Back in the warehouse", count: agg.returned, amount: agg.returnedSales, color: "bg-red-500", pct: null, icon: XCircle, late: false },
           { label: "TOTAL RTS", sub: null, count: totalRTS, amount: totalRTSSales, color: "bg-red-600", pct: rtsPct, icon: ArrowDownUp, late: false },
-        ].map(card => {
+        ].map((card, i) => {
           // Lahat ng HALAGA ay galing sa phase 2 (doon lang natutuwid ang 100×). Ang BILANG
           // naman ay handa na sa phase 1 maliban sa mga naka-`late` — courier sub-status at
           // ang nakaraang buwan, na pagination lang ang makapagsasabi.
           const pending = loadingDetails
           const countPending = card.late && loadingDetails
           return (
-          <div key={card.label}
-            className={`relative overflow-hidden ${card.color} rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between h-[70px] sm:h-[78px]`}>
-            <div className="absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none">
-              <card.icon strokeWidth={1} className="w-16 h-16 opacity-[0.08] text-white -ml-2" />
-            </div>
-            <div className="text-right ml-auto z-10">
-              {pending
-                ? <RefreshCw className="w-5 h-5 text-white/80 animate-spin ml-auto" />
-                : <p className="text-lg sm:text-2xl font-bold text-white leading-none">{fmtPeso(card.amount)}</p>}
-              <p className="text-[11px] text-white/70 font-semibold mt-1 tracking-wider uppercase leading-tight">
-                {card.label} ({countPending ? "…" : card.count}){card.pct ? <span className="ml-1 font-bold">{card.pct}</span> : null}
-              </p>
-            </div>
-          </div>
+            <StatCard key={card.label} label={card.label} color={card.color} icon={card.icon}
+              raw={card.amount} format={fmtPeso} value={fmtPeso(card.amount)}
+              meta={countPending ? "…" : String(card.count)} pct={card.pct}
+              loading={pending} index={i} title={card.sub || undefined} />
           )
         })}
       </div>
 
+      {/* ── MGA CHART — SARADO SA SIMULA ───────────────────────────────────
+          Hiling ng may-ari (Ago 18 2026): idagdag pero itago. Kaya hindi lang
+          nakatago — HINDI NAKA-MOUNT hangga't hindi binubuksan, kaya walang
+          Recharts na nagtatrabaho para sa bagay na walang nakakakita. Ang
+          pinili mo ay naaalala sa browser na ito. */}
+      <div className="space-y-2.5">
+        <ChartPanel title="Sales per day" storageKey="pw_dash_trend"
+          subtitle={`${trendData.length} day${trendData.length === 1 ? "" : "s"} in range · amount and parcel count`}>
+          {loadingDetails ? (
+            <Skeleton className="h-[220px] w-full text-slate-400" />
+          ) : trendData.length === 0 ? (
+            <p className="text-sm text-slate-400 italic py-8 text-center">No sales in the selected range.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="pwSales" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={16} />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={56}
+                  tickFormatter={(v: number) => v >= 1000 ? `${Math.round(v / 1000)}k` : String(v)} />
+                <Tooltip formatter={(v: any, n: any) => n === "amount" ? fmtPeso(Number(v)) : `${v} parcels`}
+                  labelFormatter={(l: any) => `Day ${l}`} />
+                <Area type="monotone" dataKey="amount" stroke="#3b82f6" strokeWidth={2}
+                  fill="url(#pwSales)" animationDuration={520} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </ChartPanel>
+
+        <ChartPanel title="Parcel journey" storageKey="pw_dash_funnel"
+          subtitle="Where parcels are, in travel order — the shape of the drop-off is the story">
+          {loadingDetails ? (
+            <Skeleton className="h-[220px] w-full text-slate-400" />
+          ) : !funnelHasData ? (
+            <p className="text-sm text-slate-400 italic py-8 text-center">No parcel movement in the selected range.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={funnelData} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={84} />
+                <Tooltip formatter={(v: any, _n: any, p: any) => [`${v} parcels · ${fmtPeso(p.payload.amount)}`, p.payload.name]} />
+                <Bar dataKey="count" radius={[0, 5, 5, 0]} animationDuration={520}>
+                  {funnelData.map(d => <Cell key={d.name} fill={d.fill} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartPanel>
+      </div>
+
       {/* Total Sales breakdown modal */}
       {salesModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-3 sm:p-4"
           onClick={() => setSalesModalOpen(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+          <div className="pw-rise bg-white rounded-xl shadow-2xl ring-1 ring-black/5 w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden"
             onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="flex items-start justify-between px-5 pt-4 pb-3 border-b border-slate-200">
@@ -627,7 +692,9 @@ export default function BusinessDashboardPage() {
               </table>
             </div>
 
-            {/* Fixed TOTAL footer — shrink-0 so it always shows all rows, no nested scroll */}
+            {/* Fixed TOTAL footer — shrink-0 so it always shows all rows, no nested scroll.
+                ⚠ `bg-yellow-100` ay may dark rule na (badge tint + singsing), kaya
+                hindi na ito nagiging nakakasilaw na dilaw na bloke sa madilim. */}
             <div className="shrink-0 border-t-2 border-slate-300 bg-yellow-100">
               <table className="w-full text-sm border-collapse">
                 <tbody>
