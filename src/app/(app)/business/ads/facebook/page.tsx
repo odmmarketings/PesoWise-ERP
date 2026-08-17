@@ -113,8 +113,8 @@ const DELIVERY_MAP: Record<string, string> = {
 //   SUCCESS   → tapos na; normal na "Active" ang ipapakita
 const LEARN_TARGET = 50
 type Learning = { status: string; conversions: number } | null
-type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; learning?: Learning }
-export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad"): { label: string; tone: "on" | "off" | "warn" | "bad" } {
+type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; learning?: Learning; startTime?: string; stopTime?: string }
+export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad", now = Date.now()): { label: string; tone: "on" | "off" | "warn" | "bad" } {
   const eff = String(r.status || "").toUpperCase()
   const own = String(r.configuredStatus || r.status || "").toUpperCase()
 
@@ -127,13 +127,24 @@ export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad"): 
     const bad = eff === "PENDING_BILLING_INFO"
     return { label: DELIVERY_MAP[eff], tone: bad ? "bad" : eff === "CAMPAIGN_PAUSED" || eff === "ADSET_PAUSED" || eff === "ARCHIVED" || eff === "DELETED" ? "off" : "warn" }
   }
-  // 3. Buhay ako — pero may naipapadala ba talaga? Tanungin ang mga anak.
+  // 3. Buhay ang switch — pero dumating na ba ang oras? Ang `effective_status`
+  //    ay HINDI tumitingin sa orasan: ACTIVE na agad ang isinasagot ni Meta sa
+  //    isang bagong gawang campaign na sa Lunes pa magsisimula, kaya "Active"
+  //    ang lumalabas sa hindi pa umaandar (iniulat ng may-ari, Ago 17 2026).
+  //    Nauuna ang pause at ang tanggi rito — kapag hinintuan mo ang naka-schedule
+  //    ay "Off" ang sabi ng Ads Manager, hindi "Scheduled".
+  //    Naka-slate, hindi amber: walang mali — hindi pa lang panahon.
+  const start = r.startTime ? Date.parse(r.startTime) : NaN
+  const stop = r.stopTime ? Date.parse(r.stopTime) : NaN
+  if (!Number.isNaN(start) && start > now) return { label: "Scheduled", tone: "off" }
+  if (!Number.isNaN(stop) && stop <= now) return { label: "Completed", tone: "off" }
+  // 4. Buhay ako — pero may naipapadala ba talaga? Tanungin ang mga anak.
   //    -1 = walang datos ng anak; huwag manghula.
   const on = r.kidsOn ?? -1, total = r.kidsTotal ?? -1
   if (level !== "ad" && total > 0 && on === 0) {
     return { label: level === "campaign" ? "Ad set off" : "Ads off", tone: "warn" }
   }
-  // 4. Buhay at may naipapadala — pero nag-aaral pa ba? Ang learning ay
+  // 5. Buhay at may naipapadala — pero nag-aaral pa ba? Ang learning ay
   //    pumapalit sa "Active" sa Ads Manager, hindi dinadagdag sa tabi nito.
   //    Campaign lang ang walang ganito (walang learning sa antas na iyon).
   const L = r.learning
@@ -1094,7 +1105,7 @@ type MgrFocus = {
   /** Bakit ka dinala rito, hal. "2nd scale · ₱1,000 → ₱1,100". Nasa banner. */
   note?: string
 }
-type MgrRow = Row & { createdTime: string; updatedTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number; learning: { status: string; conversions: number } | null }
+type MgrRow = Row & { createdTime: string; updatedTime: string; startTime: string; stopTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number; learning: { status: string; conversions: number } | null }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
 /** Ilang araw nang umiiral ang object — 0 kung walang petsa mula kay Meta. */
 const daysOldOf = (iso: string) => {
@@ -1514,7 +1525,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const cols = level === "ad" ? [...baseCols, ...AD_EXTRA_COLS] : baseCols   // ad-only extras at the end
   const toMgr = (r: any): MgrRow => {
     const a = accById(r.__accId) || account
-    return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "",
+    return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", startTime: r.startTime || "", stopTime: r.stopTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "",
       kidsOn: typeof r.kidsOn === "number" ? r.kidsOn : -1, kidsTotal: typeof r.kidsTotal === "number" ? r.kidsTotal : -1,
       learning: r.learning && r.learning.status ? { status: String(r.learning.status), conversions: Number(r.learning.conversions || 0) } : null }
   }
@@ -2047,7 +2058,11 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                                     : ` · its ad set has ${r.learning.conversions} of ~50 optimisation events`)
                                   : "")
                                 + (r.learning?.status === "FAIL" ? " · left learning without enough events — widen the audience, raise the budget, or merge ad sets" : "")
-                                + (level === "ad" && r.learning ? " (from its ad set)" : "")}
+                                + (level === "ad" && r.learning ? " (from its ad set)" : "")
+                                // Ang "Scheduled" ay walang saysay kung hindi mo alam kung kailan.
+                                + (d.label === "Scheduled" ? ` · starts ${fmtD(r.startTime)}` : "")
+                                + (d.label === "Completed" ? ` · ended ${fmtD(r.stopTime)}` : "")
+                                + (level === "ad" && (d.label === "Scheduled" || d.label === "Completed") ? " (from its ad set)" : "")}
                                 className={`text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${DELIVERY_TONE[d.tone]}`}>
                                 {d.label}
                               </span>

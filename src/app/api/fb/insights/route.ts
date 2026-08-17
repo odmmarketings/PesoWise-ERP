@@ -169,9 +169,16 @@ export async function GET(req: NextRequest) {
       // `learning_stage_info` ay AD SET lang ang may hawak — doon nangyayari ang
       // learning phase ni Meta. Ang campaign ay walang ganito, at ang ad ay
       // nagmamana mula sa ad set niya (hinihila sa ibaba).
+      // ⚠ ANG `start_time` AY KAILANGAN PARA SA "Scheduled". Hindi tumitingin sa
+      // oras ang `effective_status`: ang ad set na magsisimula pa sa Lunes ay
+      // ACTIVE na ang isinasagot ni Meta ngayon, kaya "Active" ang lalabas sa
+      // hindi pa umaandar (iniulat ng may-ari, Ago 17 2026). Ang `stop_time`
+      // naman ang kabilang dulo — tapos na, hindi patay.
+      // Ang AD ay walang sariling oras; nagmamana ito sa ad set niya, kaya
+      // hinihila sa ibaba kasama ng learning.
       const metaFields = level === "ad" ? "id,name,status,effective_status,created_time,updated_time,adset_id,campaign_id,creative{thumbnail_url}"
-        : level === "adset" ? "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,optimization_goal,created_time,updated_time,campaign_id,learning_stage_info"
-          : "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time,updated_time"
+        : level === "adset" ? "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,optimization_goal,created_time,updated_time,start_time,stop_time,campaign_id,learning_stage_info"
+          : "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time,updated_time,start_time,stop_time"
       const meta: Record<string, any> = {}
       try { const m = await fbGet(`${metaHost}/${edge}?fields=${metaFields}&limit=500&access_token=${enc}`); for (const x of m.data || []) meta[x.id] = x } catch {}
 
@@ -212,13 +219,14 @@ export async function GET(req: NextRequest) {
           }
         } catch {}
       }
-      // Ang AD ay nagmamana ng learning ng ad set niya — ganoon din ang ipinapakita
-      // ng Ads Manager. Kaya kailangan ng listahan ng ad set kapag ad ang antas.
-      const learnByAdset: Record<string, any> = {}
+      // Ang AD ay nagmamana ng learning AT ng takdang oras ng ad set niya —
+      // ganoon din ang ipinapakita ng Ads Manager. Kaya kailangan ng listahan ng
+      // ad set kapag ad ang antas. Isang hila lang para sa dalawa.
+      const parentAdset: Record<string, any> = {}
       if (level === "ad") {
         try {
-          const as = await fbGet(`${accountId}/adsets?fields=id,learning_stage_info&limit=500&access_token=${enc}`)
-          for (const s of as.data || []) if (s.learning_stage_info) learnByAdset[s.id] = s.learning_stage_info
+          const as = await fbGet(`${accountId}/adsets?fields=id,learning_stage_info,start_time,stop_time&limit=500&access_token=${enc}`)
+          for (const s of as.data || []) parentAdset[s.id] = s
         } catch {}
       }
       // Include objects that exist but had no spend in range.
@@ -247,11 +255,15 @@ export async function GET(req: NextRequest) {
           // sa ~50 na kailangan ni Meta para matapos ang learning.
           learning: (() => {
             const l = level === "adset" ? m.learning_stage_info
-              : level === "ad" ? learnByAdset[m.adset_id || r.adset_id || ""]
+              : level === "ad" ? parentAdset[m.adset_id || r.adset_id || ""]?.learning_stage_info
                 : null
             if (!l?.status) return null
             return { status: String(l.status), conversions: Number(l.conversions ?? 0) }
           })(),
+          // Takdang oras — ito ang batayan ng "Scheduled" at "Completed". Sa ad
+          // ay galing sa MAGULANG na ad set (wala itong sariling oras).
+          startTime: level === "ad" ? (parentAdset[m.adset_id || r.adset_id || ""]?.start_time || "") : (m.start_time || ""),
+          stopTime: level === "ad" ? (parentAdset[m.adset_id || r.adset_id || ""]?.stop_time || "") : (m.stop_time || ""),
           bidStrategy: m.bid_strategy || "", optimizationGoal: m.optimization_goal || "",
           createdTime: m.created_time || "", updatedTime: m.updated_time || "",
           campaignId: m.campaign_id || r.campaign_id || "", adsetId: m.adset_id || r.adset_id || "",
