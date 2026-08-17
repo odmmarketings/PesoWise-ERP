@@ -1291,21 +1291,22 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         <span className="text-[11px] text-slate-400">
           {!isCampaign && <>{s.adset.campaignName} · </>}{s.adset.account.name}
         </span>
-        {/* EDAD — ITIM na pill, NEON na teksto. Hatol ng may-ari (Ago 17 2026).
-            Berde ito dati at napagkakamalang katulad ng "Active" na nakatabi
-            lang; naging neutral, tapos buong-neon; ang tumagal ay ang baligtad.
-            ⚠ Sinadyang GANAP na hex ang neon, hindi token ng Tailwind. Ang dark
-            layer ay pumapalit sa mga token; hindi nito nasasagasaan ang ganap na
+        {/* EDAD — MADILIM na pill, NEON na teksto. Hatol ng may-ari (Ago 17
+            2026). Berde ito dati at napagkakamalang katulad ng "Active" na
+            nakatabi lang; naging neutral, tapos buong-neon, tapos baligtad na
+            purong itim — masyadong maitim daw, kaya ito na: ang mismong
+            `--dk-raised` na kulay ng dating neutral na pill (1.36:1 na mas
+            maliwanag kaysa itim), walang gilid.
+            ⚠ Sinadyang GANAP na hex, hindi token ng Tailwind. Pumapalit ang
+            dark layer sa mga token; hindi nito nasasagasaan ang ganap na
             halaga, kaya iisa ang itsura sa dalawang tema — na siyang punto.
-            (Wala ring `.dark .bg-black`, kaya tunay na itim ito saanman.)
-            ⚠ WALANG GILID — inalis ng may-ari. Sa dark ay banayad na lang ang
-            pill kontra hilera (1.2:1), pero hindi ito kailangan: 15.39:1 ang
-            neon kahit direkta kontra hilera, kaya mababasa pa rin. Sa light ay
-            ang ITIM ang mahalaga (21:1) — 1.11:1 lang ang neon kontra puti,
-            kaya huwag na huwag aalisin ang itim na pill. */}
+            ⚠ HUWAG PAPUTIIN ANG PILL. Sa light ay 1.11:1 lang ang neon kontra
+            puti — ang madilim na pill ang TANGING dahilan kung bakit ito
+            nababasa doon (13.91:1 ang teksto sa pill, 15.39:1 ang pill kontra
+            hilera). Sa dark ay banayad na pagkakaangat lang ito (1.1:1). */}
         {s.adset.createdTime && (
           <span title={`Created ${s.adset.createdTime.slice(0, 10)}`}
-            className="text-[11px] font-bold bg-black text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
+            className="text-[11px] font-bold bg-[#1B2536] text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
             {daysOld(s.adset.createdTime)}d old
           </span>
         )}
@@ -1796,7 +1797,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                           matagal nang tumatakbo? */}
                       {m.createdTime && (
                         <span className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[11px] font-bold bg-black text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
+                          <span className="text-[11px] font-bold bg-[#1B2536] text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
                             {daysOld(m.createdTime)}d old
                           </span>
                           <span className="text-[11px] text-slate-400">created {m.createdTime.slice(0, 10)}</span>
