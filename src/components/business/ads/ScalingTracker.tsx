@@ -786,16 +786,28 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       // ng CAMPAIGN_PAUSED para sa ad set na NAKABUKAS naman — 9 sa 15 sa itaas
       // ay ganito. "Patay ang campaign nito" ay ibang problema sa "pinatay ko
       // ito": ang isa ay isang switch lang ang layo sa pagtakbo.
+      // ⚠ SA MONITORING, ANG PATAY AY BAHAGI PA RIN NG BUWAN. Ang tab na iyon ay
+      // TANAWIN NG RESULTA, hindi pila ng aksyon: ang campaign na sumunog ng
+      // ₱13,812 nitong buwan at pinatay kahapon ay eksaktong dapat makita kapag
+      // ini-review ang buwan. Nasukat Ago 17 2026: 30 campaign · ₱146,963 ·
+      // 40.7% ng gastos ng buwan ang naitatago ng dating `continue`.
+      // (Nadaanan na natin sa itaas ang `mtd.spend === 0` na gate, kaya ang
+      // bawat Monitoring row na narito ay may tunay na gastos ngayong buwan.)
       if (!isActive) {
-        if (!reg) continue   // hindi nakarehistro at patay — wala talagang dapat ipakita
+        if (!reg && !isMonitoring) continue   // patay, hindi rehistrado, wala sa buwan
         const parentOff = /CAMPAIGN_PAUSED|ADSET_PAUSED/i.test(m.status) && /active/i.test(m.ownStatus)
+        const whoOff = /CAMPAIGN_PAUSED/i.test(m.status) ? "campaign" : "ad set"
         out.push({ ...base, kind: "watch", rule: parentOff ? "parentOff" : "paused",
-          reason: parentOff
-            ? `This ${unitLabel} is switched ON, but its ${/CAMPAIGN_PAUSED/i.test(m.status) ? "campaign" : "ad set"} is paused — so it delivers nothing. `
-              + `Turn the parent back on in Ads Manager, or unregister this.`
-            : `Paused — you turned this ${unitLabel} off, so it is not being judged. `
-              + `It stays here because you registered it; unregister to remove it.`
-              + (sinceReg && sinceReg.spend > 0 ? ` Last known: net ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)} since ${reg.registered_at}.` : ``) })
+          reason: reg
+            ? (parentOff
+              ? `This ${unitLabel} is switched ON, but its ${whoOff} is paused — so it delivers nothing. `
+                + `Turn the parent back on in Ads Manager, or unregister this.`
+              : `Paused — you turned this ${unitLabel} off, so it is not being judged. `
+                + `It stays here because you registered it; unregister to remove it.`
+                + (sinceReg && sinceReg.spend > 0 ? ` Last known: net ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)} since ${reg.registered_at}.` : ``))
+            // Monitoring: ang bilang ng buwan ang buong punto — hindi ang hatol.
+            : `Stopped, but it spent this month: net ${dec(mtd!.netRoas)} on ${peso(mtd!.spend)} across ${mtd!.purchases} purchases. `
+              + (parentOff ? `Its ${whoOff} is paused; the ${unitLabel} itself is still on.` : `It is paused now, so nothing more will be added.`) })
         continue
       }
 
