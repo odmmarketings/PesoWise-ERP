@@ -537,8 +537,14 @@ export default function BusinessDashboardPage() {
         <hr className="border-slate-200" />
         {/* Sa cellphone, ang hanay ng filter ay pwedeng lumampas sa lapad —
             pinapayagan ang pahalang na scroll sa loob nito imbes na sirain
-            ang buong layout. */}
-        <div className="flex sm:justify-end mt-3 -mx-1 px-1 overflow-x-auto scrollbar-dark">
+            ang buong layout.
+
+            ⚠ Kailangan ang `overflow-y-hidden`: ang `overflow-x-auto` ay
+            nagpapa-compute sa `overflow-y` bilang `auto` din, kaya kahit isang
+            pixel na paglampas (border, -mx) ay nagiging madi-drag na patayong
+            scroll. Ang `overscroll-x-contain` naman ang pumipigil sa pahalang
+            na kaladkad na dumaloy pa sa page. */}
+        <div className="flex sm:justify-end mt-3 -mx-1 px-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-dark">
           <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white text-xs shrink-0">
             {PARCEL_FILTERS.map(f => (
               <FilterButton key={f} label={f} active={parcelFilter === f} onClick={() => setParcelFilter(f)} />

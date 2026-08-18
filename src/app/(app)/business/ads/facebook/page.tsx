@@ -369,7 +369,7 @@ export default function FacebookAdsPage() {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-slate-200 overflow-x-auto scrollbar-dark">
+      <div className="flex gap-1 border-b border-slate-200 overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-dark">
         {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["testing", "Testing", FlaskConical], ["scaling", "Scaling", TrendingUp], ["monitoring", "Monitoring", Eye], ["tasks", "Tasks", ClipboardList]] as [Tab, string, any][]).map(([t, label, Icon]) => (
           // Ang pagpindot mismo sa tab ay normal na pagbukas — hindi dala ng
           // lumang focus mula sa nakaraang "dalhin mo ako doon".
@@ -1889,7 +1889,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           {/* Connected panels: Campaigns · Ad Sets · Ads (selecting upstream filters downstream) */}
-          <div className="flex items-center gap-1 px-3 pt-2 border-b border-slate-200 bg-slate-50/50 overflow-x-auto scrollbar-dark">
+          <div className="flex items-center gap-1 px-3 pt-2 border-b border-slate-200 bg-slate-50/50 overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-dark">
             {PanelTab({ lvl: "campaign", Icon: Megaphone, title: "Campaigns", count: selCampaigns.size, onClear: clearCampaigns })}
             {PanelTab({ lvl: "adset", Icon: LayoutGrid, title: selCampaigns.size ? `Ad Sets for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ad Sets", count: selAdsets.size, onClear: clearAdsets })}
             {PanelTab({ lvl: "ad", Icon: Layers, title: selAdsets.size ? `Ads for ${selAdsets.size} Ad Set${selAdsets.size > 1 ? "s" : ""}` : selCampaigns.size ? `Ads for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ads", count: selAds.size, onClear: clearAds })}
