@@ -1175,9 +1175,20 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   // Meta-style multi-select: selecting upstream rows filters the downstream panels.
   // Kapag may focus, naka-tsek na agad ang pinanggalingan: kaya kung pipindutin
   // mo ang Ad Sets, ang mga ad set NG CAMPAIGN NA IYON agad ang lalabas.
-  const [selCampaigns, setSelCampaigns] = useState<Set<string>>(() => new Set(
-    focus?.level === "campaign" ? [focus.id] : focus?.campaignId ? [focus.campaignId] : []))
-  const [selAdsets, setSelAdsets] = useState<Set<string>>(() => new Set(focus?.level === "adset" ? [focus.id] : []))
+  //
+  // ⚠ ANG BLANGKONG `id` AY HINDI PAGPILI. Ang brand card ng Dashboard ay
+  // nagpapadala ng `{ level: "campaign", id: "" }` — ibig sabihin "buong ad
+  // account", walang itinuturong campaign. Pero ang `new Set([""])` ay may
+  // SUKAT NA ISA, kaya: nagsasabi ang tab ng "1 selected" gayong walang row na
+  // naka-tsek, at — mas masama — sa antas ng Ad Sets ay `selCampaigns.has(
+  // r.campaignId)` ang salaan, at walang ad set na may magulang na "", kaya
+  // NAWAWALAN NG LAMAN ang buong listahan (iniulat ng may-ari, Ago 18 2026).
+  // Ang blangko ay sinasala bago pa maging pagpili.
+  const seed = (v?: string) => new Set<string>(v ? [v] : [])
+  const [selCampaigns, setSelCampaigns] = useState<Set<string>>(() =>
+    seed(focus?.level === "campaign" ? focus.id : focus?.campaignId))
+  const [selAdsets, setSelAdsets] = useState<Set<string>>(() =>
+    seed(focus?.level === "adset" ? focus.id : undefined))
   const [selAds, setSelAds] = useState<Set<string>>(new Set())
 
   // raw rows for the CURRENT level only (lazy-loaded). Naka-cache pa ba mula sa
