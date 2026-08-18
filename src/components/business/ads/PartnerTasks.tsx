@@ -1,7 +1,7 @@
 "use client"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
-  ClipboardList, Plus, X, Pencil, Trash2, Check, Undo2, Send, Gift, Target,
+  ClipboardList, Plus, X, Pencil, Trash2, Check, Undo2, Send, Gift, Target, UserPlus, MailWarning,
   AlertTriangle, RefreshCw, Trophy, CheckCircle2, Hourglass,
 } from "lucide-react"
 import type { FBAccount } from "@/lib/fb-store"
@@ -12,6 +12,7 @@ import {
   type PartnerTask, type TaskStatus,
 } from "@/lib/partner-tasks-store"
 import { Skeleton } from "@/components/ui/dash"
+import { useErpUsers, type ErpUser } from "@/lib/users-store"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PARTNER TASKS — trabaho kada media buyer, may deadline at premyo, at ang
@@ -66,13 +67,56 @@ export function PartnerTasks({ accounts, onSignals }: {
   const isAdmin = me.mother
 
   const live = useMemo(() => accounts.filter(a => !a.archived && a.token && a.ad_account_id), [accounts])
-  // Mga partner = owners ng ad accounts, dinagdagan ng sinumang may task o
-  // target na (para hindi maulila ang task ng inarchive na account).
+  const roster = useErpUsers()
+
+  // ── SINO ANG PWEDENG BIGYAN NG TASK ───────────────────────────────────────
+  // ⚠ HINDI LANG ANG MAY AD ACCOUNT. Dating ang listahan ay galing lang sa
+  // mga owner ng ad account, kaya ang marketing, upseller at supervisor —
+  // may account naman sila sa PesoWise — ay hindi mabibigyan ng trabaho
+  // (hiling ng may-ari, Ago 18 2026). Ang ROSTER ang pinagmumulan ngayon,
+  // pinagsama sa mga owner ng ad account.
+  //
+  // Ang PARTNER ay may ad account: siya lang ang may target sales/ROAS, dahil
+  // siya lang ang may gastos na masusukat. Ang TEAM ay tumatanggap ng task,
+  // pero walang target — walang numerong pagbabatayan.
+  const partnerNames = useMemo(() => Array.from(new Set(
+    live.map(a => a.owner).filter(Boolean))).sort(), [live])
+
+  type Assignee = { name: string; email: string; role: string; partner: boolean }
+  const assignees = useMemo<Assignee[]>(() => {
+    const byName = new Map<string, Assignee>()
+    const put = (name: string, email: string, role: string, partner: boolean) => {
+      const key = name.trim()
+      if (!key) return
+      const prev = byName.get(key)
+      // Ang partner-ness at ang email ay dinadagdag, hindi pinapalitan ng blangko.
+      byName.set(key, {
+        name: key,
+        email: email || prev?.email || '',
+        role: role || prev?.role || '',
+        partner: partner || prev?.partner || false,
+      })
+    }
+    for (const o of partnerNames) put(o, rosterEmailByName(o), 'Advertiser / Partners', true)
+    for (const u of roster.users as ErpUser[]) {
+      // Ang umalis na ay hindi na binibigyan ng bagong trabaho.
+      if (u.status !== 'Active' || u.deleteAt) continue
+      put((u.full_name || u.username || '').trim(), (u.email || '').toLowerCase(), u.position || '', false)
+    }
+    // Ang may lumang task/target ay nananatili sa listahan kahit inalis na ang
+    // account niya — kung hindi, mauulila ang hilera nila sa board.
+    for (const t of store.tasks) put(t.owner, rosterEmailByName(t.owner), '', false)
+    for (const t of store.targets) put(t.owner, rosterEmailByName(t.owner), '', true)
+    return [...byName.values()].sort((a, b) =>
+      (a.partner === b.partner ? 0 : a.partner ? -1 : 1) || a.name.localeCompare(b.name))
+  }, [partnerNames, roster.users, store.tasks, store.targets])
+
+  // Ang TARGETS ay para sa may ad account lang — ang iba ay walang spend na
+  // masusukat, kaya ang target sales/ROAS ay walang kahulugan sa kanila.
   const owners = useMemo(() => Array.from(new Set([
-    ...live.map(a => a.owner).filter(Boolean),
-    ...store.tasks.map(t => t.owner),
+    ...partnerNames,
     ...store.targets.map(t => t.owner),
-  ])).sort(), [live, store.tasks, store.targets])
+  ])).sort(), [partnerNames, store.targets])
 
   // ── AKTUWAL NG BUWAN kada account → kada owner ─────────────────────────────
   const month = monthKey()
@@ -302,8 +346,8 @@ export function PartnerTasks({ accounts, onSignals }: {
         </p>
         <select value={fOwner} onChange={e => setFOwner(e.target.value)}
           className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-[12px] text-slate-600">
-          <option value="All">All partners</option>
-          {owners.map(o => <option key={o} value={o}>{o}</option>)}
+          <option value="All">Everyone</option>
+          {assignees.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
         </select>
         {isAdmin && (
           <button onClick={() => setTaskModal({})}
@@ -419,7 +463,7 @@ export function PartnerTasks({ accounts, onSignals }: {
       {taskModal && (
         <TaskModal
           edit={taskModal.edit}
-          owners={owners}
+          assignees={assignees}
           busy={busy}
           onClose={() => setTaskModal(null)}
           onSave={async (v) => {
@@ -450,9 +494,9 @@ export function PartnerTasks({ accounts, onSignals }: {
 }
 
 // ── Modal ng task: bago (multi-partner) o pag-edit (isang partner) ───────────
-function TaskModal({ edit, owners, busy, onClose, onSave }: {
+function TaskModal({ edit, assignees, busy, onClose, onSave }: {
   edit?: PartnerTask
-  owners: string[]
+  assignees: { name: string; email: string; role: string; partner: boolean }[]
   busy: boolean
   onClose: () => void
   onSave: (v: { title: string; details: string; owners: string[]; deadline: string; reward: string }) => void
@@ -488,20 +532,52 @@ function TaskModal({ edit, owners, busy, onClose, onSave }: {
             <textarea value={details} onChange={e => setDetails(e.target.value)} rows={2}
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 resize-none" />
           </label>
-          <div>
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-              {edit ? "Partner" : "Partners — one task each"}
-            </span>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {owners.map(o => (
-                <button key={o} onClick={() => toggle(o)}
-                  className={`text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border transition ${
-                    sel.has(o) ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500 hover:border-slate-300"}`}>
-                  {o}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* ⚠ DALAWANG PANGKAT, IISANG LISTAHAN. Ang PARTNERS ay may ad
+              account (sila lang ang may target sales/ROAS); ang TEAM ay ang
+              iba pang may account sa PesoWise — marketing, upseller,
+              supervisor. Pareho silang makakatanggap ng task; ang pagkakaiba
+              ay kung may masusukat na numero sa kanila.
+              Ang walang company email ay MAAARI PA RING atasan, pero
+              hayagang sinasabi na hindi siya makakatanggap ng abiso —
+              mas mabuting malaman mo iyon bago mag-assign kaysa magtaka
+              kung bakit walang kumikilos. */}
+          {(["partner", "team"] as const).map(group => {
+            const list = assignees.filter(a => group === "partner" ? a.partner : !a.partner)
+            if (list.length === 0) return null
+            return (
+              <div key={group}>
+                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                  {group === "partner"
+                    ? (edit ? "Partners" : "Partners — one task each")
+                    : (edit ? "Team" : "Team — one task each")}
+                </span>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {list.map(a => (
+                    <button key={a.name} onClick={() => toggle(a.name)}
+                      title={[a.role, a.email || "no company email — will not be notified"].filter(Boolean).join(" · ")}
+                      className={`text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${
+                        sel.has(a.name) ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500 hover:border-slate-300"}`}>
+                      {a.name}
+                      {!a.email && <MailWarning className="w-3 h-3 text-amber-500 shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+          {[...sel].some(n => !assignees.find(a => a.name === n)?.email) && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+              <MailWarning className="w-3.5 h-3.5 shrink-0 mt-px" />
+              <span>Someone selected has no company email in User Management, so they will see the task on this board but get no notification.</span>
+            </p>
+          )}
+          {/* Ang pagdagdag ng tao ay nasa User Management — doon ang buong
+              porma (company email, position, permissions). Hindi natin iyon
+              inuulit dito; itinuturo lang. */}
+          <a href="/business/users" target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-blue-600 hover:text-blue-700">
+            <UserPlus className="w-3.5 h-3.5" /> Add someone in User Management →
+          </a>
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Deadline</span>
