@@ -1,7 +1,7 @@
 "use client"
 import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react"
 import {
-  Megaphone, RefreshCw, Wallet, TrendingUp, ShoppingCart, Target, MessageSquare,
+  Megaphone, RefreshCw, Wallet, TrendingUp, ShoppingCart, Target, MessageSquare, ClipboardList,
   LayoutDashboard, CalendarDays, Settings2, ChevronDown, Search, Play, Pause, Link2,
   ArrowUp, ArrowDown, ArrowUpDown, ChevronRight, X, LayoutGrid, Layers, Pencil, Check, Trash2, CheckCircle2, Eye,
   ExternalLink, Send, Wrench, Info, MoreHorizontal, Activity, FlaskConical, Volume2, VolumeX,
@@ -17,6 +17,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { ScalingTracker, type TrackerFocus } from "@/components/business/ads/ScalingTracker"
+import { PartnerTasks } from "@/components/business/ads/PartnerTasks"
 import { CommentsModal } from "@/components/business/ads/CommentsModal"
 import { useCommentCounts } from "@/lib/ads-comments-store"
 import { useAdsPins, pinnedFirst, pinOrder } from "@/lib/ads-pins"
@@ -186,7 +187,7 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   let i = 0; await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-type Tab = "dashboard" | "daily" | "manager" | "testing" | "scaling" | "monitoring"
+type Tab = "dashboard" | "daily" | "manager" | "testing" | "scaling" | "monitoring" | "tasks"
 type Obj = "All" | "Conversions" | "Messaging" | "Other"
 
 // Module-level flag: resets on a full page (re)load, but persists across in-app navigation.
@@ -226,7 +227,7 @@ export default function FacebookAdsPage() {
     let isReload = false
     try { isReload = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type === "reload" } catch {}
     if (firstMount && isReload) {
-      try { const t = localStorage.getItem("pesowise_fb_tab"); if (t === "daily" || t === "manager" || t === "testing" || t === "scaling" || t === "monitoring") return t } catch {}
+      try { const t = localStorage.getItem("pesowise_fb_tab"); if (t === "daily" || t === "manager" || t === "testing" || t === "scaling" || t === "monitoring" || t === "tasks") return t } catch {}
     }
     return "dashboard"
   })
@@ -264,6 +265,7 @@ export default function FacebookAdsPage() {
   const [scalingCount, setScalingCount] = useState(0)
   const [testingCount, setTestingCount] = useState(0)
   const [monitorCount, setMonitorCount] = useState(0)
+  const [tasksCount, setTasksCount] = useState(0)
   // "Dalhin mo ako doon": pinipindot ang pangalan sa Testing/Scaling/Monitoring,
   // bumubukas ang Ads Manager na nakatutok na sa mismong object na iyon.
   const [mgrFocus, setMgrFocus] = useState<MgrFocus | null>(null)
@@ -368,7 +370,7 @@ export default function FacebookAdsPage() {
       </div>
 
       <div className="flex gap-1 border-b border-slate-200 overflow-x-auto scrollbar-dark">
-        {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["testing", "Testing", FlaskConical], ["scaling", "Scaling", TrendingUp], ["monitoring", "Monitoring", Eye]] as [Tab, string, any][]).map(([t, label, Icon]) => (
+        {([["dashboard", "Dashboard", LayoutDashboard], ["daily", "Daily Ad Spend", CalendarDays], ["manager", "Ads Manager", Settings2], ["testing", "Testing", FlaskConical], ["scaling", "Scaling", TrendingUp], ["monitoring", "Monitoring", Eye], ["tasks", "Tasks", ClipboardList]] as [Tab, string, any][]).map(([t, label, Icon]) => (
           // Ang pagpindot mismo sa tab ay normal na pagbukas — hindi dala ng
           // lumang focus mula sa nakaraang "dalhin mo ako doon".
           <button key={t} onClick={() => { setMgrFocus(null); setTrackerFocus(null); setTab(t) }}
@@ -383,6 +385,9 @@ export default function FacebookAdsPage() {
             )}
             {t === "scaling" && scalingCount > 0 && (
               <span title="Active registered campaigns" className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded-full">{scalingCount}</span>
+            )}
+            {t === "tasks" && tasksCount > 0 && (
+              <span title="Tasks waiting on you" className="text-[10px] bg-rose-100 text-rose-700 font-bold px-1.5 py-0.5 rounded-full">{tasksCount}</span>
             )}
             {t === "monitoring" && monitorCount > 0 && (
               <span title="Campaigns with spend this month" className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">{monitorCount}</span>
@@ -407,6 +412,7 @@ export default function FacebookAdsPage() {
           : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} focus={trackerFocus} />
             : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} focus={trackerFocus} />
               : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} onOpenInManager={openInManager} focus={trackerFocus} />
+              : tab === "tasks" ? <PartnerTasks accounts={dataAccounts} onSignals={setTasksCount} />
               : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} onJump={jumpToTracker} />}
     </div>
   )

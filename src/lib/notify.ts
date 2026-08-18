@@ -94,8 +94,8 @@ export function rosterEmailByName(name: string): string {
 }
 
 // ── Sino ako sa roster — para malaman kung aling abiso ang para sa akin ──────
-type Me = { email: string; name: string; mother: boolean; position: string }
-function whoAmI(): Me {
+export type Me = { email: string; name: string; mother: boolean; position: string }
+export function whoAmI(): Me {
   const email = (currentUserEmail() || "").toLowerCase()
   const name = (currentUserName() || "").toLowerCase()
   let mother = false, position = ""

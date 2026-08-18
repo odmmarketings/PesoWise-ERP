@@ -309,6 +309,16 @@ One engine, **three** modes decided by the owner's workflow (Aug 14 2026): **Tes
 
 **SCROLLBARS HIDE WHEN IDLE** (`.scrollbar-dark` / `.scrollbar-thin`, 42 uses) — the thumb is `transparent` until `:hover` or `:focus-within`, then fades in over 200ms. ⚠ **Only the colour changes, never the width.** Hiding the gutter would make content reflow under the cursor on every hover. And never `scrollbar-width: none` — that removes the ability to drag it, which is suppression, not hiding. `:focus-within` is there so keyboard users can still see their position in a long list. ⚠ Chrome honours `scrollbar-width: thin` and then **ignores the `::-webkit-scrollbar` sizing**, so the reveal has to ride on the standard `scrollbar-color`; the webkit rules stay as a fallback for older engines. Verified end-to-end: idle `rgba(0,0,0,0)` → active `rgb(71,85,105)` → hidden again, with the gutter measured at 10px in both states (no shift).
 
+### Partner Tasks (`src/components/business/ads/PartnerTasks.tsx`, migration **0029 — NOT YET RUN**)
+
+**A Tasks tab on Facebook Ads**: per-partner tasks with deadlines and rewards, plus monthly sales/net-ROAS targets. Things that must not drift:
+
+- **Three states, not two**: `open` → partner "Mark as done" → `review` → owner Approve → `done`. The reward becomes "earned" **only on approve** — if the partner had the last word, rewards would be self-certified. Return sends review→open with a notification. **Overdue is derived at read time** (deadline < today && not done), never a column — a column would need a midnight cron and would still lie.
+- **Target actuals are never stored**: sales = MTD purchase value summed from `/api/fb/insights?rich=1` per account (module `MTD_CACHE`, 30-min TTL, in-flight dedupe); net ROAS = Σ(value×(1−page RTS)) ÷ (Σspend×1.12) — the house math, weighted per account via `usePageRts`. No invented numbers, no manual entry.
+- **The tab badge answers a different question per viewer**: Mother Account sees the review count (what waits on *them*); a partner sees their own not-done count. Partner identity = roster email match, falling back to name match.
+- Admin gating is `whoAmI().mother` (now exported from `notify.ts`). Notifications: assign→user, submit→admin, approve/return→user, target-set→user; a partner missing from the roster gets **no** notification rather than a broadcast.
+- Tasks/targets live in Supabase (`partner_tasks`, `partner_targets`, RLS `is_business_member`) — three buyers plus the owner read the same board, so localStorage would show a different list per machine.
+
 ### Dashboard shell (`src/components/ui/dash.tsx`)
 
 **BOTH DASHBOARDS SHARE ONE STAT CARD.** Sales Warehouse Logistics and Finance had the same card written twice; it now lives in `dash.tsx` with `StatCard`, `ChartPanel`, `Skeleton`, `LoadingBar` and `useCountUp`. **No data logic lives here** — the components take a value and a label and compute nothing. Notes worth keeping:
