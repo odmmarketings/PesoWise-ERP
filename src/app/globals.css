@@ -429,6 +429,14 @@ body {
 /* Ang linyang gumagapang sa ilalim ng panel habang may hinihila. Hindi ito
    nagsisinungaling tungkol sa progreso — hindi ito porsyento, galaw lang na
    nagsasabing "may nangyayari pa". */
+/* ⚠ KAILANGAN ANG CLIP. Ang gumagalaw na guhit ay dumudulas hanggang
+   translateX(300%) na may 33% na lapad — 132% iyon ng kahon nito, kaya
+   lumalampas ito sa kanan at NAGBUBUNGA NG PAHALANG NA SCROLLBAR sa buong
+   pahina (190px na pag-apaw, nasukat Ago 18 2026; iniulat ng may-ari sa
+   dalawang dashboard). Ang galaw ay dapat nakakulong sa loob ng guhit mismo.
+   Ang elemento ay laging naka-position ng tumatawag (absolute inset-x-0),
+   kaya ang ::after ay nakakabit dito at hindi sa buong pahina. */
+.pw-sweep { overflow: hidden; }
 .pw-sweep::after {
   content: "";
   position: absolute; inset-inline-start: 0; bottom: 0;
