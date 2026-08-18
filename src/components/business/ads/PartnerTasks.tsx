@@ -45,6 +45,17 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
 const initials = (name: string) =>
   name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "?"
 
+/**
+ * Sino sa roster ang may kinalaman sa ads.
+ *
+ * ⚠ PADRON, HINDI EKSAKTONG STRING — kagaya ng `WAREHOUSE_POSITION_RE`. Ang
+ * Position ay FREE TEXT sa User Management, kaya "Advertiser / Partners",
+ * "advertiser", "Partners", "Marketing", "Digital Marketing" at "MARKETING"
+ * ay iisa ang ibig sabihin. Ang eksaktong pagtutugma ay mahuhuli ng dobleng
+ * espasyo o ibang casing, at tahimik na mawawala ang tao sa listahan.
+ */
+export const ADS_POSITION_RE = /marketing|advertis|partner/i
+
 const STATUS_META: Record<TaskStatus, { title: string; chip: string; col: string }> = {
   open: { title: "To do", chip: "bg-blue-50 text-blue-700", col: "border-blue-400" },
   review: { title: "For review", chip: "bg-amber-50 text-amber-700", col: "border-amber-400" },
@@ -70,15 +81,14 @@ export function PartnerTasks({ accounts, onSignals }: {
   const roster = useErpUsers()
 
   // ── SINO ANG PWEDENG BIGYAN NG TASK ───────────────────────────────────────
-  // ⚠ HINDI LANG ANG MAY AD ACCOUNT. Dating ang listahan ay galing lang sa
-  // mga owner ng ad account, kaya ang marketing, upseller at supervisor —
-  // may account naman sila sa PesoWise — ay hindi mabibigyan ng trabaho
-  // (hiling ng may-ari, Ago 18 2026). Ang ROSTER ang pinagmumulan ngayon,
-  // pinagsama sa mga owner ng ad account.
+  // MARKETING at ADVERTISERS / PARTNERS LANG — hatol ng may-ari, Ago 18 2026.
+  // Ang tab na ito ay nasa loob ng Facebook Ads: ang upseller, warehouse staff,
+  // HR at delivering ay may account sa PesoWise pero walang trabaho rito, kaya
+  // ang paglabas nila sa picker ay ingay na maaaring mauwi sa maling pagtatalaga.
   //
   // Ang PARTNER ay may ad account: siya lang ang may target sales/ROAS, dahil
-  // siya lang ang may gastos na masusukat. Ang TEAM ay tumatanggap ng task,
-  // pero walang target — walang numerong pagbabatayan.
+  // siya lang ang may gastos na masusukat. Ang MARKETING ay tumatanggap ng
+  // task, pero walang target — walang numerong pagbabatayan sa kanya.
   const partnerNames = useMemo(() => Array.from(new Set(
     live.map(a => a.owner).filter(Boolean))).sort(), [live])
 
@@ -97,17 +107,44 @@ export function PartnerTasks({ accounts, onSignals }: {
         partner: partner || prev?.partner || false,
       })
     }
+    // ⚠ ANG MAY AD ACCOUNT AY LAGING PAPASOK, kahit ano ang nakasulat na
+    // position. Si Larry ay may tatlong ad account at BLANGKO ang position
+    // niya sa roster (nasukat Ago 18 2026) — kung position lang ang batayan,
+    // mawawala ang isang tunay na partner. Ang hawak na ad account ang
+    // katunayan; ang position ay teksto lang na maaaring hindi napunan.
     for (const o of partnerNames) put(o, rosterEmailByName(o), 'Advertiser / Partners', true)
     for (const u of roster.users as ErpUser[]) {
       // Ang umalis na ay hindi na binibigyan ng bagong trabaho.
       if (u.status !== 'Active' || u.deleteAt) continue
+      if (!ADS_POSITION_RE.test(u.position || '')) continue
       put((u.full_name || u.username || '').trim(), (u.email || '').toLowerCase(), u.position || '', false)
     }
     // Ang may lumang task/target ay nananatili sa listahan kahit inalis na ang
     // account niya — kung hindi, mauulila ang hilera nila sa board.
     for (const t of store.tasks) put(t.owner, rosterEmailByName(t.owner), '', false)
     for (const t of store.targets) put(t.owner, rosterEmailByName(t.owner), '', true)
-    return [...byName.values()].sort((a, b) =>
+
+    // ── IISANG TAO, IISANG CHIP ───────────────────────────────────────────────
+    // ⚠ Ang isang tao ay maaaring may DALAWANG PANGALAN dito: ang nakalagay sa
+    // ad account ("Eugene Andaya") at ang nasa roster ("Eugene Noval Andaya").
+    // Dalawang chip iyon para sa iisang tao, at ang mali ang pipiliin mo ay
+    // mapupunta sa pangalang hindi tugma sa ad accounts niya.
+    //
+    // Ang EMAIL ang tunay na pagkakakilanlan, kaya doon pinagsasama. At ang
+    // PANGALANG MAY AD ACCOUNT ang pinapanatili — doon naka-key ang `ownerAgg`
+    // at ang mga target, kaya ang ibang pangalan ay maglalaho ang mga numero.
+    const byEmail = new Map<string, Assignee>()
+    const out: Assignee[] = []
+    for (const a of byName.values()) {
+      if (!a.email) { out.push(a); continue }
+      const prev = byEmail.get(a.email)
+      if (!prev) { byEmail.set(a.email, a); out.push(a); continue }
+      // Pagsamahin: manalo ang may ad account; panatilihin ang alam nating role.
+      prev.partner = prev.partner || a.partner
+      prev.role = prev.role || a.role
+      if (a.partner && !partnerNames.includes(prev.name)) prev.name = a.name
+    }
+    return out.sort((a, b) =>
       (a.partner === b.partner ? 0 : a.partner ? -1 : 1) || a.name.localeCompare(b.name))
   }, [partnerNames, roster.users, store.tasks, store.targets])
 
@@ -533,23 +570,23 @@ function TaskModal({ edit, assignees, busy, onClose, onSave }: {
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 resize-none" />
           </label>
           {/* ⚠ DALAWANG PANGKAT, IISANG LISTAHAN. Ang PARTNERS ay may ad
-              account (sila lang ang may target sales/ROAS); ang TEAM ay ang
-              iba pang may account sa PesoWise — marketing, upseller,
-              supervisor. Pareho silang makakatanggap ng task; ang pagkakaiba
-              ay kung may masusukat na numero sa kanila.
+              account (sila lang ang may target sales/ROAS); ang MARKETING ay
+              tumatanggap ng task pero walang target — walang gastos na
+              masusukat sa kanya. Ang iba pang tauhan (upseller, warehouse,
+              HR, delivering) ay wala rito: walang trabaho sa loob ng Ads.
               Ang walang company email ay MAAARI PA RING atasan, pero
               hayagang sinasabi na hindi siya makakatanggap ng abiso —
               mas mabuting malaman mo iyon bago mag-assign kaysa magtaka
               kung bakit walang kumikilos. */}
-          {(["partner", "team"] as const).map(group => {
+          {(["partner", "marketing"] as const).map(group => {
             const list = assignees.filter(a => group === "partner" ? a.partner : !a.partner)
             if (list.length === 0) return null
             return (
               <div key={group}>
                 <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
                   {group === "partner"
-                    ? (edit ? "Partners" : "Partners — one task each")
-                    : (edit ? "Team" : "Team — one task each")}
+                    ? (edit ? "Advertisers / Partners" : "Advertisers / Partners — one task each")
+                    : (edit ? "Marketing" : "Marketing — one task each")}
                 </span>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {list.map(a => (

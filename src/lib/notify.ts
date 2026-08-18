@@ -89,7 +89,26 @@ export function rosterEmailByName(name: string): string {
     const u = roster.find(x =>
       (x.full_name && String(x.full_name).trim().toLowerCase() === t) ||
       (x.username && String(x.username).trim().toLowerCase() === t))
-    return u?.email ? String(u.email).toLowerCase() : ""
+    if (u?.email) return String(u.email).toLowerCase()
+
+    // ── UNANG + HULING PANGALAN, kapag walang eksaktong tugma ────────────────
+    // ⚠ ANG GITNANG PANGALAN ANG PUMUPUTOL NG UGNAYAN. Nasukat Ago 18 2026:
+    // ang may-ari ng tatlong ad account ay "Eugene Andaya", pero "Eugene Noval
+    // Andaya" ang nasa roster — kaya walang email, kaya WALANG ABISO, at
+    // lumilitaw siyang dalawang tao sa mga picker.
+    //
+    // Makitid ang tuntunin sa sadya: EKSAKTO ang una AT eksakto ang huling
+    // salita, at IISA lang ang dapat tumugma. Kapag dalawa ang tumugma
+    // (magkapangalan), hindi na ito manghuhula — mas mabuting walang abiso
+    // kaysa maling tao ang inabisuhan.
+    const parts = t.split(/\s+/).filter(Boolean)
+    if (parts.length < 2) return ""
+    const first = parts[0], last = parts[parts.length - 1]
+    const near = roster.filter(x => {
+      const p = String(x.full_name || "").trim().toLowerCase().split(/\s+/).filter(Boolean)
+      return p.length >= 2 && p[0] === first && p[p.length - 1] === last
+    })
+    return near.length === 1 && near[0]?.email ? String(near[0].email).toLowerCase() : ""
   } catch { return "" }
 }
 
