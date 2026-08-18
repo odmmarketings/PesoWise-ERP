@@ -235,8 +235,8 @@ export default function AdAccountsPage() {
 
       {/* Table */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto scrollbar-dark">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-dark">
+          <table className="w-full min-w-[1050px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left">
                 {["NO.", "DATE CREATED", "NAME", "OWNER", "FOCUS", "AD ACCOUNT ID", "STATUS", "PLATFORM", "ACTIONS"].map(h => (
@@ -260,7 +260,7 @@ export default function AdAccountsPage() {
                   <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">{a.focus}</span></td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">{actId(a.ad_account_id)}</td>
                   <td className="px-4 py-3"><span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${STATUS_BADGE[a.status] || "bg-slate-100 text-slate-600"}`}>{a.status.toLowerCase()}</span></td>
-                  <td className="px-4 py-3"><span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${PLATFORM_BADGE[a.platform] || "bg-slate-100 text-slate-600"}`}>{a.platform}</span></td>
+                  <td className="px-4 py-3"><span className={`inline-block text-xs px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap ${PLATFORM_BADGE[a.platform] || "bg-slate-100 text-slate-600"}`}>{a.platform}</span></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 text-slate-400">
                       <button onClick={() => { setActive(a); setScreen("view") }} className="hover:text-blue-600" title="View"><Search className="w-4 h-4" /></button>

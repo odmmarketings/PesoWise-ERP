@@ -482,8 +482,8 @@ export default function PagesStorePage() {
 
       {/* Table */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto overflow-y-hidden overscroll-x-contain">
+          <table className="w-full min-w-[900px] text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 {["No.", "Date Created", "Name", "Owner", "Status", "Platform", "Actions"].map(h => (
@@ -498,13 +498,13 @@ export default function PagesStorePage() {
                 <tr key={page.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-slate-500">{i + 1}</td>
                   <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(page.created_at)}</td>
-                  <td className="px-4 py-3 font-medium text-slate-900">{page.name}</td>
-                  <td className="px-4 py-3 text-slate-600">{page.owner}</td>
+                  <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">{page.name}</td>
+                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{page.owner}</td>
                   <td className="px-4 py-3">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[page.status]}`}>{page.status}</span>
+                    <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${STATUS_COLORS[page.status]}`}>{page.status}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${PLATFORM_COLORS[page.platform]}`}>{page.platform}</span>
+                    <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${PLATFORM_COLORS[page.platform]}`}>{page.platform}</span>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
