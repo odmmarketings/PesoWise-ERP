@@ -197,8 +197,21 @@ export function accessFor(navHrefs: string[]): { full: boolean; allowed: Set<str
       (x.email && email && x.email.toLowerCase() === email)
     )
     if (!u || u.mother) return { full: true, allowed: new Set() }
+    // Lockout: hindi ito dapat maabot — 403 na ang disabled sa login API. Nandito
+    // bilang panangga kung sakaling nakalusot, at ang dashboard ang tanging silid.
     if (!u.enabled || u.status !== "Active") return { full: false, allowed: new Set(["/business/dashboard"]) }
-    return { full: false, allowed: new Set([...u.allowed, "/business/dashboard"]) }
+    // ⚠ HUWAG IPILIT ANG DASHBOARD SA PINILI MO. Dating `[...u.allowed,
+    // "/business/dashboard"]` ito — laging isinasama, kaya ang pag-alis ng tsek
+    // sa Sales Warehouse Logistics ay WALANG epekto: kita pa rin ito ng bagong
+    // user gaano man kadalas mo alisin (iniulat ng may-ari, Ago 18 2026). Ang
+    // checkbox ay dapat totoo; kung hindi, hindi iyon permission kundi palamuti.
+    //
+    // Ang layunin noon ay hindi maiwang blangko ang app. Nananatili iyon, pero
+    // bilang HULING TANGKA lang: dashboard kapag WALA kang ibang naibigay na
+    // pahina (doon din dinadala ng login). Kapag may naibigay ka, iyon lang ang
+    // makikita niya — kasama o hindi ang dashboard, ikaw ang nagpasya.
+    if (u.allowed.length === 0) return { full: false, allowed: new Set(["/business/dashboard"]) }
+    return { full: false, allowed: new Set(u.allowed) }
   } catch { return { full: true, allowed: new Set() } }
 }
 
