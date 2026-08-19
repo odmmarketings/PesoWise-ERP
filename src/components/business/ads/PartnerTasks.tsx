@@ -9,7 +9,7 @@ import { VAT, usePageRts } from "@/lib/scaling-signals"
 import { whoAmI, rosterEmailByName, type Me } from "@/lib/notify"
 import {
   usePartnerTasks, deadlineInfo, badgeCount, monthKey, todayStr,
-  type PartnerTask, type TaskStatus,
+  type PartnerTask, type TaskStatus, type TeamTarget,
 } from "@/lib/partner-tasks-store"
 import { Skeleton } from "@/components/ui/dash"
 import { useErpUsers, type ErpUser } from "@/lib/users-store"
@@ -154,6 +154,11 @@ export function PartnerTasks({ accounts, onSignals }: {
     ...partnerNames,
     ...store.targets.map(t => t.owner),
   ])).sort(), [partnerNames, store.targets])
+  // Sino ang MAY target ngayong buwan — sila lang ang may card.
+  const ownersWithTarget = useMemo(
+    () => owners.filter(o => store.targets.some(t => t.owner === o)), [owners, store.targets])
+  const ownersWithoutTarget = useMemo(
+    () => owners.filter(o => !store.targets.some(t => t.owner === o)), [owners, store.targets])
 
   // ── AKTUWAL NG BUWAN kada account → kada owner ─────────────────────────────
   const month = monthKey()
@@ -223,6 +228,18 @@ export function PartnerTasks({ accounts, onSignals }: {
     return m
   }, [mtdByAcct, rtsMap])
 
+  // Ang KABUUAN ng lahat — ito ang sinusukat ng team target. Pinagsasama ang
+  // gastos at ang net na halaga BAGO hatiin, kaya ang malaking account ay may
+  // katumbas na bigat: iisang net ROAS ng buong koponan, hindi average ng
+  // magkakahiwalay na ROAS (magkaibang numero iyon, at ang huli ay mali).
+  const teamAgg = useMemo(() => {
+    const t = { spend: 0, value: 0, valueNet: 0, purchases: 0 }
+    for (const a of Object.values(ownerAgg)) {
+      t.spend += a.spend; t.value += a.value; t.valueNet += a.valueNet; t.purchases += a.purchases
+    }
+    return t
+  }, [ownerAgg])
+
   // ── Ang bilang sa tab ──────────────────────────────────────────────────────
   const badge = useMemo(() => badgeCount(store.tasks, me, rosterEmailByName), [store.tasks, me])
   useEffect(() => { onSignals?.(badge) }, [badge, onSignals])
@@ -258,6 +275,7 @@ export function PartnerTasks({ accounts, onSignals }: {
   // ── Mga modal ──────────────────────────────────────────────────────────────
   const [taskModal, setTaskModal] = useState<{ edit?: PartnerTask } | null>(null)
   const [targetModal, setTargetModal] = useState<string | null>(null)   // owner
+  const [teamModal, setTeamModal] = useState(false)
   const [busy, setBusy] = useState(false)
   const [showAllDone, setShowAllDone] = useState(false)
 
@@ -303,9 +321,22 @@ export function PartnerTasks({ accounts, onSignals }: {
           <span className="text-[11px] text-slate-400">actuals are live from Meta · sales = purchase value MTD · ROAS is net (after RTS, ÷1.12)</span>
           {mtdLoading && <RefreshCw className="w-3 h-3 animate-spin text-slate-400" />}
         </div>
+        {/* ── ANG TARGET NG KOPONAN ─────────────────────────────────────────
+            NASA ITAAS AT MAS MALAKI: dito nakalagay ang PREMYO, at ito ang
+            pinagsasaluhan. Ang mga indibidwal na card sa ilalim ay ambag sa
+            numerong ito — hindi hiwalay na paligsahan. */}
+        <TeamTargetCard
+          team={store.team} agg={teamAgg} month={month} isAdmin={isAdmin}
+          loading={mtdLoading} onEdit={() => setTeamModal(true)} />
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {owners.map((o, i) => {
-            const tgt = targetOf(o)
+          {/* ⚠ ANG MAY TARGET LANG ANG NANDITO. Dating lahat ng may ad account
+              ay nakalista agad — kaya nakaupo sina Eric at Eugene sa screen na
+              may "No sales target set" kahit hindi mo pa sila hinahawakan
+              (iniulat ng may-ari, Ago 18 2026). Ang blangkong card ay hindi
+              impormasyon; ang listahan ay dapat lumaki kapag IKAW ang naglagay. */}
+          {ownersWithTarget.map((o, i) => {
+            const tgt = targetOf(o)!
             const act = ownerAgg[o]
             const salesPct = tgt && tgt.target_sales > 0 && act ? Math.min(100, (act.value / tgt.target_sales) * 100) : 0
             const netRoas = act && act.spend > 0 ? act.valueNet / (act.spend * VAT) : 0
@@ -326,10 +357,12 @@ export function PartnerTasks({ accounts, onSignals }: {
                   </span>
                   {salesHit && roasOk !== "off" && <Trophy className="w-4 h-4 text-amber-500 shrink-0" />}
                   {isAdmin && (
-                    <button onClick={() => setTargetModal(o)} title="Set this month's targets"
-                      className="text-[11px] font-semibold px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-blue-600 shrink-0">
-                      {tgt ? "Edit" : "Set targets"}
-                    </button>
+                    <span className="flex items-center gap-0.5 shrink-0">
+                      <button onClick={() => setTargetModal(o)} title="Edit this month's target"
+                        className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-slate-50"><Pencil className="w-3 h-3" /></button>
+                      <button onClick={() => { if (confirm(`Remove ${o}'s target for ${month}?`)) store.clearTarget(o) }}
+                        title="Remove target" className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-50"><Trash2 className="w-3 h-3" /></button>
+                    </span>
                   )}
                 </div>
                 {/* Sales laban sa target — progress bar, hindi lang numero. */}
@@ -361,17 +394,20 @@ export function PartnerTasks({ accounts, onSignals }: {
                       Net ROAS {dec(netRoas)} / {dec(tgt.target_roas)}
                     </span>
                   )}
-                  {tgt?.reward && (
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 flex items-center gap-1">
-                      <Gift className="w-3 h-3" /> {tgt.reward}
-                    </span>
-                  )}
                 </div>
               </div>
             )
           })}
-          {owners.length === 0 && (
-            <p className="text-sm text-slate-400 italic">No partners yet — owners come from your registered ad accounts.</p>
+          {/* Dito lumalaki ang listahan — pindot, pumili, lumitaw. */}
+          {isAdmin && ownersWithoutTarget.length > 0 && (
+            <button onClick={() => setTargetModal(ownersWithoutTarget[0])}
+              className="pw-rise border border-dashed border-slate-300 rounded-xl p-3.5 flex items-center justify-center gap-2
+                text-[13px] font-semibold text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/40 transition min-h-[104px]">
+              <Plus className="w-4 h-4" /> Add an individual target
+            </button>
+          )}
+          {ownersWithTarget.length === 0 && !isAdmin && (
+            <p className="text-sm text-slate-400 italic">No individual targets set for this month.</p>
           )}
         </div>
       </div>
@@ -515,6 +551,8 @@ export function PartnerTasks({ accounts, onSignals }: {
       {targetModal && (
         <TargetModal
           owner={targetModal}
+          owners={owners}
+          onOwner={setTargetModal}
           month={month}
           existing={targetOf(targetModal)}
           busy={busy}
@@ -524,6 +562,19 @@ export function PartnerTasks({ accounts, onSignals }: {
             const err = await store.setTarget(targetModal, v)
             setBusy(false)
             if (err) alert(err); else setTargetModal(null)
+          }} />
+      )}
+      {teamModal && (
+        <TeamModal
+          month={month}
+          existing={store.team}
+          busy={busy}
+          onClose={() => setTeamModal(false)}
+          onSave={async (v) => {
+            setBusy(true)
+            const err = await store.setTeamTarget(v)
+            setBusy(false)
+            if (err) alert(err); else setTeamModal(false)
           }} />
       )}
     </div>
@@ -641,11 +692,152 @@ function TaskModal({ edit, assignees, busy, onClose, onSave }: {
   )
 }
 
-// ── Modal ng target ng buwan ─────────────────────────────────────────────────
-function TargetModal({ owner, month, existing, busy, onClose, onSave }: {
-  owner: string
+/**
+ * Ang target ng BUONG KOPONAN — nasa itaas ng mga indibidwal na card.
+ *
+ * ⚠ ANG PREMYO AY NARITO LANG. Isang layunin, isang gantimpala, pinaghahatian
+ * (hatol ng may-ari, Ago 18 2026). Ang net ROAS ay sa PINAGSAMANG gastos at
+ * halaga — hindi average ng magkakahiwalay na ROAS, na ibang numero at
+ * nagbibigay ng maling bigat sa maliliit na account.
+ */
+function TeamTargetCard({ team, agg, month, isAdmin, loading, onEdit }: {
+  team: TeamTarget | null
+  agg: { spend: number; value: number; valueNet: number; purchases: number }
   month: string
-  existing?: { target_sales: number; target_roas: number; reward: string }
+  isAdmin: boolean
+  loading: boolean
+  onEdit: () => void
+}) {
+  const netRoas = agg.spend > 0 ? agg.valueNet / (agg.spend * VAT) : 0
+  const salesPct = team && team.target_sales > 0 ? Math.min(100, (agg.value / team.target_sales) * 100) : 0
+  const salesHit = !!team && team.target_sales > 0 && agg.value >= team.target_sales
+  const roasHit = !!team && team.target_roas > 0 && netRoas >= team.target_roas
+  const both = salesHit && roasHit
+
+  return (
+    <div className={`pw-rise relative overflow-hidden rounded-xl p-4 sm:p-5 space-y-3 ring-1 ring-inset shadow-sm
+      ${both ? "bg-gradient-to-br from-emerald-600 to-emerald-700 ring-white/15"
+            : "bg-gradient-to-br from-slate-800 to-slate-900 ring-white/10"}`}>
+      <Trophy className="absolute -right-3 -top-3 w-24 h-24 text-white opacity-[0.07] pointer-events-none" strokeWidth={1} />
+      <div className="flex items-start gap-3 relative">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[11px] font-semibold uppercase tracking-widest text-white/60">
+            Team goal — everyone combined
+          </span>
+          <span className="block text-lg sm:text-xl font-bold text-white leading-tight">
+            {team?.reward
+              ? <span className="flex items-center gap-1.5"><Gift className="w-4 h-4 shrink-0" /> {team.reward}</span>
+              : isAdmin ? "No team reward set yet" : "No team goal this month"}
+          </span>
+          <span className="block text-[11px] text-white/50 mt-0.5">
+            {loading ? "pulling this month…" : `${agg.purchases} purchases · spend ${peso(agg.spend)} · ${month}`}
+          </span>
+        </span>
+        {isAdmin && (
+          <button onClick={onEdit}
+            className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-white/10 text-white hover:bg-white/20 shrink-0 transition">
+            {team ? "Edit goal" : "Set team goal"}
+          </button>
+        )}
+      </div>
+
+      {team && team.target_sales > 0 && (
+        <div className="space-y-1 relative">
+          <div className="flex items-baseline justify-between text-[12px]">
+            <span className="text-white/70 font-medium">Combined sales</span>
+            <span className="tabular-nums text-white">
+              <b>{peso(agg.value)}</b><span className="text-white/50"> / {peso(team.target_sales)}</span>
+            </span>
+          </div>
+          <div className="h-2.5 rounded-full bg-white/15 overflow-hidden">
+            <div className={`h-full rounded-full transition-[width] duration-700 ease-out ${salesHit ? "bg-emerald-300" : "bg-blue-400"}`}
+              style={{ width: `${salesPct}%` }} />
+          </div>
+          <p className="text-[11px] text-white/60">
+            {salesHit ? "Team target hit 🎉" : `${peso(Math.max(0, team.target_sales - agg.value))} to go`}
+          </p>
+        </div>
+      )}
+
+      {team && team.target_roas > 0 && (
+        <div className="relative">
+          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+            roasHit ? "bg-emerald-400/25 text-emerald-100" : "bg-white/12 text-white/85"}`}>
+            Combined net ROAS {dec(netRoas)} / {dec(team.target_roas)}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Modal ng target ng buwan ─────────────────────────────────────────────────
+function TargetModal({ owner, owners, onOwner, month, existing, busy, onClose, onSave }: {
+  owner: string
+  owners: string[]
+  onOwner: (o: string) => void
+  month: string
+  existing?: { target_sales: number; target_roas: number }
+  busy: boolean
+  onClose: () => void
+  onSave: (v: { target_sales: number; target_roas: number }) => void
+}) {
+  const [sales, setSales] = useState(existing?.target_sales ? String(existing.target_sales) : "")
+  const [roas, setRoas] = useState(existing?.target_roas ? String(existing.target_roas) : "")
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-3"
+      onClick={onClose}>
+      <div className="pw-rise bg-white rounded-xl shadow-2xl ring-1 ring-black/5 w-full max-w-sm overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-slate-100">
+          <h2 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+            <Target className="w-4 h-4 text-blue-600" /> Individual target — {month}
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3 text-sm">
+          {/* Mapapalitan ang tao nang hindi isinasara ang modal — mula sa
+              "Add an individual target" ay hula ang unang pangalan. */}
+          <label className="block">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Partner</span>
+            <select value={owner} onChange={e => onOwner(e.target.value)}
+              className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-2">
+              {owners.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Target sales (purchase value, ₱)</span>
+            <input type="number" min="0" value={sales} onChange={e => setSales(e.target.value)} placeholder="e.g. 150000"
+              className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Target net ROAS</span>
+            <input type="number" min="0" step="0.1" value={roas} onChange={e => setRoas(e.target.value)} placeholder="e.g. 3.9"
+              className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
+          </label>
+          <p className="text-[11px] text-slate-400 leading-snug">
+            Actuals are live from Meta for this partner&apos;s ad accounts — sales is month-to-date purchase value; ROAS is net (after the page&apos;s RTS rate, ÷ 1.12 VAT), the same math as Testing/Scaling.
+            <b className="text-slate-500"> The reward lives on the team goal</b>, not here.
+          </p>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50">
+          <button onClick={onClose} className="h-9 px-4 rounded-lg border border-slate-300 text-sm font-semibold text-slate-600 hover:bg-white">Cancel</button>
+          <button disabled={busy}
+            onClick={() => onSave({ target_sales: Number(sales) || 0, target_roas: Number(roas) || 0 })}
+            className="h-9 px-4 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+            {busy ? "Saving…" : "Save target"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Modal ng target ng KOPONAN — dito lang ang premyo ────────────────────────
+function TeamModal({ month, existing, busy, onClose, onSave }: {
+  month: string
+  existing: TeamTarget | null
   busy: boolean
   onClose: () => void
   onSave: (v: { target_sales: number; target_roas: number; reward: string }) => void
@@ -661,28 +853,30 @@ function TargetModal({ owner, month, existing, busy, onClose, onSave }: {
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-slate-100">
           <h2 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-            <Target className="w-4 h-4 text-blue-600" /> {owner} — {month}
+            <Trophy className="w-4 h-4 text-amber-500" /> Team goal — {month}
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-5 py-4 space-y-3 text-sm">
           <label className="block">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Target sales (purchase value, ₱)</span>
-            <input type="number" min="0" value={sales} onChange={e => setSales(e.target.value)} placeholder="e.g. 150000"
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Combined target sales (₱)</span>
+            <input type="number" min="0" value={sales} onChange={e => setSales(e.target.value)} placeholder="e.g. 800000"
               className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
           </label>
           <label className="block">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Target net ROAS</span>
-            <input type="number" min="0" step="0.1" value={roas} onChange={e => setRoas(e.target.value)} placeholder="e.g. 3.9"
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Combined target net ROAS</span>
+            <input type="number" min="0" step="0.1" value={roas} onChange={e => setRoas(e.target.value)} placeholder="e.g. 3.5"
               className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
           </label>
           <label className="block">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Reward for hitting it <span className="normal-case font-normal">(optional)</span></span>
-            <input value={reward} onChange={e => setReward(e.target.value)} placeholder="e.g. ₱2,000 bonus"
-              className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3" />
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Reward if the team hits it</span>
+            <input value={reward} onChange={e => setReward(e.target.value)} placeholder="e.g. ₱10,000 team bonus · dinner out"
+              className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3" autoFocus />
           </label>
           <p className="text-[11px] text-slate-400 leading-snug">
-            Actuals are pulled live from Meta for this partner&apos;s ad accounts — sales is month-to-date purchase value; ROAS is net (after the page&apos;s RTS rate, ÷ 1.12 VAT), the same math as Testing/Scaling.
+            One reward for everyone. Combined net ROAS is computed on the <b className="text-slate-500">pooled</b> spend and value —
+            not an average of each partner&apos;s ROAS, which would give a small account the same weight as a large one.
+            Everyone with an account is notified when you save this.
           </p>
         </div>
         <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50">
@@ -690,7 +884,7 @@ function TargetModal({ owner, month, existing, busy, onClose, onSave }: {
           <button disabled={busy}
             onClick={() => onSave({ target_sales: Number(sales) || 0, target_roas: Number(roas) || 0, reward })}
             className="h-9 px-4 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
-            {busy ? "Saving…" : "Save targets"}
+            {busy ? "Saving…" : "Save team goal"}
           </button>
         </div>
       </div>

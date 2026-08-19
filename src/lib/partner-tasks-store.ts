@@ -38,6 +38,19 @@ export interface PartnerTarget {
   month: string             // YYYY-MM
   target_sales: number
   target_roas: number
+}
+
+/**
+ * Ang target ng BUONG KOPONAN kada buwan — dito nakalagay ang PREMYO.
+ *
+ * ⚠ ISANG PREMYO LANG, PANG-LAHAT (hatol ng may-ari, Ago 18 2026). Ang
+ * indibidwal na target ay sukatan lang — kung sino ang nasa likod. Ang
+ * gantimpala ay pinagtutulungan, kaya narito ito at wala na sa `PartnerTarget`.
+ */
+export interface TeamTarget {
+  month: string
+  target_sales: number
+  target_roas: number
   reward: string
 }
 
@@ -94,6 +107,7 @@ const HREF = "/business/ads/facebook"
 export function usePartnerTasks() {
   const [tasks, setTasks] = useState<PartnerTask[]>([])
   const [targets, setTargets] = useState<PartnerTarget[]>([])
+  const [team, setTeam] = useState<TeamTarget | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState("")
 
@@ -101,13 +115,19 @@ export function usePartnerTasks() {
     const businessId = await getBusinessId()
     if (!businessId) { setLoaded(true); return }
     const supabase = createSupabaseBrowserClient()
-    const [t, g] = await Promise.all([
+    const [t, g, tm] = await Promise.all([
       supabase.from("partner_tasks").select("*")
         .eq("business_id", businessId).eq("deleted", false)
         .order("created_at", { ascending: false }).limit(500),
       supabase.from("partner_targets").select("*")
         .eq("business_id", businessId).eq("month", monthKey()),
+      supabase.from("team_targets").select("*")
+        .eq("business_id", businessId).eq("month", monthKey()).maybeSingle(),
     ])
+    // ⚠ Ang `team_targets` ay HINDI nakakapigil. Dalawang migration ang
+    // kasangkot (0029 at 0030), at kung 0029 lang ang naitakbo ay gumagana pa
+    // rin ang buong board — ang team target lang ang wala. Ang paghinto sa
+    // buong tab dahil doon ay pagpatay sa gumagana na.
     if (t.error || g.error) {
       const msg = t.error?.message || g.error?.message || ""
       setError(/partner_task|partner_target/.test(msg) || t.error?.code === "42P01" || g.error?.code === "42P01"
@@ -115,13 +135,20 @@ export function usePartnerTasks() {
         : msg)
       setLoaded(true); return
     }
-    setError("")
+    setError(tm.error && (/team_targets/.test(tm.error.message) || tm.error.code === "42P01")
+      ? "Team target needs migration 0030_team_targets_and_task_emails.sql — the rest of the board works without it."
+      : "")
     setTasks((t.data || []).map(rowToTask))
     setTargets((g.data || []).map((r: any) => ({
       id: r.id, owner: r.owner, month: r.month,
       target_sales: Number(r.target_sales) || 0, target_roas: Number(r.target_roas) || 0,
-      reward: r.reward || "",
     })))
+    setTeam(tm.data ? {
+      month: tm.data.month,
+      target_sales: Number(tm.data.target_sales) || 0,
+      target_roas: Number(tm.data.target_roas) || 0,
+      reward: tm.data.reward || "",
+    } : null)
     setLoaded(true)
   }, [])
   useEffect(() => { refresh() }, [refresh])
@@ -236,15 +263,16 @@ export function usePartnerTasks() {
   }, [refresh])
 
   /** Upsert ng target ng buwang ito para sa isang partner. */
-  const setTarget = useCallback(async (owner: string, input: { target_sales: number; target_roas: number; reward: string }) => {
+  const setTarget = useCallback(async (owner: string, input: { target_sales: number; target_roas: number }) => {
     const businessId = await getBusinessId()
     if (!businessId) return "No business"
     const supabase = createSupabaseBrowserClient()
+    // ⚠ WALA NANG `reward` DITO. Pang-koponan na ang premyo (`team_targets`) —
+    // ang indibidwal na target ay sukatan ng ambag, hindi hiwalay na paligsahan.
     const { error } = await supabase.from("partner_targets").upsert({
       business_id: businessId, owner, month: monthKey(),
       target_sales: input.target_sales || 0, target_roas: input.target_roas || 0,
-      reward: input.reward.trim(), updated_at: new Date().toISOString(),
-      updated_by: currentUserName() || "",
+      updated_at: new Date().toISOString(), updated_by: currentUserName() || "",
     }, { onConflict: "business_id,owner,month" })
     if (error) return error.message
     const email = rosterEmailByName(owner)
@@ -252,13 +280,53 @@ export function usePartnerTasks() {
       audience: "user", toEmail: email, type: "target-set", severity: "info",
       title: `Your ${monthKey()} target is set`,
       body: [input.target_sales ? `Sales ₱${input.target_sales.toLocaleString()}` : "",
-        input.target_roas ? `Net ROAS ${input.target_roas}` : "",
-        input.reward ? `Reward: ${input.reward}` : ""].filter(Boolean).join(" · "),
+        input.target_roas ? `Net ROAS ${input.target_roas}` : ""].filter(Boolean).join(" · "),
       href: HREF,
     })
     await refresh()
     return ""
   }, [refresh])
 
-  return { tasks, targets, loaded, error, refresh, createTasks, updateTask, deleteTask, submitTask, approveTask, returnTask, setTarget }
+  /** Alisin ang indibidwal na target — hindi lahat ay may sukatan kada buwan. */
+  const clearTarget = useCallback(async (owner: string) => {
+    const businessId = await getBusinessId()
+    if (!businessId) return
+    const supabase = createSupabaseBrowserClient()
+    await supabase.from("partner_targets").delete()
+      .eq("business_id", businessId).eq("owner", owner).eq("month", monthKey())
+    await refresh()
+  }, [refresh])
+
+  /**
+   * Ang target ng BUONG KOPONAN — kasama ang natatanging premyo.
+   * Inaabisuhan ang LAHAT ng may account: pinagsasaluhan ang layunin.
+   */
+  const setTeamTarget = useCallback(async (input: { target_sales: number; target_roas: number; reward: string }) => {
+    const businessId = await getBusinessId()
+    if (!businessId) return "No business"
+    const supabase = createSupabaseBrowserClient()
+    const { error } = await supabase.from("team_targets").upsert({
+      business_id: businessId, month: monthKey(),
+      target_sales: input.target_sales || 0, target_roas: input.target_roas || 0,
+      reward: input.reward.trim(), updated_at: new Date().toISOString(),
+      updated_by: currentUserName() || "",
+    }, { onConflict: "business_id,month" })
+    if (error) {
+      return /team_targets/.test(error.message) || (error as any).code === "42P01"
+        ? "Run migration 0030_team_targets_and_task_emails.sql in Supabase first."
+        : error.message
+    }
+    notify({
+      audience: "all", type: "team-target-set", severity: "info",
+      title: `Team target for ${monthKey()}`,
+      body: [input.target_sales ? `Sales ₱${input.target_sales.toLocaleString()}` : "",
+        input.target_roas ? `Net ROAS ${input.target_roas}` : "",
+        input.reward ? `🎁 ${input.reward}` : ""].filter(Boolean).join(" · "),
+      href: HREF,
+    })
+    await refresh()
+    return ""
+  }, [refresh])
+
+  return { tasks, targets, team, loaded, error, refresh, createTasks, updateTask, deleteTask, submitTask, approveTask, returnTask, setTarget, clearTarget, setTeamTarget }
 }
