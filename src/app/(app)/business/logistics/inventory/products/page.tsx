@@ -12,6 +12,7 @@ import { useSuppliers } from "@/lib/supplier-store"
 import { Confidential, ConfidentialToggle } from "@/components/business/Confidential"
 import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 import { useProductBatches, valueOf, batchRemaining, fifoOrder, type ProductBatch } from "@/lib/product-batches-store"
+import { isMotherAccount } from "@/lib/users-store"
 import { InventoryDashboard } from "@/components/business/inventory/InventoryDashboard"
 
 const INP = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400"
@@ -74,9 +75,15 @@ function downloadTemplate() {
 }
 
 // Export: same columns/order/colors as the template (+ extra stock columns at the end).
-function exportItems(items: ProductItem[]) {
-  const headers = ["Item Code", "Name", "Description", "COG", "Color", "Size", "Type", "Qty", "Damage", "Loss", "Supplier Store Name", "Status", "Remaining"]
-  const rows = [headers, ...items.map(i => [i.sku, i.name, i.description, i.cog, i.color, i.size, i.type, i.goods, i.damage, i.loss, i.supplier, i.status, itemRemaining(i)])]
+function exportItems(items: ProductItem[], withSupplier: boolean) {
+  // ⚠ TINATANGGAL ANG KOLUM, HINDI BINABLANGKO. Ang blangkong "Supplier Store
+  // Name" ay nagpapahiwatig pa ring may itinatago, at isang edit lang ang layo
+  // sa pagkakamali. Kapag walang pahintulot, wala talagang kolum sa file
+  // (hiling ng may-ari, Ago 19 2026: "kahit pag export").
+  const headers = ["Item Code", "Name", "Description", "COG", "Color", "Size", "Type", "Qty", "Damage", "Loss",
+    ...(withSupplier ? ["Supplier Store Name"] : []), "Status", "Remaining"]
+  const rows = [headers, ...items.map(i => [i.sku, i.name, i.description, i.cog, i.color, i.size, i.type, i.goods, i.damage, i.loss,
+    ...(withSupplier ? [i.supplier] : []), i.status, itemRemaining(i)])]
   const ws = XLSX.utils.aoa_to_sheet(rows)
   styleHeaderRow(ws, headers.length)
   ws["!cols"] = headers.map(h => ({ wch: Math.max(12, h.length + 2) }))
@@ -169,7 +176,15 @@ export default function ProductItemsPage() {
   const drift = useMemo(() => batchStore.reconcile(store.items.filter(i => !i.deleted)),
     [batchStore, store.items])
   const [toolsOpen, setToolsOpen] = useState(false)
-  // Kompidensyal ang supplier store name — nakatago ang default sa bawat pagbukas.
+  // ── SINO ANG PWEDENG MAKAKITA NG SUPPLIER ────────────────────────────────
+  // ⚠ ADMIN LANG — hatol ng may-ari, Ago 19 2026. Ang dating pagtatago ay isang
+  // matang mapipindot ng kahit sino: abala iyon sa may hangad, hindi harang.
+  // Kapag hindi Mother Account: walang laman ang kolum, walang toggle, walang
+  // field sa porma, walang filter, at WALANG kolum sa export.
+  //
+  // Minsan lang binabasa (`useState(() => …)`) — nasa localStorage cache ang
+  // roster at hindi ito nagbabago habang bukas ang pahina.
+  const [canSeeSupplier] = useState(() => isMotherAccount())
   const [showSuppliers, setShowSuppliers] = useState(false)
   const [toast, setToast] = useState("")
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(""), 3500) }
@@ -210,7 +225,7 @@ export default function ProductItemsPage() {
   ) : null
 
   if (screen === "add" || (screen === "edit" && active))
-    return <>{toastEl}<FormScreen mode={screen === "edit" ? "edit" : "add"} initial={screen === "edit" ? active! : undefined}
+    return <>{toastEl}<FormScreen mode={screen === "edit" ? "edit" : "add"} initial={screen === "edit" ? active! : undefined} canSee={canSeeSupplier}
       supplierOptions={supplierOptions}
       onBack={() => setScreen("list")}
       onSave={(input) => {
@@ -220,7 +235,7 @@ export default function ProductItemsPage() {
       }} /></>
 
   if (screen === "view" && active)
-    return <>{toastEl}<ViewScreen item={store.items.find(i => i.id === active.id) || active} onBack={() => setScreen("list")} onEdit={() => setScreen("edit")} /></>
+    return <>{toastEl}<ViewScreen item={store.items.find(i => i.id === active.id) || active} onBack={() => setScreen("list")} onEdit={() => setScreen("edit")} canSee={canSeeSupplier} /></>
 
   if (screen === "upload")
     return <>{toastEl}<UploadScreen onBack={() => setScreen("list")}
@@ -246,7 +261,7 @@ export default function ProductItemsPage() {
         </div>
         {tab === "list" && (
         <div className="flex items-center gap-2">
-          <ConfidentialToggle shown={showSuppliers} onToggle={() => setShowSuppliers(v => !v)} label="suppliers" />
+          {canSeeSupplier && <ConfidentialToggle shown={showSuppliers} onToggle={() => setShowSuppliers(v => !v)} label="suppliers" />}
           <div className="relative">
             <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => setToolsOpen(o => !o)}><Wrench className="w-4 h-4" /> Tools</Button>
             {toolsOpen && (
@@ -257,7 +272,7 @@ export default function ProductItemsPage() {
                     className="w-full flex items-center gap-2 text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"><Plus className="w-4 h-4" /> Add New</button>
                   <button onClick={() => { setToolsOpen(false); setScreen("upload") }}
                     className="w-full flex items-center gap-2 text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"><Upload className="w-4 h-4" /> Upload Item</button>
-                  <button onClick={() => { setToolsOpen(false); exportItems(filtered); flash("Exported to Excel.") }}
+                  <button onClick={() => { setToolsOpen(false); exportItems(filtered, canSeeSupplier); flash(canSeeSupplier ? "Exported to Excel." : "Exported to Excel — supplier column omitted.") }}
                     className="w-full flex items-center gap-2 text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"><FileSpreadsheet className="w-4 h-4" /> Export to Excel</button>
                   <button onClick={() => { setToolsOpen(false); setView(v => v === "deleted" ? "list" : "deleted"); setPage(1) }}
                     className="w-full flex items-center gap-2 text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
@@ -327,7 +342,7 @@ export default function ProductItemsPage() {
                 <th className="px-4 py-2"><input className={FINP} value={f.damage} onChange={e => setFilter("damage", e.target.value)} onKeyDown={e => e.key === "Enter" && applyFilters()} /></th>
                 <th className="px-4 py-2"><input className={FINP} value={f.loss} onChange={e => setFilter("loss", e.target.value)} onKeyDown={e => e.key === "Enter" && applyFilters()} /></th>
                 <th className="px-4 py-2"><input className={FINP} value={f.remaining} onChange={e => setFilter("remaining", e.target.value)} onKeyDown={e => e.key === "Enter" && applyFilters()} /></th>
-                <th className="px-4 py-2"><input className={FINP} value={f.supplier} onChange={e => setFilter("supplier", e.target.value)} onKeyDown={e => e.key === "Enter" && applyFilters()} /></th>
+                <th className="px-4 py-2">{canSeeSupplier && <input className={FINP} value={f.supplier} onChange={e => setFilter("supplier", e.target.value)} onKeyDown={e => e.key === "Enter" && applyFilters()} />}</th>
                 <th className="px-4 py-2">
                   <Button className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs" onClick={applyFilters}><Search className="w-3.5 h-3.5" /> Search</Button>
                 </th>
@@ -354,7 +369,7 @@ export default function ProductItemsPage() {
                   <td className="px-4 py-3 tabular-nums text-slate-700">{fmtNum(i.loss)}</td>
                   <td className={`px-4 py-3 tabular-nums font-semibold ${itemRemaining(i) <= 0 ? "text-rose-600" : "text-slate-800"}`}>{fmtNum(itemRemaining(i))}</td>
                   {/* Kompidensyal — nakatago hangga't hindi pinipindot ang mata. */}
-                  <td className="px-4 py-3 max-w-[180px]"><Confidential value={i.supplier} forceShow={showSuppliers} className="text-slate-600" /></td>
+                  <td className="px-4 py-3 max-w-[180px]"><Confidential value={canSeeSupplier ? i.supplier : ""} forceShow={showSuppliers} locked={!canSeeSupplier} className="text-slate-600" /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 text-slate-400">
                       {view === "deleted" ? (
@@ -425,6 +440,8 @@ export default function ProductItemsPage() {
         <ReceiveStockModal
           item={receiving}
           batches={batchStore.byItem(receiving.id)}
+          supplierOptions={supplierOptions}
+          canSee={canSeeSupplier}
           onClose={() => setReceiving(null)}
           onSave={input => {
             batchStore.addBatch({ item_id: receiving.id, ...input })
@@ -472,9 +489,13 @@ export default function ProductItemsPage() {
 //
 // ⚠ Nasa module scope ito. Kapag inilagay sa loob ng page component, mare-remount
 // ang mga input kada keystroke at mawawala ang focus (naranasan na sa Add User).
-function ReceiveStockModal({ item, batches, onClose, onSave }: {
+function ReceiveStockModal({ item, batches, supplierOptions, canSee, onClose, onSave }: {
   item: ProductItem
   batches: ProductBatch[]
+  /** Mga supplier na naka-rehistro — ang pipiliin, hindi ang ita-type. */
+  supplierOptions: string[]
+  /** Walang pahintulot? Walang field — pero hindi nawawala ang naka-imbak na. */
+  canSee: boolean
   onClose: () => void
   onSave: (input: { qty: number; cog: number; received_date: string; batch_no: string; supplier: string; notes: string }) => void
 }) {
@@ -544,10 +565,28 @@ function ReceiveStockModal({ item, batches, onClose, onSave }: {
             </div>
           </div>
 
-          <div>
-            <label className="text-sm text-slate-600">Supplier</label>
-            <Input className="mt-1" value={supplier} onChange={e => setSupplier(e.target.value)} />
-          </div>
+          {/* SUPPLIER — pinipili, hindi tina-type. Ang malayang teksto ay
+              gumagawa ng "MBF Skincare", "MBF skincare" at "MBF  Skincare"
+              bilang tatlong magkaibang supplier, at hindi na sila magkakasundo
+              sa Purchase Order at sa mga ulat. Ang listahan ay galing sa
+              Supplier page — doon idinadagdag ang bago.
+              Walang pahintulot? Walang field — pero hindi rin nabubura ang
+              naka-imbak na supplier ng item (dala pa rin ng `supplier` state). */}
+          {canSee && (
+            <div>
+              <label className="text-sm text-slate-600">Supplier</label>
+              <select className={`${INP} mt-1`} value={supplier} onChange={e => setSupplier(e.target.value)}>
+                <option value="">-- SELECT SUPPLIER --</option>
+                {/* Kung ang naka-imbak ay wala na sa listahan (na-archive o
+                    binago ang pangalan), ipinapakita pa rin — kung hindi, tahimik
+                    itong mapapalitan ng blangko sa susunod na pag-save. */}
+                {!!supplier && !supplierOptions.includes(supplier) && (
+                  <option value={supplier}>{supplier} (wala na sa listahan)</option>
+                )}
+                {supplierOptions.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className="text-sm text-slate-600">Notes</label>
             <Input className="mt-1" value={notes} placeholder="Opsyonal" onChange={e => setNotes(e.target.value)} />
@@ -649,8 +688,8 @@ function fileToDataUrl(file: File, maxPx = 240): Promise<string> {
   })
 }
 
-function FormScreen({ mode, initial, supplierOptions, onBack, onSave }: {
-  mode: "add" | "edit"; initial?: ProductItem; supplierOptions: string[]
+function FormScreen({ mode, initial, supplierOptions, canSee, onBack, onSave }: {
+  mode: "add" | "edit"; initial?: ProductItem; supplierOptions: string[]; canSee: boolean
   onBack: () => void; onSave: (input: NewItemInput) => void
 }) {
   const [f, setF] = useState<NewItemInput>({
@@ -696,7 +735,7 @@ function FormScreen({ mode, initial, supplierOptions, onBack, onSave }: {
               <FormRow label="Loss"><input className={`${INP} max-w-sm text-right`} inputMode="decimal" value={f.loss || ""} placeholder="0" onChange={e => set("loss", num(e.target.value))} /></FormRow>
             </>
           )}
-          <FormRow label="Supplier Store Name"><ComboInput value={f.supplier} onChange={v => set("supplier", v)} options={supplierOptions} placeholder="-- SELECT SUPPLIER --" /></FormRow>
+          {canSee && <FormRow label="Supplier Store Name"><ComboInput value={f.supplier} onChange={v => set("supplier", v)} options={supplierOptions} placeholder="-- SELECT SUPPLIER --" /></FormRow>}
           <FormRow label="Upload Item Picture">
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-2 h-10 px-3.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-sm text-slate-600 cursor-pointer">
@@ -727,7 +766,7 @@ function FormScreen({ mode, initial, supplierOptions, onBack, onSave }: {
 }
 
 // ── View ─────────────────────────────────────────────────────────────────────
-function ViewScreen({ item, onBack, onEdit }: { item: ProductItem; onBack: () => void; onEdit: () => void }) {
+function ViewScreen({ item, onBack, onEdit, canSee }: { item: ProductItem; onBack: () => void; onEdit: () => void; canSee: boolean }) {
   const F = ({ l, v }: { l: string; v: React.ReactNode }) => (
     <div className="grid grid-cols-[170px_1fr] gap-3 py-2.5 border-b border-slate-100">
       <span className="text-sm text-slate-500 text-right pr-2">{l}</span><span className="text-sm text-slate-800">{v || "—"}</span>
@@ -742,7 +781,7 @@ function ViewScreen({ item, onBack, onEdit }: { item: ProductItem; onBack: () =>
         <F l="Name" v={item.name} /><F l="SKU Code" v={item.sku} />
         <F l="Description" v={item.description} /><F l="COG" v={fmtNum(item.cog)} />
         <F l="Color" v={item.color} /><F l="Size" v={item.size} /><F l="Type" v={item.type} />
-        <F l="Supplier Store Name" v={<Confidential value={item.supplier} className="text-slate-800" />} />
+        <F l="Supplier Store Name" v={<Confidential value={canSee ? item.supplier : ""} locked={!canSee} className="text-slate-800" />} />
         <F l="Goods" v={fmtNum(item.goods)} /><F l="Damage" v={fmtNum(item.damage)} /><F l="Loss" v={fmtNum(item.loss)} />
         <F l="Remaining" v={<strong className={itemRemaining(item) <= 0 ? "text-rose-600" : ""}>{fmtNum(itemRemaining(item))}</strong>} />
         <F l="Status" v={<span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${item.status === "Active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{item.status}</span>} />

@@ -17,14 +17,28 @@ import { Eye, EyeOff } from "lucide-react"
 
 const MASK = "••••••••"
 
-export function Confidential({ value, className = "", forceShow = false }: {
+export function Confidential({ value, className = "", forceShow = false, locked = false }: {
   value: string
   /** Klase ng teksto kapag nakabukas — para tumugma sa hitsura ng column. */
   className?: string
   /** Binubuksan ng page-level na "Show" toggle; itinatago ang per-row na buton. */
   forceShow?: boolean
+  /**
+   * WALANG PAHINTULOT — hindi ito matitingnan, hindi lang nakatago.
+   *
+   * ⚠ ANG PAGTATAGO AY HINDI PAGBABAWAL. Kahit sino ay makakapindot ng mata,
+   * kaya ang "kompidensyal" ay abala lang sa may hangad, hindi harang (hiling
+   * ng may-ari, Ago 19 2026: hindi dapat makita ng warehouse staff ang
+   * supplier). Kapag naka-lock: walang buton, walang `title`, at ang halaga ay
+   * HINDI KAILANMAN naipapasok sa DOM — kaya wala ring makukuha sa Inspect
+   * Element o sa "View source".
+   */
+  locked?: boolean
 }) {
   const [shown, setShown] = useState(false)
+  if (locked) {
+    return <span className="truncate text-slate-400 tracking-[0.25em] select-none" title="Restricted">{MASK}</span>
+  }
   if (!value) return <span className="text-slate-300">—</span>
 
   const visible = forceShow || shown

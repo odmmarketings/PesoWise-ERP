@@ -10,6 +10,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
 import { itemRemaining, type ProductItem } from "@/lib/product-items-store"
+import { isMotherAccount } from "@/lib/users-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useActivePages } from "@/lib/pages-store"
@@ -159,6 +160,9 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
       .sort((a, b) => b.goods - a.goods).slice(0, 10)
       .map(i => ({ name: i.name || i.sku, Remaining: itemRemaining(i), Released: i.released || 0, "Damage/Loss": i.damage + i.loss }))
   , [live])
+  // Admin lang ang nakakakita ng pangalan ng supplier — kaparehong tuntunin ng
+  // Product Items. Minsan lang binabasa; hindi nagbabago habang bukas ang pahina.
+  const [canSeeSupplier] = useState(() => isMotherAccount())
   const valueBySupplier = useMemo(() => {
     const m = new Map<string, number>()
     for (const i of live) {
@@ -338,19 +342,27 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
                 </LineChart>
               </ResponsiveContainer>
             </ChartBox>
-            <ChartBox title="Inventory Value by Supplier">
-              {valueBySupplier.length === 0 ? <Empty /> : (
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={valueBySupplier} dataKey="value" nameKey="name" outerRadius={95}
-                      label={(e: any) => `${e.name} (${Math.round(e.percent * 100)}%)`} labelLine={false} fontSize={10}>
-                      {valueBySupplier.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={(v: any) => peso(Number(v))} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </ChartBox>
+            {/* ⚠ ADMIN LANG. Nakasulat NANG BUO ang pangalan ng supplier sa
+                label ng pie na ito — kaya walang saysay ang pagkandado sa
+                Product Items kung bukas naman ito rito (hiling ng may-ari,
+                Ago 19 2026). Ang BUONG CARD ang inaalis, hindi lang ang
+                label: ang tooltip at ang bilang ng hiwa ay nagsasabi pa rin
+                kung ilan sila at gaano kalaki ang bawat isa. */}
+            {canSeeSupplier && (
+              <ChartBox title="Inventory Value by Supplier">
+                {valueBySupplier.length === 0 ? <Empty /> : (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <PieChart>
+                      <Pie data={valueBySupplier} dataKey="value" nameKey="name" outerRadius={95}
+                        label={(e: any) => `${e.name} (${Math.round(e.percent * 100)}%)`} labelLine={false} fontSize={10}>
+                        {valueBySupplier.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(v: any) => peso(Number(v))} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </ChartBox>
+            )}
             <ChartBox title="Damage / Loss Rate" subtitle="% of intake damaged or lost — highest first">
               {damageRates.length === 0 ? <Empty label="No damage or loss recorded. 🎉" /> : (
                 <div className="space-y-1.5 pt-1">
