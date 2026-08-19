@@ -1,5 +1,5 @@
 ﻿"use client"
-import { useState, useMemo, useEffect, useRef } from "react"
+import { useState, useMemo, useEffect, useRef, useCallback } from "react"
 import * as XLSX from "xlsx-js-style"
 import {
   Undo2, RefreshCw, Search, X, Check, ChevronLeft, ChevronRight, Upload, ScanLine, Download, Camera,
@@ -103,6 +103,26 @@ export default function RtsItemsPage() {
     for (const s of shipped.scans) m.set(s.tracking_no.trim().toLowerCase(), s)
     return m
   }, [shipped.scans])
+
+  /**
+   * Pahiwatig ng COG para sa nagbabalik na parcel — binabasa mula sa batch_lines na
+   * naitala noong umalis ito. Lumalabas LANG para sa item na may higit sa isang
+   * presyo sa mga batch nito ("double COG") — kapag iisa lang ang presyo ng item,
+   * walang maipagkakamaling box, kaya walang popup na aabala sa scan.
+   */
+  const cogHintOf = useCallback((tracking: string) => {
+    const scan = scanByTracking.get(tracking.trim().toLowerCase())
+    if (!scan?.batch_lines?.length) return []
+    return scan.batch_lines
+      .filter(l => {
+        const cogs = new Set(batchStore.batches.filter(b => b.item_id === l.item_id).map(b => b.cog))
+        return cogs.size >= 2
+      })
+      .map(l => ({
+        name: productStore.items.find(i => i.id === l.item_id)?.name || "Item",
+        qty: l.qty, cog: l.cog, batchNo: l.batch_no || "Batch",
+      }))
+  }, [scanByTracking, batchStore.batches, productStore.items])
 
   /** Ilang MABUTING piraso ang bumalik — sira at nawala ay hindi na maibebenta. */
   function goodQtyOf(tracking: string, fallbackQty: number) {
@@ -616,7 +636,7 @@ export default function RtsItemsPage() {
         )
       })()}
 
-      {camOpen && <CameraScanScreen rows={rows} rts={rts} onClose={() => setCamOpen(false)} />}
+      {camOpen && <CameraScanScreen rows={rows} rts={rts} cogHintOf={cogHintOf} onClose={() => setCamOpen(false)} />}
     </div>
   )
 }
@@ -920,8 +940,12 @@ function ClaimsScreen({ rows, onBack, onApply }: {
 // + laging-kita na malaking CONFIRM button. Duplicate scan → error sound + "ALREADY SCANNED".
 // Camera starts on tap (user gesture unlocks camera permission AND WebAudio beeps).
 // May manual input fallback sa baba (hardware scanner / walang camera).
-function CameraScanScreen({ rows, rts, onClose }: {
-  rows: RtsRow[]; rts: ReturnType<typeof useRtsMeta>; onClose: () => void
+type CogHint = { name: string; qty: number; cog: number; batchNo: string }
+
+function CameraScanScreen({ rows, rts, cogHintOf, onClose }: {
+  rows: RtsRow[]; rts: ReturnType<typeof useRtsMeta>
+  cogHintOf: (tracking: string) => CogHint[]
+  onClose: () => void
 }) {
   const [mode, setMode] = useState<"receive" | "check">("receive")
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -932,6 +956,9 @@ function CameraScanScreen({ rows, rts, onClose }: {
   const [sessionR, setSessionR] = useState(0)
   const [sessionC, setSessionC] = useState(0)
   const [checkSheet, setCheckSheet] = useState<null | { row: RtsRow; items: RtsItemCount[]; note: string }>(null)
+  // Popup ng COG pagkatanggap — humihinto ang scan hanggang mapindot ang OK, dahil
+  // kailangang MAGLAKAD ang staff papunta sa tamang box bago ang susunod na parcel.
+  const [cogPopup, setCogPopup] = useState<null | { code: string; customer: string; hints: CogHint[] }>(null)
   const controlsRef = useRef<{ stop: () => void } | null>(null)
   const lastRef = useRef({ code: "", at: 0 })
   const pausedRef = useRef(false)
@@ -1022,6 +1049,13 @@ function CameraScanScreen({ rows, rts, onClose }: {
       beep("receive")
       setSessionR(n => n + 1)
       showBanner("ok", "RECEIVED ✓", `${row.customer_name || ""} · ${code}`)
+      // May item bang dalawa ang presyo? Sabihin AGAD kung aling COG ang parcel na
+      // ito, para sa tamang box ito maisalansan — hindi na hulaan mamaya.
+      const hints = cogHintOf(String(row.tracking_no))
+      if (hints.length) {
+        pausedRef.current = true
+        setCogPopup({ code, customer: String(row.customer_name || ""), hints })
+      }
     } else {
       if (m?.checked_at) {
         beep("error")
@@ -1125,6 +1159,40 @@ function CameraScanScreen({ rows, rts, onClose }: {
       </div>
 
       {/* CHECK confirmation sheet — big sticky CONFIRM, laging kita */}
+      {/* POPUP NG COG — malaki ang presyo dahil mula sa kabilang dulo ng mesa ito
+          binabasa. Sadyang blocking: kailangang MAILAGAY muna sa tamang box ang
+          parcel bago magpatuloy ang scan, kaya OK ang tanging labasan. z-20 para
+          nasa ibabaw ng check sheet kung sakaling magkasabay. */}
+      {cogPopup && (
+        <div className="absolute inset-0 z-20 bg-black/75 flex items-center justify-center p-5">
+          <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden">
+            <div className="px-5 py-3 bg-violet-600 text-white">
+              <p className="text-xs font-bold uppercase tracking-wider">Saang box ibabalik?</p>
+              <p className="text-[11px] opacity-80 font-mono truncate">{cogPopup.code}{cogPopup.customer ? ` · ${cogPopup.customer}` : ""}</p>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {cogPopup.hints.map((h, i) => (
+                <div key={i} className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-base font-extrabold text-slate-900 truncate">{h.name}</p>
+                    <p className="text-[11px] text-slate-400">{num(h.qty)} pc{h.qty === 1 ? "" : "s"} · {h.batchNo}</p>
+                  </div>
+                  <p className="text-3xl font-extrabold text-violet-700 tabular-nums whitespace-nowrap">₱{num(h.cog)}<span className="text-xs font-bold text-slate-400 ml-1">COG</span></p>
+                </div>
+              ))}
+              <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                Dalawa ang presyo ng item na ito sa stock — ilagay ang parcel sa box ng
+                COG na nakasulat sa itaas, para tama rin ang babalikan pag-restock.
+              </p>
+            </div>
+            <button onClick={() => { setCogPopup(null); pausedRef.current = false }}
+              className="w-full h-14 bg-violet-600 hover:bg-violet-700 text-white text-base font-extrabold">
+              OK — NAILAGAY SA TAMANG BOX
+            </button>
+          </div>
+        </div>
+      )}
+
       {checkSheet && (
         <div className="absolute inset-0 z-10 bg-black/60 flex items-end">
           <div className="bg-white w-full rounded-t-2xl max-h-[85%] flex flex-col">
