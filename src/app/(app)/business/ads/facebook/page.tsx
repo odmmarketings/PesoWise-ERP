@@ -1212,7 +1212,9 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const [editVal, setEditVal] = useState("")
   // Pending edits (drafts): BUDGET changes only — queued locally, published together (Meta-style).
   // Status toggles are NOT drafted: they publish to Facebook immediately (see setStatusNow).
-  const [drafts, setDrafts] = useState<Record<string, { id: string; name: string; accountId: string; budget?: number }>>({})
+  // `name` = ang pangalan NOONG ni-draft (pang-tawag sa review at sa log).
+  // `rename` = ang HINIHILING na bagong pangalan — iyon ang pagbabago.
+  const [drafts, setDrafts] = useState<Record<string, { id: string; name: string; accountId: string; budget?: number; rename?: string }>>({})
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())   // rows whose on/off is being applied on FB right now
   // ⚠ ANG BASA PAGKATAPOS NG SULAT AY HULI SA META. Tinatanggap ni Meta ang
   // pagbukas, pero ang kasunod na `load(true)` ay ibinabalik pa rin ang LUMANG
@@ -1233,35 +1235,6 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const [renameId, setRenameId] = useState("")
   const [renameVal, setRenameVal] = useState("")
 
-  /** Ipinapadala kay Meta ang bagong pangalan. Optimistic, may pagbawi kung pumalya. */
-  async function saveName(r: MgrRow) {
-    const name = renameVal.trim()
-    setRenameId("")
-    if (!name || name === r.name) return
-    const token = accById(r.accountId)?.token || ""
-    if (!token) { flash("⚠ No token for this account"); return }
-    const before = r.name
-    // Agad sa screen — at sa CACHE din, kung hindi ay babalik ang lumang
-    // pangalan pagkatapos mong lumipat ng tab (parehong bitag ng kill).
-    const patch = (rows: any[]) => rows.map(x => x.id === r.id ? { ...x, name } : x)
-    setRows(patch)
-    for (const [k, v] of MGR_CACHE) if (k.endsWith(`|${r.accountId}`)) MGR_CACHE.set(k, { ...v, rows: patch(v.rows) })
-    try {
-      const j = await fetch(`/api/fb/manage`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, action: "update", id: r.id, name }),
-      }).then(rr => rr.json())
-      if (!j.success) throw new Error(j.error || "Rename failed")
-      logAds({ action: "rename", level, objectId: r.id, objectName: name, accountName: r.accountName,
-        summary: `"${before}" → "${name}"`, surface: "ads-manager", details: { from: before, to: name } })
-      flash("Renamed.")
-    } catch (e: any) {
-      const undo = (rows: any[]) => rows.map(x => x.id === r.id ? { ...x, name: before } : x)
-      setRows(undo)
-      for (const [k, v] of MGR_CACHE) if (k.endsWith(`|${r.accountId}`)) MGR_CACHE.set(k, { ...v, rows: undo(v.rows) })
-      playError(); flash("⚠ " + (e?.message || "Rename failed"))
-    }
-  }
   // Automated rules (Meta adrules_library): More ▾ → Create a new rule / Manage rules
   const [moreOpen, setMoreOpen] = useState(false)
   const [rulesView, setRulesView] = useState<RulesView>("")
@@ -1368,18 +1341,38 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   const origActive = (r: MgrRow) => /active/i.test(r.configuredStatus)
   const effBudget = (r: MgrRow) => drafts[r.id]?.budget ?? r.ownBudget   // budget incl. pending draft
   const hasBudgetDraft = (r: MgrRow) => drafts[r.id]?.budget != null
-  const upsertDraft = (r: MgrRow, patch: { budget?: number }) => setDrafts(d => {
+  // ── PANGALAN, KASAMA NA ANG DRAFT ────────────────────────────────────────
+  // ⚠ ANG DRAFT ANG IPINAPAKITA, HINDI ANG NAKA-IMBAK. Kung ang talahanayan ay
+  // magpapakita pa rin ng lumang pangalan habang may nakabinbing pagpapalit, ang
+  // tanging tanda ay ang chip sa gilid — at maghihintay ka ng pagbabagong nasa
+  // harap mo na pala.
+  const effName = (r: MgrRow) => drafts[r.id]?.rename ?? r.name
+  const hasNameDraft = (r: MgrRow) => drafts[r.id]?.rename != null
+  const upsertDraft = (r: MgrRow, patch: { budget?: number; rename?: string }) => setDrafts(d => {
     const base = d[r.id] || { id: r.id, name: r.name, accountId: r.accountId }
     const next = { ...base, ...patch }
     if (next.budget != null && next.budget === Math.round(r.ownBudget)) delete next.budget   // back to original → not a change
+    // Pareho ng dati? Hindi na iyon pagbabago — para hindi lumobo ang bilang ng
+    // draft sa pag-click papasok at palabas ng pangalan.
+    if (next.rename != null && next.rename.trim() === r.name.trim()) delete next.rename
     const nd = { ...d }
-    if (next.budget == null) delete nd[r.id]; else nd[r.id] = next
+    // Ang row ay nananatiling draft habang may KAHIT ISANG pagbabago.
+    if (next.budget == null && next.rename == null) delete nd[r.id]; else nd[r.id] = next
     return nd
   })
   const queueBudget = (r: MgrRow, v: number) => { setEditId(""); if (isFinite(v) && v > 0) upsertDraft(r, { budget: Math.round(v) }) }
+  const queueRename = (r: MgrRow, v: string) => {
+    setRenameId("")
+    const name = v.trim()
+    if (!name) return                       // ang blangko ay hindi pangalan
+    upsertDraft(r, { rename: name })
+  }
   const discardDrafts = () => { setDrafts({}); setDraftErrors({}); setReviewOpen(false) }
   // Human-readable summary of a draft's change (shown in the review modal).
-  const draftChange = (dr: { budget?: number }) => dr.budget != null ? `Budget → ${peso(dr.budget)}` : "—"
+  // Maaaring dalawa ang laman ng isang row — kaya listahan, hindi isang linya.
+  const draftChange = (dr: { budget?: number; rename?: string }) =>
+    [dr.rename != null ? `Name → "${dr.rename}"` : "", dr.budget != null ? `Budget → ${peso(dr.budget)}` : ""]
+      .filter(Boolean).join(" · ") || "—"
 
   // ── Status toggles publish IMMEDIATELY (no draft): flip agad → spinner on the toggle → fresh reload → "updated" toast ──
   async function setStatusNow(r: MgrRow, status: "ACTIVE" | "PAUSED") {
@@ -1463,14 +1456,38 @@ function AdsManager({ fb, from, to, focus, onJump }: {
       const post = (body: any) => fetch(`/api/fb/manage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) }).then(r => r.json())
       try {
         if (!token) throw new Error("No token for this account")
-        if (dr.budget != null) {
-          const j = await post({ action: "update", id: dr.id, daily_budget: dr.budget })
+        // ⚠ ISANG TAWAG PARA SA DALAWA. Ang pangalan at ang budget ay parehong
+        // `action: "update"` — kapag hiniwalay, dalawang request ang isang row
+        // at maaaring tumama ang isa habang pumapalya ang isa, kaya kalahating
+        // naipublish ang isang draft. Sabay silang ipinapadala o sabay palya.
+        if (dr.budget != null || dr.rename != null) {
+          const j = await post({
+            action: "update", id: dr.id,
+            ...(dr.budget != null ? { daily_budget: dr.budget } : {}),
+            ...(dr.rename != null ? { name: dr.rename } : {}),
+          })
           if (!j.success) throw new Error(j.error || "Failed")
-          const before = levelRows.find(x => x.id === dr.id)?.ownBudget ?? 0
-          budgetLogs.push({ action: "budget", level, objectId: dr.id, objectName: dr.name,
-            accountName: accById(dr.accountId)?.name || "",
-            summary: `${before > 0 ? peso(before) : "—"} → ${peso(dr.budget)}`,
-            surface: "ads-manager", details: { from: before, to: dr.budget, via: "published draft" } })
+          const row = levelRows.find(x => x.id === dr.id)
+          if (dr.budget != null) {
+            const before = row?.ownBudget ?? 0
+            budgetLogs.push({ action: "budget", level, objectId: dr.id, objectName: dr.rename || dr.name,
+              accountName: accById(dr.accountId)?.name || "",
+              summary: `${before > 0 ? peso(before) : "—"} → ${peso(dr.budget)}`,
+              surface: "ads-manager", details: { from: before, to: dr.budget, via: "published draft" } })
+          }
+          if (dr.rename != null) {
+            const before = row?.name ?? dr.name
+            budgetLogs.push({ action: "rename", level, objectId: dr.id, objectName: dr.rename,
+              accountName: accById(dr.accountId)?.name || "",
+              summary: `"${before}" → "${dr.rename}"`,
+              surface: "ads-manager", details: { from: before, to: dr.rename, via: "published draft" } })
+            // Isulat sa CACHE ng BAWAT antas ng account na ito — kung hindi,
+            // babalik ang lumang pangalan pagkatapos mong lumipat ng tab
+            // (parehong bitag ng kill na nabuhay muli).
+            const patch = (rows: any[]) => rows.map(x => x.id === dr.id ? { ...x, name: dr.rename } : x)
+            setRows(patch)
+            for (const [k, v] of MGR_CACHE) if (k.endsWith(`|${dr.accountId}`)) MGR_CACHE.set(k, { ...v, rows: patch(v.rows) })
+          }
         }
       } catch (e: any) { errs[dr.id] = e?.message || "Failed" }
       setPubProgress({ done: i + 1, total: list.length })   // fill the bar as each item completes
@@ -1893,7 +1910,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
             {PanelTab({ lvl: "campaign", Icon: Megaphone, title: "Campaigns", count: selCampaigns.size, onClear: clearCampaigns })}
             {PanelTab({ lvl: "adset", Icon: LayoutGrid, title: selCampaigns.size ? `Ad Sets for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ad Sets", count: selAdsets.size, onClear: clearAdsets })}
             {PanelTab({ lvl: "ad", Icon: Layers, title: selAdsets.size ? `Ads for ${selAdsets.size} Ad Set${selAdsets.size > 1 ? "s" : ""}` : selCampaigns.size ? `Ads for ${selCampaigns.size} Campaign${selCampaigns.size > 1 ? "s" : ""}` : "Ads", count: selAds.size, onClear: clearAds })}
-            <span className="ml-auto pr-2 text-[11px] text-amber-600 whitespace-nowrap">On/Off applies instantly — budget edits save as drafts until Publish</span>
+            <span className="ml-auto pr-2 text-[11px] text-amber-600 whitespace-nowrap">On/Off applies instantly — name and budget edits save as drafts until Publish</span>
           </div>
 
           {/* Persistent action bar — Turn on/off queue drafts for the selected rows; Publish applies all together */}
@@ -2016,26 +2033,36 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                               : <div className="w-9 h-9 rounded bg-slate-100 border border-slate-200 shrink-0" />)}
                             <div className="min-w-0">
                               {renameId === r.id ? (
-                                // Palitan ang pangalan sa mismong hilera — Enter
-                                // para i-save, Escape para bumalik. Walang modal
+                                // Palitan ang pangalan sa mismong hilera. Enter
+                                // = ipila bilang draft (hindi agad ipinapadala —
+                                // gaya ng budget); Escape = bumalik. Walang modal
                                 // para sa isang linyang teksto.
                                 <input autoFocus value={renameVal}
                                   onChange={e => setRenameVal(e.target.value)}
-                                  onBlur={() => saveName(r)}
+                                  onBlur={() => queueRename(r, renameVal)}
                                   onKeyDown={e => {
-                                    if (e.key === "Enter") { e.preventDefault(); saveName(r) }
+                                    if (e.key === "Enter") { e.preventDefault(); queueRename(r, renameVal) }
                                     if (e.key === "Escape") { e.preventDefault(); setRenameId("") }
                                   }}
                                   className="w-[130px] sm:w-[220px] h-7 rounded border border-blue-400 px-1.5 text-sm" />
                               ) : (
                                 <span className="flex items-center gap-1 min-w-0">
-                                  <button onClick={() => level !== "ad" && drillInto(r)} disabled={level === "ad"} title={level === "campaign" ? "View ad sets" : level === "adset" ? "View ads" : r.name}
+                                  <button onClick={() => level !== "ad" && drillInto(r)} disabled={level === "ad"} title={level === "campaign" ? "View ad sets" : level === "adset" ? "View ads" : effName(r)}
                                     className={`flex items-center gap-1 font-medium text-left max-w-[112px] sm:max-w-[200px] ${level !== "ad" ? "text-blue-600 hover:underline" : "text-slate-800"}`}>
                                     {level !== "ad" && <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
-                                    <span className="truncate">{r.name}</span>
+                                    {/* Ang NAKABINBIN ang ipinapakita — kung ang luma
+                                        pa rin ang nakikita mo habang may draft, wala
+                                        kang makikitang nangyari. */}
+                                    <span className={`truncate ${hasNameDraft(r) ? "italic text-amber-700" : ""}`}>{effName(r)}</span>
                                   </button>
-                                  <button onClick={() => { setRenameId(r.id); setRenameVal(r.name) }}
-                                    title={`Rename this ${level === "campaign" ? "campaign" : level === "adset" ? "ad set" : "ad"} on Facebook`}
+                                  {/* Chip na "draft" — kapareho ng ginagawa ng budget:
+                                      nakikita mong hindi pa ito totoo sa Facebook. */}
+                                  {hasNameDraft(r) && (
+                                    <span title={`Draft — was "${r.name}". Publish to apply on Facebook.`}
+                                      className="shrink-0 text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-amber-100 text-amber-700">draft</span>
+                                  )}
+                                  <button onClick={() => { setRenameId(r.id); setRenameVal(effName(r)) }}
+                                    title={`Rename this ${level === "campaign" ? "campaign" : level === "adset" ? "ad set" : "ad"} — saves as a draft until Publish`}
                                     className="shrink-0 p-0.5 rounded text-slate-300 hover:text-blue-600 opacity-0 group-hover/row:opacity-100 focus:opacity-100">
                                     <Pencil className="w-3 h-3" />
                                   </button>
