@@ -110,6 +110,35 @@ export function planFifo(batches: ProductBatch[], qty: number): ConsumePlan {
 }
 
 /**
+ * Kagaya ng planFifo, pero ang PINILING batch ang unang kinakain — ito ang sagot ng
+ * warehouse sa "saan kayo pisikal na kumukuha ngayon", kaya nananaig ito sa hula ng
+ * pagkakasunod ng petsa. Ang lampas sa laman ng pinili ay dumudulog pa rin sa FIFO,
+ * at ang pinili ring iyon ay hindi na kakainin ulit ng fallback.
+ *
+ * Walang pinili, o wala na sa listahan ang pinili (nabura, ibang item) → purong FIFO.
+ * PURO ito — walang isinusulat.
+ */
+export function planPick(batches: ProductBatch[], qty: number, preferBatchId?: string): ConsumePlan {
+  const want = Math.max(0, Number(qty) || 0)
+  const preferred = preferBatchId ? batches.find(b => b.id === preferBatchId) : undefined
+  if (!preferred) return planFifo(batches, want)
+
+  const lines: ConsumeLine[] = []
+  let left = want
+  const takeFromPreferred = Math.min(batchRemaining(preferred), left)
+  if (takeFromPreferred > 0) {
+    lines.push({ batch_id: preferred.id, batch_no: preferred.batch_no, qty: takeFromPreferred, cog: preferred.cog, value: takeFromPreferred * preferred.cog })
+    left -= takeFromPreferred
+  }
+  if (left > 0) {
+    const rest = planFifo(batches.filter(b => b.id !== preferred.id), left)
+    lines.push(...rest.lines)
+    left = rest.short
+  }
+  return { lines, consumed: want - left, short: left, cogsValue: lines.reduce((s, l) => s + l.value, 0) }
+}
+
+/**
  * Binabalak kung saang batch ibabalik ang `qty` na MABUTING piraso ng isang nagbalik na parcel.
  *
  * Sinusundan ang `lines` na naitala noong umalis ito — sa MISMONG cost layer bumabalik,
@@ -187,7 +216,7 @@ export function useProductBatches() {
    * Ipinapatupad ang FIFO na bawas para sa maraming item nang sabay.
    * Ibinabalik ang tunay na COGS bawat item, para maitala ito ng tumatawag.
    */
-  function consume(deltas: { id: string; qty: number }[]) {
+  function consume(deltas: { id: string; qty: number; preferBatchId?: string }[]) {
     const patch = new Map<string, number>()   // batch_id → bagong consumed
     const result: { item_id: string; cogsValue: number; short: number; lines: ConsumeLine[] }[] = []
 
@@ -197,7 +226,9 @@ export function useProductBatches() {
         // Isinasama ang mga naunang pagbawas sa loob ng iisang tawag na ito, kung hindi
         // ay parehong batch ang kakainin ng dalawang linya ng iisang order.
         .map(b => patch.has(b.id) ? { ...b, consumed: patch.get(b.id)! } : b)
-      const plan = planFifo(mine, d.qty)
+      // Ang piniling batch ng warehouse (kung meron) ang unang kinakain — tingnan
+      // ang planPick. Walang pinili → FIFO, gaya ng dati.
+      const plan = planPick(mine, d.qty, d.preferBatchId)
       for (const l of plan.lines) {
         const b = mine.find(x => x.id === l.batch_id)!
         patch.set(l.batch_id, (patch.has(l.batch_id) ? patch.get(l.batch_id)! : b.consumed) + l.qty)

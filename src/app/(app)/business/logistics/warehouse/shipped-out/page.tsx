@@ -11,7 +11,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useProductItems } from "@/lib/product-items-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
-import { useProductBatches } from "@/lib/product-batches-store"
+import { useProductBatches, fifoOrder, batchRemaining, type ProductBatch } from "@/lib/product-batches-store"
 import { useShippedOutScans, type ParcelInfo } from "@/lib/shipped-out-store"
 import { buildRecipes, explodeOrderItems, isDeductable } from "@/lib/shipped-out-sync"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
@@ -93,6 +93,68 @@ function CourierBadge({ courier, tracking }: { courier: string; tracking?: strin
 
 type Banner = { kind: "ok" | "warn" | "err"; title: string; sub: string }
 
+// ── PILI NG BATCH ────────────────────────────────────────────────────────────
+// Lumalabas LANG kapag may tunay na pagpipilian: dalawa o higit pang batch na may
+// laman at MAGKAIBA ang presyo. Isang pili kada sesyon — hindi kada scan — kaya
+// hindi ito nagiging ritwal na pinipindot nang hindi binabasa. Ang sagot dito ang
+// nananaig sa hula ng FIFO pagdating ng bawas.
+// z-[110]: dapat lumutang pati sa ibabaw ng camera overlay (z-[100]).
+function BatchPickModal({ items, initial, onConfirm, onClose }: {
+  items: { itemId: string; name: string; choices: ProductBatch[] }[]
+  initial: Record<string, string>
+  onConfirm: (picks: Record<string, string>) => void
+  onClose: () => void
+}) {
+  const [picks, setPicks] = useState<Record<string, string>>(initial)
+  const allPicked = items.every(it => picks[it.itemId])
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[88vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-800">Saan kayo kumukuha ngayon?</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            May higit sa isang presyo ang stock — sabihin kung aling batch ang pisikal na
+            pinagkukunan. Isang beses lang ito kada sesyon.
+          </p>
+        </div>
+        <div className="px-5 py-3 space-y-4 overflow-auto">
+          {items.map(it => (
+            <div key={it.itemId}>
+              <p className="text-sm font-bold text-slate-800 mb-1.5">{it.name}</p>
+              <div className="space-y-1.5">
+                {it.choices.map((b, i) => (
+                  <button key={b.id} type="button" onClick={() => setPicks(p => ({ ...p, [it.itemId]: b.id }))}
+                    className={`w-full flex items-center justify-between rounded-xl border-2 px-3 py-2.5 text-left transition-colors ${picks[it.itemId] === b.id ? "border-emerald-500 bg-emerald-50" : "border-slate-200 hover:border-slate-300"}`}>
+                    <span className="min-w-0">
+                      <span className="text-sm font-semibold text-slate-800">{b.batch_no || "Batch"} · ₱{num(b.cog)}</span>
+                      {/* Ang pinakaluma ay laging una sa listahan (fifoOrder) at may tatak,
+                          para ang tamang ugali — ubusin muna ang luma — ang pinakamadaling pindutin. */}
+                      {i === 0 && <span className="ml-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-1.5 py-0.5 whitespace-nowrap">PINAKALUMA — unahin</span>}
+                      <span className="block text-[11px] text-slate-400">{b.received_date || "walang petsa"} · {num(batchRemaining(b))} pcs natitira</span>
+                    </span>
+                    {picks[it.itemId] === b.id && <span className="text-emerald-600 font-bold ml-2">✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            💡 Ubusin muna ang lumang / mas murang stock bago buksan ang bagong batch —
+            para hindi ma-stuck ang lumang bilihin at tama ang COGS ng bawat labas.
+          </p>
+        </div>
+        <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex gap-2">
+          <button onClick={() => onConfirm(picks)} disabled={!allPicked}
+            className="h-10 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold disabled:opacity-40">
+            Tuloy ang scan
+          </button>
+          <button onClick={onClose} className="h-10 px-4 rounded-lg border border-slate-300 text-sm font-medium text-slate-600 hover:bg-white">Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ShippedOutPage() {
   const activePages = useActivePages()
   const unitStore = useUnitCodes()
@@ -154,6 +216,33 @@ export default function ShippedOutPage() {
     date: dstr(new Date()),
   })
 
+  // ── PILI NG BATCH (kada sesyon) ─────────────────────────────────────────────
+  // Ang tanong ay lumalabas LANG kapag may tunay na pagpipilian — dalawa o higit
+  // pang batch na may laman at magkaiba ang presyo. Isang sagot kada sesyon;
+  // kapag naubos ang piniling batch, saka lang muling magtatanong. Sinadyang
+  // HINDI ito naaalala sa localStorage: bawat pagbukas ng page ay panibagong
+  // tanong, dahil ang naiwang lumang sagot ay tahimik na magiging mali.
+  const [sessionPicks, setSessionPicks] = useState<Record<string, string>>({})
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pancake row, walang pormal na type sa buong file
+  const [askPick, setAskPick] = useState<{ row: any; code: string; itemIds: string[] } | null>(null)
+  const [sessionTally, setSessionTally] = useState<Record<string, number>>({})   // "OPENING @ ₱35" → pcs
+
+  /** Mga batch na may laman pa, pinakaluma muna — ito rin ang ayos sa modal. */
+  const liveBatchesOf = (itemId: string) =>
+    fifoOrder(batches.batches.filter(b => b.item_id === itemId)).filter(b => batchRemaining(b) > 0)
+  /** May tunay na pagpipilian: ≥2 batch na may laman AT magkaiba ang presyo. */
+  const isAmbiguous = (itemId: string) => {
+    const c = liveBatchesOf(itemId)
+    return c.length >= 2 && new Set(c.map(b => b.cog)).size >= 2
+  }
+  /** Ang pili ay balido lang habang may laman pa ang batch — ubos = muling tanong. */
+  const validPickOf = (itemId: string, picks: Record<string, string>) => {
+    const id = picks[itemId]
+    if (!id) return false
+    const b = batches.batches.find(x => x.id === id && x.item_id === itemId)
+    return !!b && batchRemaining(b) > 0
+  }
+
   /** Ang NAG-IISANG lugar kung saan bumababa ang inventory. Tumatakbo lang kapag
    *  nanalo tayo sa claim — hindi kailanman kapag "already". */
   async function applyDeduction(row: any, code: string) {
@@ -162,9 +251,10 @@ export default function ShippedOutPage() {
     if (res !== "claimed") return res            // "already" o error — walang binabawas
     if (items.length) {
       products.releaseStock(items.map(i => ({ id: i.item_id, qty: i.deducted })))
-      // Kinakain din ang batch nang FIFO — dito nakukuha ang TUNAY na COGS ng labas
-      // na ito (presyo ng mismong mga pirasong umalis, hindi average).
-      const used = batches.consume(items.map(i => ({ id: i.item_id, qty: i.deducted })))
+      // Ang sagot ng warehouse (piniling batch sa scan) ang UNANG sinusunod — iyon
+      // ang pisikal na nangyari. Walang sagot → FIFO, gaya ng dati.
+      const picked = store.scans.find(x => x.tracking_no.toLowerCase() === code.toLowerCase())?.picked_batches || {}
+      const used = batches.consume(items.map(i => ({ id: i.item_id, qty: i.deducted, preferBatchId: picked[i.item_id] })))
       // Itinatago kung saang batch galing — kung hindi, mawawala ang impormasyon at
       // hindi na malalaman kung saan ibabalik kapag nag-RTS ang parcel na ito.
       const lines = used.flatMap(u => u.lines.map(l => ({ item_id: u.item_id, ...l })))
@@ -248,10 +338,34 @@ export default function ShippedOutPage() {
     // Ang manual scan ay TALAAN ng warehouse — hindi ito bumabawas ng inventory.
     // Ang Pancake shipped ang bumabawas, kaya iisa lang ang pinagmumulan ng bawas.
     // Binubuklat pa rin ang resipe para maipakita AGAD kung may hindi magkakatugma.
+    const { items } = explodeOrderItems(String(row.order_item || ""), recipeByName)
+
+    // May item bang kailangan ng pili (dalawang presyo ang may laman) na wala pang
+    // balidong sagot ngayong sesyon? Itigil ang scan at itanong MUNA — hindi
+    // maitatala ang parcel nang walang sagot, kung hindi ay FIFO na naman ang hula.
+    const needPick = Array.from(new Set(
+      items.filter(i => isAmbiguous(i.item_id) && !validPickOf(i.item_id, sessionPicks)).map(i => i.item_id)
+    ))
+    if (needPick.length) {
+      beep("warn")
+      setAskPick({ row, code, itemIds: needPick })
+      return
+    }
+    await recordScan(row, code, sessionPicks)
+  }
+
+  /** Itala ang scan dala ang mga pili. Hiwalay sa handleScan para matawag din ito
+   *  ng modal matapos sagutin ang tanong — sariwang `picks` ang dala, hindi ang
+   *  posibleng lumang state. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pancake row, kapareho ng handleScan
+  async function recordScan(row: any, code: string, picks: Record<string, string>) {
+    const key = code.toLowerCase()
     const { items, unmapped } = explodeOrderItems(String(row.order_item || ""), recipeByName)
+    const parcelPicks: Record<string, string> = {}
+    for (const i of items) if (validPickOf(i.item_id, picks)) parcelPicks[i.item_id] = picks[i.item_id]
 
     setBusy(true)
-    const res = await store.markManualScan(parcelInfo(row, code))
+    const res = await store.markManualScan(parcelInfo(row, code), parcelPicks)
     setBusy(false)
     if (res !== "added" && res !== "restamped") {
       beep("error")
@@ -261,6 +375,23 @@ export default function ShippedOutPage() {
       return
     }
     setManual("")
+
+    // Buod ng sesyon — ang system ang bumibilang, hindi ang tao. Ang item na may
+    // pili ay naitatala sa piniling batch; ang iisang-batch na item ay sa batch na
+    // iyon; ang wala (FIFO sa maraming batch na iisa ang presyo) ay sa pinakaluma,
+    // dahil doon talaga kukuha ang FIFO.
+    setSessionTally(prev => {
+      const next = { ...prev }
+      for (const i of items) {
+        const b = parcelPicks[i.item_id]
+          ? batches.batches.find(x => x.id === parcelPicks[i.item_id])
+          : liveBatchesOf(i.item_id)[0]
+        if (!b) continue
+        const label = `${b.batch_no || "Batch"} @ ₱${num(b.cog)}`
+        next[label] = (next[label] || 0) + i.deducted
+      }
+      return next
+    })
 
     // Kung umalis na sa Pancake, nabawasan na ito ng sync — sabihin, para alam ng
     // warehouse na tapos na ang parcel na ito at hindi na maghintay.
@@ -374,6 +505,40 @@ export default function ShippedOutPage() {
                 <p className="text-xs opacity-90 break-words">{banner.sub}</p>
               </div>
             )}
+            {/* Laging kita habang nag-i-scan: aling batch ang ginagamit, ilan ang
+                natitira, at ang paalala — hindi isang pop-up na mawawala. Lumilitaw
+                lang kapag may item na talagang may dalawang presyo. */}
+            {(() => {
+              const ambiguous = products.items.filter(i => !i.deleted && isAmbiguous(i.id))
+              if (ambiguous.length === 0) return null
+              return (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-1.5">
+                  <p className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">Dalawang presyo ang stock — piliin ang pinagkukunan</p>
+                  {ambiguous.map(it => {
+                    const pickedId = sessionPicks[it.id]
+                    const b = pickedId ? batches.batches.find(x => x.id === pickedId && batchRemaining(x) > 0) : undefined
+                    return (
+                      <div key={it.id} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="min-w-0 truncate">
+                          <span className="font-semibold text-slate-800">{it.name}</span>
+                          {b
+                            ? <span className="text-slate-600"> → {b.batch_no || "Batch"} @ ₱{num(b.cog)} · <span className="tabular-nums">{num(batchRemaining(b))}</span> pcs na lang</span>
+                            : <span className="text-amber-700 font-medium"> — wala pang pili (itatanong sa unang scan)</span>}
+                        </span>
+                        <button type="button" onClick={() => setAskPick({ row: null, code: "", itemIds: [it.id] })}
+                          className="shrink-0 text-[11px] font-bold text-blue-600 hover:underline">{b ? "Palitan" : "Pumili"}</button>
+                      </div>
+                    )
+                  })}
+                  <p className="text-[11px] text-amber-700">💡 Ubusin muna ang lumang / mas murang stock bago buksan ang bago.</p>
+                  {Object.keys(sessionTally).length > 0 && (
+                    <p className="text-[11px] text-slate-600 border-t border-amber-200 pt-1.5">
+                      Ngayong sesyon: {Object.entries(sessionTally).map(([k, v]) => `${num(v)} pcs · ${k}`).join("  ·  ")}
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
             <div className="grid grid-cols-[130px_1fr] items-center gap-3 py-4 border-b border-slate-100">
               <label className="text-sm font-semibold text-slate-600 text-right">TRACKING NO <span className="text-red-500">*</span></label>
               <input ref={inputRef} autoFocus value={manual} spellCheck={false}
@@ -620,6 +785,27 @@ export default function ShippedOutPage() {
       )}
 
       {camOpen && <CameraScanOverlay onDecode={code => handleScan(code, true)} onClose={() => setCamOpen(false)} />}
+
+      {/* Ang tanong — lumalabas lang kapag may scan na kailangan ng sagot, o kapag
+          pinindot ang Palitan/Pumili sa panel. Pagkatapos sagutin, tuloy agad ang
+          scan na naghihintay — sariwang picks ang dala, hindi ang lumang state. */}
+      {askPick && (
+        <BatchPickModal
+          items={askPick.itemIds.map(id => ({
+            itemId: id,
+            name: products.items.find(i => i.id === id)?.name || id,
+            choices: liveBatchesOf(id),
+          }))}
+          initial={sessionPicks}
+          onClose={() => setAskPick(null)}
+          onConfirm={picks => {
+            const merged = { ...sessionPicks, ...picks }
+            setSessionPicks(merged)
+            const pendingRow = askPick.row, pendingCode = askPick.code
+            setAskPick(null)
+            if (pendingRow) void recordScan(pendingRow, pendingCode, merged)
+          }} />
+      )}
     </div>
   )
 }

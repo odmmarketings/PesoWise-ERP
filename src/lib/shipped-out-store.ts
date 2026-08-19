@@ -43,6 +43,9 @@ export interface ShippedScan {
   restocked_by: string
   restocked_qty: number
   restock_lines: BatchLine[]
+  /** {item_id: batch_id} — ang batch na PISIKAL na pinagkunan ayon sa warehouse
+   *  (pinili sa scan screen). Nauuna ito sa FIFO pagdating ng bawas. */
+  picked_batches: Record<string, string>
 }
 /** Ang datos ng parcel, walang kinalaman sa kung saan ito nanggaling. */
 export type ParcelInfo = Omit<
@@ -51,6 +54,7 @@ export type ParcelInfo = Omit<
   | "manual_scanned_at" | "manual_scanned_by" | "pancake_shipped_at" | "deducted" | "deducted_at"
   | "batch_lines" | "cogs_value" | "cogs_short"
   | "restocked_at" | "restocked_by" | "restocked_qty" | "restock_lines"
+  | "picked_batches"
 >
 
 const uid = () => `shp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
@@ -72,6 +76,7 @@ function rowTo(r: any): ShippedScan {
     restocked_at: r.restocked_at || "", restocked_by: r.restocked_by || "",
     restocked_qty: Number(r.restocked_qty) || 0,
     restock_lines: Array.isArray(r.restock_lines) ? r.restock_lines : [],
+    picked_batches: (r.picked_batches && typeof r.picked_batches === "object" && !Array.isArray(r.picked_batches)) ? r.picked_batches : {},
   }
 }
 
@@ -103,7 +108,11 @@ export function useShippedOutScans() {
    *   "restamped" — may row na (nauna ang Pancake), nadagdagan ng manual na tatak
    *   "already"   — na-scan na dati ng warehouse
    */
-  const markManualScan = useCallback(async (info: ParcelInfo): Promise<"added" | "restamped" | "already" | string> => {
+  const markManualScan = useCallback(async (
+    info: ParcelInfo,
+    // {item_id: batch_id} — ang pinili ng warehouse sa scan screen (blangko = FIFO)
+    pickedBatches: Record<string, string> = {},
+  ): Promise<"added" | "restamped" | "already" | string> => {
     const businessId = await getBusinessId()
     if (!businessId) return "No business configured"
     const supabase = createSupabaseBrowserClient()
@@ -114,6 +123,7 @@ export function useShippedOutScans() {
       id: uid(), business_id: businessId, ...info,
       items: [], deducted_total: 0, deducted: false,
       scanned_by: by, manual_scanned_by: by, manual_scanned_at: now,
+      picked_batches: pickedBatches,
     })
     if (!error) { await refresh(); return "added" }
     if (!isDup(error)) return error.message
@@ -126,6 +136,15 @@ export function useShippedOutScans() {
       .is("manual_scanned_at", null)
       .select("id")
     if (upErr) return upErr.message
+    // Ang pili ay isinusulat LANG habang hindi pa nababawasan. Kapag nauna na ang
+    // FIFO (deducted=true), huli na ang sagot — ang pagtatala nito ngayon ay
+    // magpapasinungaling sa row tungkol sa kung ano talaga ang ginamit.
+    if (Object.keys(pickedBatches).length) {
+      await supabase.from("shipped_out_scans")
+        .update({ picked_batches: pickedBatches })
+        .eq("business_id", businessId).eq("tracking_no", info.tracking_no)
+        .eq("deducted", false)
+    }
     await refresh()
     return data && data.length ? "restamped" : "already"
   }, [refresh])
