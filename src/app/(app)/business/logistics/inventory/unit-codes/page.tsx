@@ -12,6 +12,7 @@ import { useUnitCodes, nextUnitSKU, type UnitCode, type UnitCodeItem, type NewUn
 import { useProductItems, itemRemaining } from "@/lib/product-items-store"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
+import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 
 const INP = "w-full h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white focus:outline-none focus:border-blue-400"
 const FINP = "w-full h-8 rounded-lg border border-slate-200 px-2 text-xs bg-white focus:outline-none focus:border-blue-400"
@@ -172,6 +173,43 @@ function exportPDF(rows: CodeRow[]) {
 }
 
 const EMPTY_FILTERS = { from: "", to: "", sku: "", code: "", items: "" }
+
+const HELP: HelpSection[] = [
+  {
+    title: "Ano ang Unit Code?",
+    body: [
+      "Ito ang BINEBENTA sa POS — at isa itong RESIPE: itinuturo nito kung ilang piraso ng Product Item ang bawasan kapag may nabenta.",
+      "Halimbawa: ang unit code na 'Lumyra x2' ay may resipeng Lumyra × 2. Kapag may bumili nito, dalawang piraso ang bumababa sa stock mo — hindi isa.",
+      "Isang unit code kada variation. Lahat sila tumuturo sa IISANG Product Item, kaya hindi nahahati ang bilang mo.",
+    ],
+  },
+  {
+    title: "⚠ ANG PANGALAN ANG TINUTUGMA — hindi ang ID",
+    body: [
+      "Kapag may na-scan na parcel, kinukuha ng system ang teksto ng order mula sa Pancake (hal. '1x Lumyra x2') at hinahanap kung may unit code na EKSAKTONG ganoon ang pangalan.",
+      "Kaya kung 'Lumyra 2x' ang produkto sa Pancake pero 'Lumyra x2' ang unit code mo, HINDI ito magtutugma. Naitatala pa rin ang scan, pero ZERO ang mababawas — at may dilaw na babalang lalabas.",
+      "Hindi ito case-sensitive, pero dapat tugma ang spelling at espasyo.",
+      "⚠ Kapag ginawa mo rito ang unit code, awtomatiko itong gumagawa ng produkto sa Pancake na ang pangalan ay ang mismong code — kaya tugma agad. Ang problema ay sa mga produktong ginawa nang DIRETSO sa Pancake; tingnan mo doon ang eksaktong pangalan at gayahin mo rito.",
+    ],
+  },
+  {
+    title: "Paano magdagdag",
+    body: [
+      "Product Items MUNA bago Unit Code — walang mapipiling item ang resipe kung wala pang naka-rehistrong produkto.",
+      "SKU: awtomatiko na (UC-1, UC-2…), huwag nang galawin.",
+      "Unit Code: ang pangalan sa POS. Item rows: ang resipe (aling produkto, ilang piraso). Selling Price: presyong binebenta.",
+      "Pages: aling store ang makakakita. Blangko = lahat ng konektadong page.",
+    ],
+  },
+  {
+    title: "Saan ito gumagana",
+    body: [
+      "Sa Shipped Out scan: binubuklat ang order sa resipe, at doon nakukuha kung ilang piraso ang babawasan.",
+      "Sa Sales Tracker: dito nagmumula ang pula/orange na kulay ng stock warning.",
+      "Sa View COG Sold: dito kinukuwenta ang COG ng bawat order.",
+    ],
+  },
+]
 
 export default function UnitCodesPage() {
   const store = useUnitCodes()
@@ -356,7 +394,7 @@ export default function UnitCodesPage() {
       {/* Header — Tools ▾ · Archives toggle */}
       <div className="flex items-center justify-between flex-wrap gap-2 pb-4 mb-1 border-b border-slate-100">
         <div>
-          <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Tag className="w-5 h-5" /> UNIT CODES {archivedView && <span className="text-sm font-semibold text-amber-600">· ARCHIVES</span>}</h1>
+          <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Tag className="w-5 h-5" /> UNIT CODES {archivedView && <span className="text-sm font-semibold text-amber-600">· ARCHIVES</span>}<HelpButton title="Paano gumagana ang Unit Codes" sections={HELP} /></h1>
           <p className="text-xs text-slate-400 mt-0.5">{filtered.length} record{filtered.length === 1 ? "" : "s"}</p>
         </div>
         <div className="flex items-center gap-2">

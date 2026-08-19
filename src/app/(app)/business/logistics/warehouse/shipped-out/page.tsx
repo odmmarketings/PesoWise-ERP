@@ -17,6 +17,7 @@ import { buildRecipes, explodeOrderItems, isDeductable } from "@/lib/shipped-out
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { scanSound, primeScanSound } from "@/lib/scan-sound"
 import { courierOf, courierTally, COURIERS, COURIER_COLOR } from "@/lib/courier"
+import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // SHIPPED OUT (Barcode) — DALAWANG talaan, IISANG bawas.
@@ -90,6 +91,48 @@ function CourierBadge({ courier, tracking }: { courier: string; tracking?: strin
     </span>
   )
 }
+
+const HELP: HelpSection[] = [
+  {
+    title: "Dalawang talaan, IISANG bawas",
+    body: [
+      "MANUAL SCAN (dito): talaan ng warehouse — sino ang nag-scan, kailan, ilan. HINDI ito bumabawas ng inventory.",
+      "PANCAKE SHIPPED: kapag na-detect na umalis na ang parcel, DOON bumababa ang inventory — awtomatiko, walang pipindutin.",
+      "Kaya iisa lang ang pinagmumulan ng bawas, at maikukumpara pa rin kung ilan ang binilang ng warehouse laban sa ilan ang totoong umalis.",
+    ],
+  },
+  {
+    title: "Bakit 'HINDI PA BAWAS' ang karamihan ng scan",
+    body: [
+      "Normal iyon. Karaniwan, mas maaga ang scan kaysa sa pagkuha ng rider: napakete → nag-scan ang warehouse → kinuha ng rider → naging Shipped sa Pancake → saka bumaba ang inventory.",
+      "Ang ibig sabihin ng 'HINDI PA BAWAS' ay nasa pintuan pa ang parcel. Mababawas iyon mamaya nang kusa.",
+      "⚠ Bantayan ang 'Hindi pa bawas' na counter. Kapag tuloy-tuloy itong lumalaki, may parcel na umalis na pero hindi minarkahang Shipped sa POS.",
+    ],
+  },
+  {
+    title: "Hindi kailangan ng scan para mabawasan",
+    body: [
+      "Kahit walang mag-scan ni isa, bumababa pa rin ang stock basta na-Shipped sa Pancake.",
+      "Kaya ang nakalimutang i-scan ay hindi na butas sa inventory — lumalabas iyon sa 'Hindi na-scan' bilang usapin ng disiplina ng warehouse, hindi bilang maling bilang.",
+    ],
+  },
+  {
+    title: "Kapag may tanong na lumabas — 'Saan kayo kumukuha?'",
+    body: [
+      "Lumalabas LANG ito kapag may item na may dalawa o higit pang presyo na sabay na may laman (hal. ₱35 at ₱30 na Lumyra).",
+      "Isang sagot kada sesyon, hindi kada scan. Pagkasagot, tuloy-tuloy na ang scan hanggang maubos ang piniling batch — saka lang ito magtatanong ulit.",
+      "Ang sagot mo ang susundin ng bawas, hindi ang hula ng FIFO. Ito rin ang babasahin pagbalik ng parcel kapag nag-RTS, para tama ang box na pagbabalikan.",
+      "Ubusin muna ang lumang / mas murang stock — nakatatak sa unang pagpipilian ang PINAKALUMA.",
+    ],
+  },
+  {
+    title: "Kapag walang nababawas sa isang parcel",
+    body: [
+      "Lalabas ang dilaw na 'WALANG KATUGMANG UNIT CODE'. Ibig sabihin, walang unit code na tugma sa pangalan ng produkto sa order.",
+      "Ayusin sa Unit Codes: gawing EKSAKTONG katumbas ng pangalan sa Pancake ang code. Naitala pa rin ang scan — ang bawas lang ang hindi natuloy.",
+    ],
+  },
+]
 
 type Banner = { kind: "ok" | "warn" | "err"; title: string; sub: string }
 
@@ -470,7 +513,7 @@ export default function ShippedOutPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2 pb-4 border-b border-slate-100">
-        <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><ScanBarcode className="w-5 h-5" /> SHIPPED OUT</h1>
+        <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><ScanBarcode className="w-5 h-5" /> SHIPPED OUT<HelpButton title="Paano gumagana ang Shipped Out scan" sections={HELP} /></h1>
         <div className="flex items-center gap-2">
           <DateRangePicker a={winA} b={winB} variant="header"
             onApply={(a, b) => { setWinA(a || ""); setWinB(b || "") }} placeholder="Order window: This month" />

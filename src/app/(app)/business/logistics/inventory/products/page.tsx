@@ -10,6 +10,7 @@ import {
 import { useProductItems, itemRemaining, ITEM_STATUSES, type ProductItem, type NewItemInput, type ItemStatus } from "@/lib/product-items-store"
 import { useSuppliers } from "@/lib/supplier-store"
 import { Confidential, ConfidentialToggle } from "@/components/business/Confidential"
+import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 import { useProductBatches, valueOf, batchRemaining, fifoOrder, type ProductBatch } from "@/lib/product-batches-store"
 import { InventoryDashboard } from "@/components/business/inventory/InventoryDashboard"
 
@@ -118,6 +119,39 @@ function parseUpload(data: ArrayBuffer): { items: NewItemInput[]; skipped: numbe
   return { items, skipped }
 }
 
+const HELP: HelpSection[] = [
+  {
+    title: "Ano ang Product Item?",
+    body: [
+      "Ito ang TOTOONG stock sa bodega — isang tumpok kada produkto. Halimbawa: Lumyra, 150 pcs.",
+      "ISANG Product Item lang kada produkto, kahit ilan ang presyo o variation nito. Huwag gagawa ng 'Lumyra 30' at 'Lumyra 35' — mahahati ang bilang mo at hindi mo na malalaman ang totoong stock.",
+    ],
+  },
+  {
+    title: "Receive Stock — kada may dumating",
+    body: [
+      "Pindutin ang berdeng buton sa row ng produkto tuwing may bagong dating. Ilagay ang dami, ang COG kada piraso, at ang petsa.",
+      "Bawat dating ay sariling BATCH na may sariling presyo. Kaya kung 100 pcs @ ₱35 ang luma at dumating ang 50 @ ₱30, hindi sila naghahalo — magkahiwalay silang layer.",
+      "⚠ Huwag i-edit ang Goods nang diretso para magdagdag ng stock. Kapag ginawa mo iyon, may bilang na walang katumbas na presyo — lalabas ang amber na babala at magiging mali ang Total COG Amount.",
+    ],
+  },
+  {
+    title: "FIFO — sino ang unang nababawasan",
+    body: [
+      "Kapag may umalis na parcel, sa PINAKALUMANG batch muna kumukuha. Kaya ang COGS ng bawat labas ay ang presyong TOTOONG binayaran para sa mismong mga pirasong iyon — hindi average.",
+      "Halimbawa: 20 pcs ang umalis mula sa 100 @ ₱35 → COGS ₱700. Hindi nadadamay ang bagong ₱30.",
+      "Ang Total COG Amount sa ibaba ay mula sa mga batch — kaya tama ito kahit dalawa o tatlo ang presyo ng natitira mong stock.",
+    ],
+  },
+  {
+    title: "Remaining — saan ito galing",
+    body: [
+      "Remaining = Goods − Damage − Loss − Released.",
+      "Ang 'Released' ay awtomatikong tumataas kapag may parcel na na-Shipped sa Pancake. Hindi mo ito kailangang i-type.",
+    ],
+  },
+]
+
 const EMPTY_FILTERS = { sku: "", name: "", cog: "", color: "", size: "", type: "", supplier: "", status: "All", goods: "", damage: "", loss: "", remaining: "" }
 
 export default function ProductItemsPage() {
@@ -206,6 +240,7 @@ export default function ProductItemsPage() {
           <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2"><Tag className="w-5 h-5" /> PRODUCT ITEMS
             {view === "archived" && <span className="text-sm font-semibold text-amber-600">· ARCHIVES</span>}
             {view === "deleted" && <span className="text-sm font-semibold text-rose-600">· DELETED ITEMS</span>}
+            <HelpButton title="Paano gumagana ang Product Items" sections={HELP} />
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">{filtered.length} record{filtered.length === 1 ? "" : "s"}</p>
         </div>
