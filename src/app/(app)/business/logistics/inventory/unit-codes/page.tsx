@@ -202,6 +202,17 @@ const HELP: HelpSection[] = [
     ],
   },
   {
+    title: "Ano ang napupunta sa Pancake POS",
+    body: [
+      "ISANG produkto kada unit code ang naipapadala — ang pangalan, Product ID at barcode nito ay ang MISMONG code; ang retail price ay ang Selling Price; ang original price ay ang Total COG Amount.",
+      "Ang Item rows ay resipe, at nananatili rito. Ang pagdagdag ng row gamit ang + ay HINDI gumagawa ng bagong produkto sa Pancake — ang binabago nito ay ang Total COG Amount, at iyon ang nakikita ng Pancake.",
+      "Naipapadala ito sa bawat page na napili mo sa 'Pages with Pancake API Key'. Blangko = lahat ng konektadong page.",
+      "Tuwing mag-Submit ka — Add man o Edit — sinusundan ito: kung wala pa ang produkto, gagawin; kung meron na, ia-update. Kapag pinalitan mo ang code, ang dating produkto mismo ang papalitan ng pangalan, hindi ito gagawa ng pangalawa.",
+      "⚠ Hindi nagbubura ang Edit. Kapag inalis mo ang isang page sa chips, nananatili doon ang naunang naipadalang produkto — ang Delete lang ang nagtatanggal sa Pancake.",
+      "⚠ Ang Upload (bulk) ay nagdadagdag lang sa PesoWise — hindi ito nagpapadala sa Pancake. I-edit at i-Submit ang code para maipadala ito.",
+    ],
+  },
+  {
     title: "Saan ito gumagana",
     body: [
       "Sa Shipped Out scan: binubuklat ang order sa resipe, at doon nakukuha kung ilang piraso ang babawasan.",
@@ -221,8 +232,10 @@ export default function UnitCodesPage() {
   const [toolsOpen, setToolsOpen] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [confirmDel, setConfirmDel] = useState<UnitCode[]>([])   // codes pending delete confirmation
-  const [toast, setToast] = useState("")
-  const flash = (m: string) => { setToast(m); setTimeout(() => setToast(""), 3500) }
+  const [toast, setToast] = useState<{ msg: string; bad?: boolean } | null>(null)
+  // A Pancake reject has to LOOK like a reject. It used to land in the green "Success"
+  // toast with a warning sign glued to the front, which reads as "saved" at a glance.
+  const flash = (msg: string, bad = false) => { setToast({ msg, bad }); setTimeout(() => setToast(null), bad ? 7000 : 3500) }
 
   const [perPage, setPerPage] = useState(25)
   const [page, setPage] = useState(1)
@@ -274,31 +287,45 @@ export default function UnitCodesPage() {
   const connectedPages = useMemo(() => activePages.filter(p => p.api_key && (p.pancake_page_id || p.shop_id)), [activePages])
   const pageOptions = useMemo(() => connectedPages.map(p => p.name), [connectedPages])
 
-  // On submit, automatically create the unit code as a PRODUCT on Pancake POS for the target
-  // pages (selected ones; none selected = default → ALL connected pages). Runs in background.
-  async function pushToPancake(input: NewUnitCodeInput) {
+  // Push the unit code to Pancake POS as a product, on the target pages (selected ones;
+  // none selected = default → ALL connected pages). Runs in the background.
+  //
+  // ⚠ This runs on EDIT as well as Add. It used to run on Add only, so every later change —
+  // an item row added with +, a new Selling Price, a page added to the chips — was saved in
+  // PesoWise and never reached the POS. The two then disagreed with nothing on screen saying so.
+  //
+  // `prevCode` is the code as it was BEFORE the edit. A rename has to be found under its OLD
+  // name, or the rename would leave the original product behind and add a second one.
+  //
+  // What actually travels: ONE product per unit code — name / Product ID / barcode all equal
+  // the code, retail_price = Selling Price, original_price = Total COG Amount. The Item rows
+  // are the recipe and stay in PesoWise; adding a row changes the Total COG, and THAT is the
+  // part Pancake sees. Pancake has no concept of a bundle to receive them into.
+  async function syncToPancake(input: NewUnitCodeInput, prevCode?: string) {
     const targets = input.pages.length ? connectedPages.filter(p => input.pages.includes(p.name)) : connectedPages
-    if (targets.length === 0) return
+    if (targets.length === 0) { flash("Walang konektadong Pancake page — hindi naipadala ang unit code sa POS.", true); return }
     const totalCog = input.items.reduce((s, i) => s + i.qty * cogOf(i.name), 0)
-    let ok = 0
+    flash(`Na-save. Ipinapadala sa Pancake POS… (${targets.length} page${targets.length === 1 ? "" : "s"})`)
+    let created = 0, updated = 0
     const errs: string[] = []
     for (const pg of targets) {
       try {
-        const j = await fetch("/api/pancake/products/create", {
+        const j = await fetch("/api/pancake/products/sync", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             api_key: pg.api_key, page_id: pg.pancake_page_id || pg.shop_id,
             // Product name AND Product ID (custom_id) on Pancake = the unit code itself (user spec).
-            name: input.code, custom_id: input.code, barcode: input.code,
+            code: input.code, prev_code: prevCode && prevCode !== input.code ? prevCode : undefined,
             retail_price: input.selling_price, original_price: totalCog,
           }),
         }).then(r => r.json())
-        if (j.success) ok++
+        if (j.success) { if (j.action === "updated") updated++; else created++ }
         else errs.push(`${pg.name}: ${j.error || "failed"}`)
       } catch { errs.push(`${pg.name}: network error`) }
     }
-    if (errs.length) flash(`⚠ Pancake push — ${ok} ok, ${errs.length} failed: ${errs[0]}`)
-    else if (ok) flash(`Product created on Pancake (${ok} page${ok === 1 ? "" : "s"}).`)
+    const done = [created ? `${created} created` : "", updated ? `${updated} updated` : ""].filter(Boolean).join(", ")
+    if (errs.length) flash(`${errs.length} page${errs.length === 1 ? "" : "s"} failed${done ? ` (${done})` : ""} — ${errs[0]}`, true)
+    else flash(`Pancake POS: ${done || "no change"}.`)
   }
 
   // Mirror of the push: deleting a unit code also removes the matching product(s) on Pancake POS
@@ -319,7 +346,7 @@ export default function UnitCodesPage() {
         } catch { errs.push(`${c.code} @ ${pg.name}: network error`) }
       }
     }
-    if (errs.length) flash(`⚠ Pancake delete — ${deleted} removed, ${errs.length} failed: ${errs[0]}`)
+    if (errs.length) flash(`Pancake delete — ${deleted} removed, ${errs.length} failed: ${errs[0]}`, true)
     else if (deleted) flash(`Deleted on Pancake POS too (${deleted} product${deleted === 1 ? "" : "s"}).`)
   }
 
@@ -327,8 +354,9 @@ export default function UnitCodesPage() {
   const allChecked = paginated.length > 0 && paginated.every(c => sel.has(c.id))
 
   const toastEl = toast ? (
-    <div className="fixed top-4 right-4 z-[70] bg-emerald-600 text-white text-sm rounded-xl px-5 py-3 shadow-lg flex items-center gap-2">
-      <Check className="w-4 h-4" /> <div><p className="font-semibold">Success</p><p className="text-emerald-100">{toast}</p></div>
+    <div className={`fixed top-4 right-4 z-[70] max-w-sm text-white text-sm rounded-xl px-5 py-3 shadow-lg flex items-start gap-2 ${toast.bad ? "bg-rose-600" : "bg-emerald-600"}`}>
+      {toast.bad ? <Info className="w-4 h-4 mt-0.5 shrink-0" /> : <Check className="w-4 h-4 mt-0.5 shrink-0" />}
+      <div><p className="font-semibold">{toast.bad ? "Pancake POS" : "Success"}</p><p className={toast.bad ? "text-rose-100" : "text-emerald-100"}>{toast.msg}</p></div>
     </div>
   ) : null
 
@@ -338,13 +366,15 @@ export default function UnitCodesPage() {
       skuAuto={nextUnitSKU(store.codes)} itemOptions={itemOptions} itemLabels={itemLabels} pageOptions={pageOptions} cogOf={cogOf}
       onBack={() => setScreen("list")}
       onSave={(input, addUpsell) => {
-        if (screen === "edit" && active) { store.updateCode(active.id, input); flash("Unit code updated successfully") }
-        else {
+        if (screen === "edit" && active) {
+          const prevCode = active.code   // read before the store write, so a rename can still be found on Pancake
+          store.updateCode(active.id, input)
+          syncToPancake(input, prevCode)   // background → updates the product(s) on Pancake POS
+        } else {
           // "Add POS code for Upsell Item" → also creates the UPS- prefixed code.
           const batch = addUpsell ? [input, { ...input, sku: `UPS-${input.sku}`, code: `UPS-${input.code}`, upsell: true }] : [input]
           store.addMany(batch)
-          flash(addUpsell ? "Unit code + UPS- upsell code added" : "Unit code added successfully")
-          for (const b of batch) pushToPancake(b)   // background → creates the product(s) on Pancake POS
+          for (const b of batch) syncToPancake(b)   // background → creates the product(s) on Pancake POS
         }
         setScreen("list")
       }} /></>
