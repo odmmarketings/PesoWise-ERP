@@ -441,6 +441,27 @@ Sidebar section renamed **LOGISTIC & INVENTORY**; the sidebar now supports colla
   - ⚠️ There is **no "TO FULFILL" card** — it used to lump New/Confirmed/Restocking together, but the real to-fulfill queue is **Packaging**, now labelled as such.
 - **Inventory Dashboard (BUILT)** (`src/components/business/inventory/InventoryDashboard.tsx`) — reachable **two ways from one component**: the standalone `/logistics/inventory` route and a tab inside Product Items. Stat cards (Σ cog×remaining value, remaining qty, active items, damage+loss write-off, released units, low/out counts — low = remaining ≤ 20% of goods), graphs **hidden by default**, a Low Stock table with a days-of-stock-left estimate from the last 30 days of release velocity, and Dead Stock (on-hand but unmoved in 30 days, ranked by tied-up value).
   - **Stock-Out Audit**: pulls all shipped-out Pancake orders for a range, explodes them through unit-code recipes, and compares against what was actually released through the Stocks module — per-product variance with Matched / kulang / sobra badges plus unmapped order-item names so coverage gaps are visible. ⚠️ **Audit only — the Pancake side never deducts.** Auto-deducting here would double-count against the manual updates.
+> **ANG BUONG IKOT NG STOCK — basahin ito bago galawin ang alinman sa apat na module.**
+> Magkakabit ang Product Items, Unit Codes, Shipped Out at RTS; ang pagbabago sa isa ay
+> madalas may kahulugan sa iba.
+>
+> 1. **Receive Stock** (Product Items) → bagong **batch** na may sariling COG. Tumataas ang
+>    `goods` at ang batch nang SABAY — dito sila nagsisimulang magkasundo.
+> 2. **Unit Code** = resipe (`Lumyra x2` → Lumyra × 2). Ang pagtutugma sa order ay sa
+>    **PANGALAN** — ang code ay dapat eksaktong katumbas ng pangalan ng produkto sa Pancake,
+>    dahil iyon ang teksto sa `order_item`. Mali ang pangalan = naitala ang scan, zero ang bawas.
+> 3. **Manual scan** (Shipped Out) → talaan lang, HINDI bumabawas. Dito itinatanong kung
+>    aling batch ang pinagkukunan, pero **kapag lang may ≥2 presyo** (`picked_batches`).
+> 4. **Pancake Shipped** → ITO ang bumabawas. `planPick()`: sinusunod ang sagot ng warehouse,
+>    FIFO ang fallback. Naitatala ang pinanggalingan sa `batch_lines` + ang tunay na `cogs_value`.
+> 5. **RTS receive** → popup ng COG (double-COG lang) para sa tamang box; **RTS restock** →
+>    `planRestore()` pabalik sa MISMONG batch, **mabuting piraso lang**.
+>
+> Tatlong bagay na hindi dapat masira: ang bilang (`product_items`) at ang presyo (`product_batches`)
+> ay laging magkasundo — may `reconcile()` na babala kapag hindi; ang bawas ay isang beses lang
+> (`deducted` conditional update); at walang inaakalang halaga — ang kulang ay iniuulat (`short`,
+> `cogs_short`), hindi pinupunan ng hula.
+
 - **FIFO batch costing (BUILT)** (`src/lib/product-batches-store.ts`, migrations `0019`/`0020`) — a product item no longer carries one COG. Each delivery is a **batch** (`product_batches`: qty, cog, received_date, consumed) and every deduction eats the **oldest batch first**, so a shipment's COGS is the price actually paid for those exact pieces. Averaging was rejected: it retroactively re-prices goods already sold.
   - `planFifo()` is **pure and exported** — it returns the plan (which batch, how many, at what cog) without writing, so it is unit-testable and the caller can inspect before applying.
   - ⚠️ **Short stock never blocks.** If the batches can't cover the quantity, `planFifo` consumes what exists and reports `short` — the parcel really left, so the count must still drop; only the *costing* is incomplete, and that is surfaced (`cogs_short`) rather than hidden.
@@ -472,7 +493,7 @@ Replaced the `BOARD` section, whose "Kanban Board" link had **never had a page**
 
 ## Persistence — Supabase is the source of truth (localStorage is a read cache)
 
-**This section used to say "no Supabase wiring yet". That is obsolete.** Migrations `0001`–`0021` live in `supabase/migrations/` and every module now reads/writes Supabase; `localStorage` (`pesowise_*`) survives only as a **same-session read cache** for instant paint, migrated up once on first load. Store shape: `use client` hook → paint from cache → fetch from Supabase (`.eq("business_id", …)`) → `normalize()` legacy/partial rows defensively → write through on every mutation.
+**This section used to say "no Supabase wiring yet". That is obsolete.** Migrations `0001`–`0031` live in `supabase/migrations/` and every module now reads/writes Supabase; `localStorage` (`pesowise_*`) survives only as a **same-session read cache** for instant paint, migrated up once on first load. Store shape: `use client` hook → paint from cache → fetch from Supabase (`.eq("business_id", …)`) → `normalize()` legacy/partial rows defensively → write through on every mutation.
 
 - Single-business deployment: `getBusinessId()` = `businesses.select("id").limit(1)` — it is `"use client"` and **NOT usable server-side**. In scripts/API routes use `createSupabaseServerClient()` (service role) + the same one-liner.
 - RLS on every table: `owner_id = auth.uid()` OR `public.is_business_member(business_id)`. Copy an existing policy verbatim when adding a table.
