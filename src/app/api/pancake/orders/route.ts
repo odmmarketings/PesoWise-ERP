@@ -128,6 +128,42 @@ function orderIsScaled(o: any): boolean {
 }
 const descale = (v: any, scaled: boolean) => scaled ? Number(v ?? 0) / SCALE : Number(v ?? 0)
 
+/**
+ * HALI-HALONG ORDER — isang item na 100× at isang item na tama.
+ *
+ * ⚠ ANG "HUWAG HULAAN" ANG NAGPAPAKITA NG ₱50,399. Ang `orderIsScaled` ay
+ * all-or-nothing: kapag hali-halo, walang itinutuwid — kaya ang order na may
+ * item na 49,900 (sira) at item na 499 (tama) ay lumalabas na ₱50,399 imbes na
+ * ₱998 (iniulat ng may-ari, Ago 19 2026: Velora Care, "1x Velora Care, 1x
+ * Velora Care"). Ang pag-iwas sa paghula ay tama sa antas ng ITEM — pero sa
+ * antas ng KABUUAN ay hindi iyon pag-iwas: pagpapakita iyon ng numerong 50×
+ * ang laki.
+ *
+ * Kaya kapag hali-halo: KADA ITEM ang paghuhusga — ang mukhang scaled ay
+ * hinahati, ang mukhang tama ay hinahayaan — at ang kabuuan ay muling
+ * kinukuwenta mula sa mga item. Walang hinuhula tungkol sa item na hindi
+ * mukhang sira; isa-isa ang tinitingnan, hindi sabay-sabay.
+ *
+ * `null` kapag hindi hali-halo o kulang ang mabilang na item — doon mananaig
+ * ang `cod`/`total_price` ni Pancake, gaya ng dati.
+ */
+function mixedScaleTotal(o: any): number | null {
+  const items: any[] = Array.isArray(o?.items) ? o.items : []
+  const units = items
+    .map(it => Number(it?.variation_info?.retail_price ?? it?.retail_price ?? 0))
+    .filter(p => p > 0)
+  if (units.length < 2) return null
+  if (!units.some(unitLooksScaled) || units.every(unitLooksScaled)) return null   // puro tama o puro sira
+  let total = 0
+  for (const it of items) {
+    const unit = Number(it?.variation_info?.retail_price ?? it?.retail_price ?? 0)
+    if (unit <= 0) continue
+    const qty = Number(it?.quantity ?? 1) || 1
+    total += (unitLooksScaled(unit) ? unit / SCALE : unit) * qty
+  }
+  return total > 0 ? total : null
+}
+
 // Courier `partner.partner_status` → readable Parcel Status label (verified courier sub-statuses).
 const PARTNER_STATUS_LABEL: Record<string, string> = {
   on_the_way: "In-Transit",
@@ -180,7 +216,9 @@ function mapOrderRow(o: any) {
   const shippedOut = String(o?.time_send_partner || partner?.picked_up_at || o?.partner_inserted_at || partner?.inserted_at || "")
   // 100×-na-halaga mula sa Pancake → itutuwid sa pagbasa (tingnan ang SCALE guard).
   const scaled = orderIsScaled(o)
-  const cod = descale(o?.cod, scaled)
+  // Hali-halo (may sira, may tama)? Ang kabuuan ay muling kinukuwenta kada item.
+  const mixedTotal = scaled ? null : mixedScaleTotal(o)
+  const cod = mixedTotal ?? descale(o?.cod, scaled)
 
   // Parcel Update = most recent parcel/courier status-change timestamp. Take the latest of the
   // dedicated `last_update_status_at`, any courier `partner.extend_update[].update_at`, falling
@@ -247,11 +285,12 @@ function mapOrderRow(o: any) {
     order_item: orderItem,
     quantity: totalQty,
     parcel_qty: distinctProducts || "",   // # of different products in the order
-    price_initial: descale(o?.total_price, scaled),
+    price_initial: mixedTotal ?? descale(o?.total_price, scaled),
     shipping_fee: descale(o?.partner_fee ?? o?.shipping_fee, scaled),
-    final_price: cod || descale(o?.total_price, scaled),
+    final_price: cod || mixedTotal || descale(o?.total_price, scaled),
     // Nakikita sa Sales Tracker kung aling row ang itinuwid (para hindi tahimik).
-    amount_rescaled: scaled,
+    // Kasama ang hali-halo: itinuwid din iyon, kaya dapat ding hayag.
+    amount_rescaled: scaled || mixedTotal != null,
     tracking_no: partner?.extend_code || partner?.tracking_id || "",
     // Courier name only (trimmed) — never a raw numeric partner_id, so the filter dropdown stays
     // clean and its options match the table values exactly.
@@ -555,8 +594,13 @@ export async function GET(req: NextRequest) {
       const exact = emptyExact()
       for (const o of allOrders) {
         const isScaled = orderIsScaled(o)
-        const cod = descale(o.cod, isScaled)
-        if (isScaled) {
+        // ⚠ KAILANGANG TUMUGMA SA `toRow`. Kung dito lang `orderIsScaled` ang
+        // titingnan, ang hali-halong order ay itinutuwid sa talahanayan pero
+        // pumapasok pa rin nang 100× sa KABUUAN ng Dashboard — dalawang
+        // magkaibang sagot para sa iisang order.
+        const mixed = isScaled ? null : mixedScaleTotal(o)
+        const cod = mixed ?? descale(o.cod, isScaled)
+        if (isScaled || mixed != null) {
           exact.rescaledOrders++
           exact.rescaledExcess += Number(o?.cod ?? 0) - cod
         }
