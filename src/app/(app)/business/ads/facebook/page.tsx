@@ -220,10 +220,40 @@ export default function FacebookAdsPage() {
   // Keep the active tab on a real REFRESH, but reset to Dashboard when you leave the section and
   // come back. A refresh resets `fbTabMounted` (module re-evaluates) AND reports a "reload"
   // navigation; in-app navigation keeps `fbTabMounted` true, so it falls through to Dashboard.
+  // ── DEEP LINK MULA SA ABISO ───────────────────────────────────────────────
+  // ⚠ MULA SA UNANG PINTA, HINDI SA EFFECT. Kung effect ang maglilipat ng tab,
+  // kumukurap muna ang Dashboard bago ka mapunta sa Ads Manager — at ang
+  // AdsManager ay tumatanggap ng `focus` bilang UNANG halaga ng state lang
+  // (walang effect na sumusunod), kaya kung huli ang pagdating ng focus ay
+  // hindi na ito papansinin. Kaya binabasa rito mismo, sabay ng `tab`.
+  //
+  // Binabasa nang isang beses at ito rin ang laman ng unang `mgrFocus`.
+  const deepLink = useMemo(() => {
+    if (typeof window === "undefined") return null
+    const q = new URLSearchParams(window.location.search)
+    const id = q.get("focus")
+    if (!id) return null
+    const lvl = q.get("level")
+    return {
+      level: (lvl === "adset" || lvl === "ad" ? lvl : "campaign") as MgrLevel,
+      id,
+      name: q.get("name") || "",
+      accountId: q.get("acc") || "",
+      campaignId: q.get("camp") || undefined,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const [tab, setTab] = useState<Tab>(() => {
     if (typeof window === "undefined") return "dashboard"
     const firstMount = !fbTabMounted
     fbTabMounted = true
+    // Ang link mula sa abiso ang nananaig sa naaalalang tab — sinadya mong
+    // pindutin iyon, at ang pinag-usapan ang gusto mong makita.
+    try {
+      const q = new URLSearchParams(window.location.search)
+      if (q.get("focus")) return "manager"
+    } catch {}
     let isReload = false
     try { isReload = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type === "reload" } catch {}
     if (firstMount && isReload) {
@@ -268,7 +298,12 @@ export default function FacebookAdsPage() {
   const [tasksCount, setTasksCount] = useState(0)
   // "Dalhin mo ako doon": pinipindot ang pangalan sa Testing/Scaling/Monitoring,
   // bumubukas ang Ads Manager na nakatutok na sa mismong object na iyon.
-  const [mgrFocus, setMgrFocus] = useState<MgrFocus | null>(null)
+  // Ang deep link mula sa abiso ang unang focus — kaya bukas na ang tamang
+  // object bago pa may mapindot, at walang kumukurap na "All ad accounts".
+  const [mgrFocus, setMgrFocus] = useState<MgrFocus | null>(deepLink
+    ? { accountId: deepLink.accountId, level: deepLink.level, id: deepLink.id,
+        name: deepLink.name, campaignId: deepLink.campaignId }
+    : null)
   const openInManager = useCallback((f: MgrFocus) => { setMgrFocus(f); setTab("manager") }, [])
   // Kabaligtarang direksyon: Ads Manager → Testing/Scaling/Monitoring, sala na.
   const [trackerFocus, setTrackerFocus] = useState<TrackerFocus | null>(null)
@@ -2212,6 +2247,17 @@ function AdsManager({ fb, from, to, focus, onJump }: {
       {commentFor && (
         <CommentsModal objectId={commentFor.id} level={level} name={commentFor.name}
           account={commentFor.accountName} href="/business/ads/facebook"
+          accountId={commentFor.accountId} campaignId={commentFor.campaignId || undefined}
+          // Nasa Ads Manager ka na kapag bukas ang modal na ito, kaya ang
+          // paglundag ay HINDI pag-navigate palabas: isinasara nito ang modal at
+          // pinipinto ang tanawin sa mismong object — ad account at hilera —
+          // kaya pagsara mo, ito lang ang nakaharap sa iyo.
+          onJump={() => {
+            setCommentFor(null)
+            setAccId(commentFor.accountId || "all")
+            setFocusOn({ accountId: commentFor.accountId, level, id: commentFor.id,
+              name: commentFor.name, campaignId: commentFor.campaignId || undefined })
+          }}
           onClose={() => setCommentFor(null)} onPosted={refreshCounts} />
       )}
 

@@ -57,6 +57,24 @@ export function extractMentions(body: string, people: RosterPick[]): string[] {
   return [...hit]
 }
 
+/**
+ * Link papunta sa MISMONG object sa Ads Manager, hindi lang sa pahina.
+ *
+ * Dala ng URL ang sapat para maibalik ang tanawin: aling ad account, aling
+ * antas, aling object — at ang pangalan, para may maipakita agad ang banner
+ * habang hinihila pa ang datos. Binabasa ito ng Facebook Ads page sa pagbukas.
+ */
+export function objectHref(
+  objectId: string,
+  ctx: { level: string; name?: string; accountId?: string; campaignId?: string },
+): string {
+  const q = new URLSearchParams({ tab: "manager", focus: objectId, level: ctx.level || "campaign" })
+  if (ctx.accountId) q.set("acc", ctx.accountId)
+  if (ctx.name) q.set("name", ctx.name)
+  if (ctx.campaignId) q.set("camp", ctx.campaignId)
+  return `/business/ads/facebook?${q.toString()}`
+}
+
 export function useAdsComments(objectId: string) {
   const [items, setItems] = useState<AdsComment[]>([])
   const [loading, setLoading] = useState(false)
@@ -93,7 +111,7 @@ export function useAdsComments(objectId: string) {
 
   useEffect(() => { refresh() }, [refresh])
 
-  const add = useCallback(async (body: string, ctx: { level: string; name: string; account: string; href: string }) => {
+  const add = useCallback(async (body: string, ctx: { level: string; name: string; account: string; href: string; accountId?: string; campaignId?: string }) => {
     const text = body.trim()
     if (!text) return
     const businessId = await getBusinessId()
@@ -116,7 +134,12 @@ export function useAdsComments(objectId: string) {
         audience: "user", toEmail: email, type: "ads-comment-mention", severity: "info",
         title: `${currentUserName() || "Someone"} tagged you on "${ctx.name}"`,
         body: text.length > 120 ? text.slice(0, 120) + "…" : text,
-        href: ctx.href,
+        // ⚠ DEEP LINK, HINDI ANG PAHINA. Ang "/business/ads/facebook" lang ay
+        // dinadala ka sa tab na huli mong binuksan, tapos ikaw pa ang maghahanap
+        // sa 22 campaign kung alin ang pinag-usapan (iniulat ng may-ari, Ago 19
+        // 2026). Dala na ng URL kung aling ad account, aling antas at aling
+        // object — binabasa ito ng Facebook Ads page sa pagbukas.
+        href: objectHref(objectId, ctx),
         details: { objectId, level: ctx.level },
       })
     }

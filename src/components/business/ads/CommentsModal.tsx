@@ -1,6 +1,6 @@
 "use client"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { X, Send, MessageSquare, AtSign, Check, CheckCheck, Undo2 } from "lucide-react"
+import { X, Send, MessageSquare, AtSign, Check, CheckCheck, Undo2, ExternalLink } from "lucide-react"
 import { useAdsComments, rosterPeople, type RosterPick } from "@/lib/ads-comments-store"
 import { currentUserEmail } from "@/lib/current-user"
 import { agoLabel } from "@/lib/notify"
@@ -8,8 +8,19 @@ import { agoLabel } from "@/lib/notify"
 // Usapan sa isang campaign / ad set / ad. Ang "@" ay nagbubukas ng picker ng
 // tao; ang na-tag ay tumatanggap ng abiso pagkatapos mag-post.
 
-export function CommentsModal({ objectId, level, name, account, href, onClose, onPosted }: {
+export function CommentsModal({ objectId, level, name, account, href, accountId, campaignId, onJump, onClose, onPosted }: {
   objectId: string; level: string; name: string; account: string; href: string
+  /** Dala ng deep link ng abiso — at ng paglundag mula sa pamagat. */
+  accountId?: string; campaignId?: string
+  /**
+   * "Dalhin mo ako roon" — pinipindot ang pangalan sa itaas.
+   *
+   * ⚠ HINDI PALAMUTI. Kapag nabasa mo ang komento mula sa abiso, ang pangalan
+   * lang ang hawak mo — at ikaw pa ang maghahanap sa 22 campaign kung alin iyon
+   * (hiling ng may-ari, Ago 19 2026). Kapag walang `onJump`, hindi ito nagiging
+   * buton: walang pindutang nangangako ng galaw na hindi naman mangyayari.
+   */
+  onJump?: () => void
   onClose: () => void
   onPosted?: () => void
 }) {
@@ -49,7 +60,7 @@ export function CommentsModal({ objectId, level, name, account, href, onClose, o
   const post = async () => {
     if (!body.trim() || busy) return
     setBusy(true)
-    await add(body, { level, name, account, href })
+    await add(body, { level, name, account, href, accountId, campaignId })
     setBody(""); setPickOpen(false); setBusy(false)
     onPosted?.()
   }
@@ -79,7 +90,16 @@ export function CommentsModal({ objectId, level, name, account, href, onClose, o
         <div className="px-5 py-3.5 border-b border-slate-200 flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-bold text-slate-800 flex items-center gap-1.5"><MessageSquare className="w-4 h-4" /> Comments</p>
-            <p className="text-[12px] text-slate-500 truncate">{name} · {account} · {level}</p>
+            {onJump ? (
+              <button onClick={onJump} title={`Open this ${level} in Ads Manager`}
+                className="text-[12px] text-blue-600 hover:underline truncate flex items-center gap-1 max-w-full">
+                <span className="truncate">{name}</span>
+                <ExternalLink className="w-3 h-3 shrink-0" />
+                <span className="text-slate-400 shrink-0">· {account} · {level}</span>
+              </button>
+            ) : (
+              <p className="text-[12px] text-slate-500 truncate">{name} · {account} · {level}</p>
+            )}
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 shrink-0"><X className="w-5 h-5" /></button>
         </div>
