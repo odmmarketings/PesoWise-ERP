@@ -17,13 +17,17 @@ import { createClient } from "@supabase/supabase-js"
 import { readFileSync } from "fs"
 
 let env = {}
+let envError = ""
 try {
   env = Object.fromEntries(
     readFileSync(new URL("../.env.local", import.meta.url), "utf8").split(/\r?\n/)
       .filter(l => l.includes("=") && !l.startsWith("#"))
-      .map(l => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()])
+      // Ang halaga ay maaaring naka-quote sa .env — tanggalin, kung hindi ay
+      // magiging bahagi ng key/token ang panipi at tatanggihan ng Supabase.
+      .map(l => [l.slice(0, l.indexOf("=")).trim(),
+                 l.slice(l.indexOf("=") + 1).trim().replace(/^["']|["']$/g, "")])
   )
-} catch { /* walang .env.local (cloud) */ }
+} catch (e) { envError = String(e.message || e) }   // cloud: walang .env.local, at tama iyon
 const pick = k => process.env[k] || env[k] || ""
 
 const s = createClient(pick("NEXT_PUBLIC_SUPABASE_URL"), pick("SUPABASE_SERVICE_ROLE_KEY"), {
@@ -96,9 +100,22 @@ async function sendEmail(to, subject, text) {
 }
 
 async function main() {
-  const { data: biz } = await s.from("businesses").select("id").limit(1).maybeSingle()
+  // ⚠ SABIHIN ANG TUNAY NA DAHILAN. Dating `if (!B) throw "Walang business row"`
+  // ito — at iyon ang lumalabas KAHIT ANO ang pumalya: hindi mabasang
+  // .env.local, maling key, patay na network. Isang mensahe para sa tatlong
+  // magkaibang sira, at ang isinasagot nito ay ang tanging sira na malamang ay
+  // HINDI ang totoo (may business row naman talaga). Iniulat ng may-ari,
+  // Ago 19 2026: "Walang business row" sa makinang may tamang datos.
+  if (!pick("NEXT_PUBLIC_SUPABASE_URL") || !pick("SUPABASE_SERVICE_ROLE_KEY")) {
+    throw new Error(
+      "Walang Supabase credentials. "
+      + (envError ? `Hindi mabasa ang .env.local — ${envError}` : "Nabasa ang .env.local pero walang NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY doon.")
+      + " Patakbuhin ito mula sa loob ng pesowise folder, o itakda ang dalawa bilang environment variables.")
+  }
+  const { data: biz, error: bizErr } = await s.from("businesses").select("id").limit(1).maybeSingle()
+  if (bizErr) throw new Error(`Hindi maabot ang Supabase — ${bizErr.message}`)
   const B = biz?.id
-  if (!B) throw new Error("Walang business row.")
+  if (!B) throw new Error("Nakausap ang Supabase pero walang business row sa `businesses`.")
 
   const { data: tasks, error } = await s.from("partner_tasks")
     .select("*").eq("business_id", B).eq("deleted", false).neq("status", "done")
