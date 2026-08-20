@@ -21,14 +21,16 @@ export async function fetchRows<T extends { id: string }>(
   const supabase = createSupabaseBrowserClient()
   const { data, error } = await supabase.from(table).select("*").eq("business_id", businessId).order("inserted_at", { ascending: false })
   if (error || !data) return null
-  if (data.length === 0) {
-    // One-time migration: push this browser's existing localStorage rows up.
-    const cached = readCache()
-    if (cached.length > 0) {
-      await supabase.from(table).insert(cached.map(r => ({ business_id: businessId, ...r })))
-      return cached
-    }
-  }
+  // ⚠ TINANGGAL ANG CACHE→DB NA BACKFILL (Ago 20 2026). Dati: kapag walang
+  // laman ang talahanayan, ina-upload pabalik ang laman ng localStorage ng
+  // browser na ito — one-time na daan noong paglipat sa Supabase. Pero ginagawa
+  // nitong IMPOSIBLENG burahin ang isang talahanayan: ang inventory reset ng
+  // may-ari ay bubuhaying muli ng UNANG makinang may lumang cache na magbubukas
+  // ng pahina, at mukhang hindi tumalab ang pagbura. Tapos na ang paglipat —
+  // buwan nang nagsi-sync ang lahat ng makina. Ang walang laman na talahanayan
+  // ay SAGOT na ngayon, hindi pagkakamaling itatama. (Ang `readCache` na param
+  // ay iniwan sa lagda para hindi magalaw ang walong tumatawag.)
+  void readCache
   const list = data.map(normalize)
   writeCache(list)
   return list

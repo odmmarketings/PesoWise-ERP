@@ -15,6 +15,7 @@ export type EcomSettingColumn =
   | "profitability_inputs"
   | "profitability_upgraded"
   | "page_colors"
+  | "inventory_reset"
 
 export async function getEcomSetting<T>(column: EcomSettingColumn): Promise<T | null> {
   const businessId = await getBusinessId()

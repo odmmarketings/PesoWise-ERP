@@ -8,6 +8,7 @@ import {
 } from "lucide-react"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
+import { getEcomSetting } from "@/lib/ecom-settings"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { courierOf, COURIERS, COURIER_COLOR } from "@/lib/courier"
@@ -116,7 +117,15 @@ export default function PpwPage() {
     setLoading(true); setLoadErr("")
     const ppwOut: Row[] = [], fpOut: Row[] = []
     const errs: string[] = []
-    const ppwFrom = dstr(new Date(Date.now() - PPW_LOOKBACK_DAYS * 86400000))
+    // ⚠ ANG INVENTORY RESET AY GUHIT SA PETSA. Ang PPW ay buhay na kuwenta mula
+    // kay Pancake — walang buburahin para maging zero. Kapag nag-reset ang
+    // may-ari (Ago 20 2026), ang mga order BAGO ang reset ay hindi na
+    // binibilang: nagsisimula sa zero at lalaki lang sa BAGONG waybill.
+    // Kinukuha kada load (hindi minsanan) para tumalab agad sa lahat ng makina.
+    let resetFrom = ""
+    try { resetFrom = String(((await getEcomSetting<any>("inventory_reset")) || {}).ppw_from || "") } catch {}
+    const lookback = dstr(new Date(Date.now() - PPW_LOOKBACK_DAYS * 86400000))
+    const ppwFrom = resetFrom > lookback ? resetFrom : lookback
     const today = dstr(new Date())
     await mapLimit(pagesWithCreds, PANCAKE_CONCURRENCY, async p => {
       const id = p.pancake_page_id || p.shop_id
