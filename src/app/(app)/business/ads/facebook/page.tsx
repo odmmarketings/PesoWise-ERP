@@ -876,8 +876,17 @@ const CONV_COLS: Col[] = [
   { l: "Meta Purch.", f: r => num(r.metaPurchases), v: r => r.metaPurchases }, { l: "CPP", f: r => peso(r.cpa), v: r => r.cpa },
   { l: "Avg Value", f: r => peso(r.avgValue), v: r => r.avgValue }, { l: "ATC", f: r => num(r.addToCart), v: r => r.addToCart },
   { l: "IC", f: r => num(r.initiateCheckout), v: r => r.initiateCheckout }, { l: "Cost/IC", f: r => peso(r.costPerCheckout), v: r => r.costPerCheckout },
-  { l: "Content Views", f: r => num(r.contentViews), v: r => r.contentViews }, { l: "CVR", f: r => pct(r.convRate), v: r => r.convRate },
-  { l: "CTR (link)", f: r => pct(r.linkCtr), v: r => r.linkCtr }, { l: "CPC", f: r => peso(r.cpc), v: r => r.cpc }, { l: "CPM", f: r => peso(r.cpm), v: r => r.cpm },
+  // Tinanggal ang "Content Views" (hiling ng may-ari, Ago 20 2026) at pinalitan
+  // ng "Link Clicks" sa pagitan ng CPC at CPM: ilan ang PUMINDOT ng Shop Now —
+  // ilan ang nakarating sa Shopify website.
+  { l: "CVR", f: r => pct(r.convRate), v: r => r.convRate },
+  { l: "CTR (link)", f: r => pct(r.linkCtr), v: r => r.linkCtr }, { l: "CPC", f: r => peso(r.cpc), v: r => r.cpc },
+  // ⚠ `inlineLinkClicks`, HINDI `linkClicks`. Ito ang "Link clicks" mismo ng
+  // Ads Manager (inline_link_clicks) — at ito rin ang pambilang ng CTR (link)
+  // sa kaliwa nito, kaya laging magkatugma ang dalawang kolum. Ang `linkClicks`
+  // (action na link_click) ay ibang bilang na kasama pati profile clicks.
+  { l: "Link Clicks", f: r => num(r.inlineLinkClicks), v: r => r.inlineLinkClicks },
+  { l: "CPM", f: r => peso(r.cpm), v: r => r.cpm },
   { l: "Frequency", f: r => dec(r.frequency), v: r => r.frequency }, { l: "Avg Video Play", f: r => dec(r.videoAvgPlay) + "s", v: r => r.videoAvgPlay },
   { l: "3s Video Plays", f: r => num(r.video3s), v: r => r.video3s },
   { l: "Reach", f: r => num(r.reach), v: r => r.reach }, { l: "Impressions", f: r => num(r.impressions), v: r => r.impressions },
