@@ -210,6 +210,7 @@ const HELP: HelpSection[] = [
       "Tuwing mag-Submit ka — Add man o Edit — sinusundan ito: kung wala pa ang produkto, gagawin; kung meron na, ia-update. Kapag pinalitan mo ang code, ang dating produkto mismo ang papalitan ng pangalan, hindi ito gagawa ng pangalawa.",
       "⚠ Hindi nagbubura ang Edit. Kapag inalis mo ang isang page sa chips, nananatili doon ang naunang naipadalang produkto — ang Delete lang ang nagtatanggal sa Pancake.",
       "⚠ Ang Upload (bulk) ay nagdadagdag lang sa PesoWise — hindi ito nagpapadala sa Pancake. I-edit at i-Submit ang code para maipadala ito.",
+      "Kapag hindi lumitaw sa Pancake: pindutin ang ↑ na buton sa hanay ng ACTIONS ng code na iyon. Ipapadala itong muli, at kapag tinanggihan ng Pancake, lalabas ang PULANG kahon sa itaas ng talahanayan na may mismong sinabi ng Pancake — hindi iyon nawawala hangga't hindi mo isinasara.",
     ],
   },
   {
@@ -233,6 +234,12 @@ export default function UnitCodesPage() {
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [confirmDel, setConfirmDel] = useState<UnitCode[]>([])   // codes pending delete confirmation
   const [toast, setToast] = useState<{ msg: string; bad?: boolean } | null>(null)
+  // A failed push must not vanish. A 7-second toast on a screen you have just navigated
+  // away from is indistinguishable from no push at all — which is exactly how a unit code
+  // ends up missing on Pancake with nobody knowing why. This banner stays until dismissed
+  // and carries Pancake's own wording.
+  const [syncReport, setSyncReport] = useState<{ code: string; created: number; updated: number; errs: string[] } | null>(null)
+  const [syncing, setSyncing] = useState("")   // code currently being pushed
   // A Pancake reject has to LOOK like a reject. It used to land in the green "Success"
   // toast with a warning sign glued to the front, which reads as "saved" at a glance.
   const flash = (msg: string, bad = false) => { setToast({ msg, bad }); setTimeout(() => setToast(null), bad ? 7000 : 3500) }
@@ -303,8 +310,13 @@ export default function UnitCodesPage() {
   // part Pancake sees. Pancake has no concept of a bundle to receive them into.
   async function syncToPancake(input: NewUnitCodeInput, prevCode?: string) {
     const targets = input.pages.length ? connectedPages.filter(p => input.pages.includes(p.name)) : connectedPages
-    if (targets.length === 0) { flash("Walang konektadong Pancake page — hindi naipadala ang unit code sa POS.", true); return }
+    if (targets.length === 0) {
+      setSyncReport({ code: input.code, created: 0, updated: 0, errs: ["Walang konektadong Pancake page. Kailangan ng API Key + Page/Shop ID sa Pages & Store bago may mapadalhan."] })
+      return
+    }
     const totalCog = input.items.reduce((s, i) => s + i.qty * cogOf(i.name), 0)
+    setSyncing(input.code)
+    setSyncReport(null)
     flash(`Na-save. Ipinapadala sa Pancake POS… (${targets.length} page${targets.length === 1 ? "" : "s"})`)
     let created = 0, updated = 0
     const errs: string[] = []
@@ -323,10 +335,16 @@ export default function UnitCodesPage() {
         else errs.push(`${pg.name}: ${j.error || "failed"}`)
       } catch { errs.push(`${pg.name}: network error`) }
     }
+    setSyncing("")
     const done = [created ? `${created} created` : "", updated ? `${updated} updated` : ""].filter(Boolean).join(", ")
-    if (errs.length) flash(`${errs.length} page${errs.length === 1 ? "" : "s"} failed${done ? ` (${done})` : ""} — ${errs[0]}`, true)
+    if (errs.length) { setSyncReport({ code: input.code, created, updated, errs }); flash(`Hindi naipadala sa Pancake — tingnan ang pulang kahon sa itaas ng talahanayan.`, true) }
     else flash(`Pancake POS: ${done || "no change"}.`)
   }
+  // Push one existing code again without going through Edit — the retry path when a push
+  // failed, and the way to check a code you are not sure ever reached the POS.
+  const pushRow = (c: UnitCode) => syncToPancake(
+    { sku: c.sku, code: c.code, items: c.items, pages: c.pages || [], selling_price: c.selling_price || 0, upsell: !!c.upsell },
+  )
 
   // Mirror of the push: deleting a unit code also removes the matching product(s) on Pancake POS
   // (matched by name/custom_id = the code; runs in background after the local delete).
@@ -452,6 +470,33 @@ export default function UnitCodesPage() {
         </div>
       </div>
 
+      {/* Pancake push failure — stays put until dismissed, quotes Pancake's own words */}
+      {syncReport && (
+        <div className="bg-rose-50 border-l-4 border-rose-500 rounded-r-xl px-4 py-3 text-sm text-rose-900">
+          <div className="flex items-start gap-2">
+            <Info className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold">Hindi naipadala sa Pancake POS: <span className="font-mono">{syncReport.code}</span></p>
+              {(syncReport.created > 0 || syncReport.updated > 0) && (
+                <p className="text-rose-700 text-xs mt-0.5">Nakarating sa ibang page ({[syncReport.created ? `${syncReport.created} created` : "", syncReport.updated ? `${syncReport.updated} updated` : ""].filter(Boolean).join(", ")}), pero may pumalya.</p>
+              )}
+              <ul className="mt-1.5 space-y-1">
+                {syncReport.errs.map((e, i) => <li key={i} className="text-xs break-words">• {e}</li>)}
+              </ul>
+              <p className="text-[11px] text-rose-700 mt-2">Nasa PesoWise pa rin ang unit code — ang hindi umabot ay ang produkto sa POS. Ang teksto sa itaas ay galing mismo sa Pancake.</p>
+              <div className="flex items-center gap-2 mt-2">
+                <button onClick={() => { const c = store.codes.find(x => x.code === syncReport.code); if (c) pushRow(c) }}
+                  disabled={!!syncing}
+                  className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-medium">
+                  {syncing ? "Ipinapadala…" : "Subukan ulit"}
+                </button>
+                <button onClick={() => setSyncReport(null)} className="text-xs text-rose-700 hover:text-rose-900 underline">Isara</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Notice — archive to hide, delete removes here only (not on Pancake) */}
       <div className="bg-sky-50 border-l-4 border-sky-400 rounded-r-xl px-4 py-3 text-sm text-slate-600 flex gap-2">
         <Info className="w-4 h-4 text-sky-500 shrink-0 mt-0.5" />
@@ -528,6 +573,9 @@ export default function UnitCodesPage() {
                       <button onClick={() => { setActive(c); setScreen("edit") }} className="hover:text-teal-600" title="Edit"><Pencil className="w-4 h-4" /></button>
                       <button onClick={() => { store.setArchived(c.id, !c.archived); flash(c.archived ? "Restored to list." : "Moved to Archives.") }} className="hover:text-amber-600" title={c.archived ? "Restore" : "Archive"}>
                         {c.archived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
+                      </button>
+                      <button onClick={() => pushRow(c)} disabled={!!syncing} className="hover:text-indigo-600 disabled:opacity-40" title="Ipadala ulit sa Pancake POS (gagawin kung wala, ia-update kung meron)">
+                        <Upload className={`w-4 h-4 ${syncing === c.code ? "animate-pulse text-indigo-600" : ""}`} />
                       </button>
                       <button onClick={() => { setActive(c); setScreen("copy") }} className="text-slate-700 hover:text-slate-900" title="Copy unit code"><Copy className="w-4 h-4" /></button>
                       <button onClick={() => setConfirmDel([c])} className="hover:text-red-600" title="Delete"><Trash2 className="w-4 h-4" /></button>
