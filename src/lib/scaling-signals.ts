@@ -79,3 +79,28 @@ export function usePageRts(accounts: FBAccount[]) {
 
   return map
 }
+
+/**
+ * ILANG ARAW NANG TUMATAKBO — hindi kailan nilikha.
+ *
+ * ⚠ ANG created_time AY HINDI EDAD NG PAGTAKBO (hiling ng may-ari, Ago 20
+ * 2026): ang campaign na ginawa sa ika-20 pero naka-schedule sa ika-21 ay
+ * nagsisimula ang buhay sa IKA-21 — Day 1 ang araw ng tunay na pagtakbo, at
+ * doon nakasandal ang lahat ng paghuhusga sa pag-monitor.
+ *
+ * Ang sandigan (anchor): start_time kapag may laman at LUMIPAS NA; kapag nasa
+ * hinaharap pa, hindi pa ito nagsisimula (started=false); kapag walang
+ * start_time, ang created_time ang natitirang pinakamabuting alam.
+ * Day N = floor(mga araw mula anchor) + 1 — Day 1 sa mismong araw ng simula.
+ */
+export function runAge(startTime: string, createdTime: string, now = Date.now()):
+  { day: number; started: boolean; anchor: "start" | "created" | "none" } {
+  const st = startTime ? Date.parse(startTime) : NaN
+  if (isFinite(st)) {
+    if (st > now) return { day: 0, started: false, anchor: "start" }
+    return { day: Math.floor((now - st) / 86400_000) + 1, started: true, anchor: "start" }
+  }
+  const ct = createdTime ? Date.parse(createdTime) : NaN
+  if (isFinite(ct)) return { day: Math.max(1, Math.floor((now - ct) / 86400_000) + 1), started: true, anchor: "created" }
+  return { day: 0, started: false, anchor: "none" }
+}

@@ -27,7 +27,7 @@ import {
 } from "@/lib/ads-cache"
 import { logAds, logAdsMany, useRuleEditors, useAdsActivity, ACTION_LABEL } from "@/lib/ads-activity-store"
 import { playToggle, playError, sfxOn, setSfxOn } from "@/lib/ui-feedback"
-import { loadHouseRules, netOf, usePageRts } from "@/lib/scaling-signals"
+import { loadHouseRules, netOf, usePageRts, runAge } from "@/lib/scaling-signals"
 import { useScalingRegistry } from "@/lib/scaling-registry-store"
 
 const VAT = 1.12
@@ -1670,8 +1670,8 @@ function AdsManager({ fb, from, to, focus, onJump }: {
         : k === "Status" ? r.status
           // Ang Age ay BILANG, hindi teksto: ang pag-sort sa "79d old" bilang
           // string ay maglalagay ng 100d bago ang 79d.
-          : k === "Age" ? daysOldOf(r.createdTime)
-            : k === "Started" ? r.createdTime
+          : k === "Age" ? (() => { const a = runAge(r.startTime, r.createdTime); return a.started ? a.day : -1 })()
+            : k === "Started" ? (r.startTime || r.createdTime)
               : k === "Last edited" ? r.updatedTime
                 : (cols.find(c => c.l === k)?.v(r) ?? 0)
   ), [levelRows, sort, cols])
@@ -2162,14 +2162,27 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                           })()}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap border-r border-slate-100">
-                          {r.createdTime
-                            ? <span title={`Started ${fmtD(r.createdTime)}`}
+                          {/* ⚠ EDAD NG PAGTAKBO, hindi ng paglikha (hiling ng
+                              may-ari, Ago 20 2026): ang ginawa sa ika-20 na
+                              naka-schedule sa ika-21 ay Day 1 sa IKA-21. Ang
+                              hindi pa nagsisimula ay walang edad — "Not
+                              started", hindi "0d old". */}
+                          {(() => {
+                            const a = runAge(r.startTime, r.createdTime)
+                            const tip = `Created ${fmtD(r.createdTime)}` + (r.startTime ? ` · runs from ${fmtD(r.startTime)}` : ` · no schedule — counted from creation`)
+                            if (a.anchor === "none") return <span className="text-slate-400 text-xs">—</span>
+                            if (!a.started) return <span title={tip} className="text-[11px] font-semibold text-slate-400">Not started</span>
+                            return (
+                              <span title={tip}
                                 className="text-[11px] font-bold bg-[#1B2536] text-[#EFFF00] px-2 py-0.5 rounded-full">
-                                {daysOldOf(r.createdTime)}d old
+                                Day {a.day}
                               </span>
-                            : <span className="text-slate-400 text-xs">—</span>}
+                            )
+                          })()}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-slate-600 border-r border-slate-100">{fmtD(r.createdTime)}</td>
+                        {/* "Started" = tunay na simula ng takbo; kapag walang
+                            schedule, ang paglikha ang pinakamabuting alam. */}
+                        <td className="px-4 py-3 whitespace-nowrap text-slate-600 border-r border-slate-100" title={`Created ${fmtD(r.createdTime)}`}>{fmtD(r.startTime || r.createdTime)}</td>
                         <td className="px-4 py-3 whitespace-nowrap text-slate-600 border-r border-slate-100">
                           {r.updatedTime
                             ? <span className="inline-flex flex-col">

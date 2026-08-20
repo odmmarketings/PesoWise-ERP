@@ -9,6 +9,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
 import { cachedJson } from "@/lib/pancake-cache"
 import { useScalingRegistry, type Registration, type ScaleEvent } from "@/lib/scaling-registry-store"
+import { runAge } from "@/lib/scaling-signals"
 import { logAds, logAdsMany } from "@/lib/ads-activity-store"
 import { playToggle, playError } from "@/lib/ui-feedback"
 
@@ -78,6 +79,7 @@ type AdsetModel = {
   budgetKind: string
   campaignBudgetKind: string
   createdTime: string       // ISO mula kay Meta — pinakabago ang una sa picker
+  startTime: string         // tunay na simula ng takbo — dito nakasandal ang edad
   rtsRate: number
   dailies: Map<string, Daily>
 }
@@ -260,12 +262,6 @@ const freshCache = (key: string): Cached | null => {
   return hit && Date.now() - hit.ts < MODEL_TTL ? hit : null
 }
 
-/** Ilang araw nang umiiral — pinapakita sa picker at sa registered rows. */
-function daysOld(iso: string): number {
-  const t = new Date(iso).getTime()
-  if (!isFinite(t)) return 0
-  return Math.max(0, Math.floor((Date.now() - t) / 86400_000))
-}
 
 async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {
   let i = 0
@@ -503,6 +499,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             budgetKind: isCampaign ? "" : (mm.budgetKind || ""),
             campaignBudgetKind: isCampaign ? (mm.budgetKind || "") : (cm.budgetKind || ""),
             createdTime: mm.createdTime || "",
+            startTime: mm.startTime || "",
             rtsRate: rts,
             dailies: new Map(),
           }
@@ -1387,12 +1384,21 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             puti — ang madilim na pill ang TANGING dahilan kung bakit ito
             nababasa doon (13.91:1 ang teksto sa pill, 15.39:1 ang pill kontra
             hilera). Sa dark ay banayad na pagkakaangat lang ito (1.1:1). */}
-        {s.adset.createdTime && (
-          <span title={`Created ${s.adset.createdTime.slice(0, 10)}`}
-            className="text-[11px] font-bold bg-[#1B2536] text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
-            {daysOld(s.adset.createdTime)}d old
-          </span>
-        )}
+        {/* EDAD NG PAGTAKBO — Day 1 sa araw ng tunay na simula, hindi sa araw
+            ng paglikha (Ago 20 2026). */}
+        {(() => {
+          const a = runAge(s.adset.startTime, s.adset.createdTime)
+          if (a.anchor === "none") return null
+          const tip = `Created ${(s.adset.createdTime || "").slice(0, 10)}`
+            + (s.adset.startTime ? ` · runs from ${s.adset.startTime.slice(0, 10)}` : ` · no schedule — counted from creation`)
+          if (!a.started) return <span title={tip} className="text-[11px] font-semibold text-slate-400 whitespace-nowrap">Not started</span>
+          return (
+            <span title={tip}
+              className="text-[11px] font-bold bg-[#1B2536] text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
+              Day {a.day}
+            </span>
+          )
+        })()}
         {(() => { const t = budgetTarget(s.adset); return t.level === "none" ? null : (
           <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
             {t.level === "campaign" ? "CBO budget" : "budget"} {peso(t.amount)}
@@ -1486,7 +1492,10 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           // apat na hanay na mukhang apat na sukat, gayong iisa lang: wala pang
           // 7 araw na mabibilang. Mas masahol pa sa walang laman ang numerong
           // nagpapanggap na kasaysayan (iniulat ng may-ari, Ago 15 2026).
-          const haveDays = s.adset.createdTime ? daysOld(s.adset.createdTime) + 1 : Infinity
+          // Mula sa TUNAY na simula, hindi sa paglikha (Ago 20 2026): ang
+          // window na mas mahaba sa buhay-na-tumatakbo ay hindi pa totoo.
+          const ra = runAge(s.adset.startTime, s.adset.createdTime)
+          const haveDays = ra.anchor === "none" ? Infinity : ra.started ? ra.day : 0
           const cols = ["w1", "w3", "w7", "w15", "w31"] as const
           const need = { w1: 1, w3: 3, w7: 7, w15: 15, w31: 31 } as const
           return cols.map((w, i) => {
@@ -1880,14 +1889,20 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                         {(() => { const t = budgetTarget(m); return t.level === "adset" ? ` · budget ${peso(t.amount)}`
                           : t.level === "campaign" ? ` · CBO ${peso(t.amount)}` : " · no budget" })()}
                       </span>
-                      {/* Ilang araw na — mahalaga ito kapag pumipili: bago ba o
-                          matagal nang tumatakbo? */}
-                      {m.createdTime && (
+                      {/* Ilang araw NANG TUMATAKBO — mahalaga kapag pumipili:
+                          bago ba talaga o matagal nang tumatakbo? Ang ginawa
+                          kahapon na naka-schedule bukas ay HINDI pa tumatakbo. */}
+                      {(m.createdTime || m.startTime) && (
                         <span className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[11px] font-bold bg-[#1B2536] text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">
-                            {daysOld(m.createdTime)}d old
+                          {(() => {
+                            const a = runAge(m.startTime, m.createdTime)
+                            return a.started
+                              ? <span className="text-[11px] font-bold bg-[#1B2536] text-[#EFFF00] px-2 py-0.5 rounded-full whitespace-nowrap">Day {a.day}</span>
+                              : <span className="text-[11px] font-semibold text-slate-400 whitespace-nowrap">Not started</span>
+                          })()}
+                          <span className="text-[11px] text-slate-400">
+                            {m.startTime ? `runs from ${m.startTime.slice(0, 10)}` : `created ${m.createdTime.slice(0, 10)}`}
                           </span>
-                          <span className="text-[11px] text-slate-400">created {m.createdTime.slice(0, 10)}</span>
                         </span>
                       )}
                     </span>
