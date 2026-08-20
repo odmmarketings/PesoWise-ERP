@@ -8,7 +8,7 @@ import {
 } from "lucide-react"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
-import { getEcomSetting } from "@/lib/ecom-settings"
+import { getPpwResetFrom } from "@/lib/inventory-reset"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
 import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
@@ -167,7 +167,7 @@ export default function PpwPage() {
     // binibilang: nagsisimula sa zero at lalaki lang sa BAGONG waybill.
     // Kinukuha kada load (hindi minsanan) para tumalab agad sa lahat ng makina.
     let resetFrom = ""
-    try { resetFrom = String(((await getEcomSetting<any>("inventory_reset")) || {}).ppw_from || "") } catch {}
+    try { resetFrom = await getPpwResetFrom() } catch {}
     const lookback = dstr(new Date(Date.now() - PPW_LOOKBACK_DAYS * 86400000))
     const ppwFrom = resetFrom > lookback ? resetFrom : lookback
     const today = dstr(new Date())
