@@ -123,7 +123,11 @@ export async function POST(req: NextRequest) {
     // ── CREATE ────────────────────────────────────────────────────────────────
     const payload = {
       name, custom_id: name,
-      variations: [{ custom_id: name, barcode: name, retail_price: retail ?? 0, original_price: original }],
+      // ⚠ NAKA-OFF (is_hidden) SA PAGLIKHA — hiling ng may-ari, Ago 20 2026.
+      // Ang bagong unit code ay hindi dapat agad mabibenta sa POS: nakatago
+      // muna hanggang sadyang buksan sa Pancake. Ang pagpapakita ay pagpili,
+      // hindi bunga ng pag-save.
+      variations: [{ custom_id: name, barcode: name, retail_price: retail ?? 0, original_price: original, is_hidden: true }],
     }
     const url = `${BASE}/shops/${shop}/products?api_key=${k}`
     let a = await call(url, "POST", payload)
@@ -145,7 +149,7 @@ export async function POST(req: NextRequest) {
     // muling sinusubukan NANG WALA ITO. Hindi ito pagtanggal ng katangian:
     // pagpili ito ng makakalusot na kalahati kaysa sa walang produkto.
     if (!accepted(a) && /already exist/i.test(detailOf(a))) {
-      const bare = { name, variations: [{ retail_price: retail ?? 0, original_price: original }] }
+      const bare = { name, variations: [{ retail_price: retail ?? 0, original_price: original, is_hidden: true }] }
       let c = await call(url, "POST", bare)
       if (!accepted(c) && (c.res.status === 400 || c.res.status === 422)) {
         const d = await call(url, "POST", { product: bare })
