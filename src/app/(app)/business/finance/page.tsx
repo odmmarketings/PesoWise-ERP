@@ -4,6 +4,7 @@ import { PieChart, ChevronDown, TrendingUp, TrendingDown, Wallet, ShoppingCart, 
 import { format, startOfMonth } from "date-fns"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts"
 import { StatCard, ChartPanel, LoadingBar } from "@/components/ui/dash"
+import { OwnerTrueProfit } from "@/components/business/finance/OwnerTrueProfit"
 import { useBookkeeping } from "@/lib/bookkeeping-store"
 import { useFinanceSettings } from "@/lib/finance-settings-store"
 import { useActivePages } from "@/lib/pages-store"
@@ -375,6 +376,10 @@ export default function BusinessFinancePage() {
           {totalFund < 0 ? "-" : ""}{fmtPeso(Math.abs(totalFund))}
         </p>
       </div>
+
+      {/* Lihim ng may-ari — ang component mismo ang nagpapasya kung magre-render:
+          hindi may-ari = WALANG kahit ano, ni placeholder. */}
+      <OwnerTrueProfit />
 
       <div className="pb-4" />
     </div>
