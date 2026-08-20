@@ -132,6 +132,35 @@ export async function POST(req: NextRequest) {
       if (accepted(b)) return NextResponse.json({ success: true, action: "created", product: b.json?.data ?? null })
       if (detailOf(b) !== `HTTP ${b.res.status}`) a = b
     }
+    // ⚠ ANG custom_id/barcode NI PANCAKE AY UNIQUE SA BUONG ACCOUNT, HINDI KADA
+    // PAGE. Kaya ang "Variation … already exists in the system" ay lumalabas
+    // kahit WALA ang produkto sa page na pinupuntahan — hawak ng ibang page (o
+    // ng buradong produkto) ang pangalan bilang barcode, at hindi natin iyon
+    // maaabot mula rito. Napatunayan Ago 20 2026: ang "Lumyra x2" ay wala sa
+    // KAHIT ANONG konektadong page pero tinanggihan pa rin, kaya hindi kailanman
+    // lumitaw ang unit code sa POS (iniulat ng may-ari).
+    //
+    // Ang PANGALAN ang binabasa ng POS staff at ang batayan ng aming update/
+    // delete matching (name O custom_id) — kaya kapag ang custom_id ang balakid,
+    // muling sinusubukan NANG WALA ITO. Hindi ito pagtanggal ng katangian:
+    // pagpili ito ng makakalusot na kalahati kaysa sa walang produkto.
+    if (!accepted(a) && /already exist/i.test(detailOf(a))) {
+      const bare = { name, variations: [{ retail_price: retail ?? 0, original_price: original }] }
+      let c = await call(url, "POST", bare)
+      if (!accepted(c) && (c.res.status === 400 || c.res.status === 422)) {
+        const d = await call(url, "POST", { product: bare })
+        if (accepted(d)) c = d
+      }
+      if (accepted(c)) {
+        return NextResponse.json({
+          success: true, action: "created",
+          // Sinasabi nang tahasan — kung balang-araw ay kailangan ng barcode sa
+          // POS, ang produktong ito ay walang dala niyon at doon ito hahanapin.
+          note: "custom_id taken account-wide (another page or a deleted product holds it) — created by name only",
+          product: c.json?.data ?? null,
+        })
+      }
+    }
     if (!accepted(a)) {
       const e = classifyConn(a.res.status, detailOf(a))
       return NextResponse.json({ success: false, action: "created", errorCode: e.code, error: e.error }, { status: e.status })
