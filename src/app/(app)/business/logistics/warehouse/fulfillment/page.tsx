@@ -14,6 +14,7 @@ import { useWarehouseStaff } from "@/lib/users-store"
 import { fetchFulfillmentMeta, upsertFulfillmentMeta, cacheFulfillmentMeta } from "@/lib/fulfillment-meta-store"
 import { notify, rosterEmailByName } from "@/lib/notify"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
+import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 
 // FULFILLMENT (LHIKE Warehouse manual) — warehouse-facing view of live Pancake orders:
 // toggleable columns, per-column filters, Group (page), packer assignment (person icon),
@@ -25,6 +26,70 @@ import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const INP = "w-full h-8 rounded border border-slate-300 px-2 text-xs bg-white focus:outline-none focus:border-blue-400"
+
+const HELP: HelpSection[] = [
+  {
+    title: "Ano ang Fulfillment?",
+    body: [
+      "Ang pila ng bodega: ang mga LIVE na order mula sa Pancake sa lahat ng konektadong page, nakaayos para sa pagpitas, pagbalot at pagpapasa sa courier.",
+      "Ang tunay na pipilahan ay ang PACKAGING. Iyon ang mga order na binayaran at kumpirmado na, hinihintay lang balutin.",
+      "Ang order mismo ay galing sa Pancake at doon din ibinabalik ang pagbabago. Ang packer, shift, remarks at RTS tracking ay ATIN lang — walang ganoong konsepto ang Pancake.",
+    ],
+  },
+  {
+    title: "Ang normal na ikot sa isang araw",
+    body: [
+      "1. Piliin ang mga order (checkbox), tapos Export Pick List — iyon ang dala sa mga estante.",
+      "2. Assign packer (👤 na buton) — sinong bumalot. May notification ang napiling tao.",
+      "3. Balutin, tapos Send orders to courier — dito nabubuo ang totoong waybill.",
+      "4. I-print ang waybill at idikit. Mula rito, PPW na ang parcel hanggang sundoin ng courier.",
+      "5. Pag-alis: i-scan sa Shipped Out. Doon nababawas ang inventory, hindi rito.",
+    ],
+  },
+  {
+    title: "Export Pick List — bakit dalawang bahagi",
+    body: [
+      "PICK SUMMARY — pinagsama-sama lahat ng order sa isang listahan ng kukunin sa estante. Isang ikot lang sa bodega, hindi kada parcel.",
+      "Binubuklat nito ang unit code sa aktwal na piraso: ang '1x Lumyra x2' ay nagiging 2 pcs Lumyra, dahil piraso ang nasa estante, hindi bundle.",
+      "⚠ Ang produktong walang katugmang unit code ay may markang 'no matching unit code / item'. Ibig sabihin: walang mababawas sa item na iyon mamaya. Ayusin ang unit code.",
+      "ORDER BREAKDOWN — kada parcel naman, para sa pagbalot at pag-check, may PACKED tsek at pirmahan sa dulo.",
+      "May naka-tsek? Iyon lang ang isasama. Walang naka-tsek? Lahat ng nakikita sa talahanayan ang isasama.",
+    ],
+  },
+  {
+    title: "⚠ Send orders to courier — ang waybill lang ang patunay",
+    body: [
+      "Pumili ng SPX o J&T, ayusin ang settings, tapos Update. Kada order ay isinasagawa nang isa-isa kaya nakikita ang progreso.",
+      "Ang tracking number ang lumalabas kapag tagumpay — hindi lang 'Success'. Kapag walang tracking, hindi ito nabook, kahit ano pa ang isagot ng courier.",
+      "⚠ Sa order na labas sa saklaw ng courier (ODZ), tumatanggap ang SPX at nagsasabing tagumpay pero WALANG waybill na nabubuo. Kaya ang status ay hindi inuusad hangga't walang tracking number — nananatili sa Packaging ang tinanggihang order at hindi nawawala sa pila.",
+      "Ang pumalyang order ay NANANATILING naka-tsek pagkasara ng progress modal, para maipadala agad sa kabilang courier nang hindi hinahanap isa-isa.",
+    ],
+  },
+  {
+    title: "Ang mga column at filter",
+    body: [
+      "23 column ang maaaring buksan o isara sa mga chip sa itaas; 7 ang nakabukas sa simula. May filter kada column, at Group para pagsama-samahin kada page.",
+      "⚠ Magkaiba ang PARCEL STATUS at ORDER STATUS. Ang Parcel Status ay kung nasaan ang parcel sa courier; ang Order Status ay kung nasaan ito sa proseso.",
+      "Ang Order Date ay nagtatakda kung hanggang saan hihila sa Pancake. Ang ibang filter ay dito lang gumagana sa nahilang datos.",
+    ],
+  },
+  {
+    title: "Tools — dalawang bagay na madalas kailanganin",
+    body: [
+      "Update Parcel Status — TOTOONG pagpapalit ng status sa Pancake para sa bawat naka-tsek na order. May preview ng badge bago ipadala.",
+      "View COG Sold — kung magkano ang puhunan ng mga order sa napiling petsa, binuklat sa resipe ng unit code.",
+      "Ang 🔍 sa bawat row ay nagbubukas ng buong VIEW ORDER: readonly na datos ng Pancake, kasama ang Remarks, Tracking No., RTS Tracking, ang Owned / In progress / Done, at HISTORY.",
+    ],
+  },
+  {
+    title: "⚠ Walang nababawas na inventory dito",
+    body: [
+      "Walang ginagalaw ang page na ito sa stock — kahit ang Assign packer, kahit ang Send to courier.",
+      "Ang bumabawas ay kapag sinabi ng Pancake na SHIPPED na ang parcel. Iyon ang tanging pinto, para hindi madoble.",
+      "Ang manual na scan sa Shipped Out ay talaan ng bodega — hindi rin iyon bumabawas.",
+    ],
+  },
+]
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
   const json = await cachedJson(
@@ -476,7 +541,7 @@ export default function FulfillmentPage() {
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         {/* Header row — title + action buttons (LHIKE order) */}
         <div className="flex items-center justify-between flex-wrap gap-2 pb-4 border-b border-slate-100">
-          <h1 className="flex items-center gap-2 text-xl font-extrabold text-blue-600 tracking-wide"><PackageCheck className="w-6 h-6" /> FULFILLMENT</h1>
+          <h1 className="flex items-center gap-2 text-xl font-extrabold text-blue-600 tracking-wide"><PackageCheck className="w-6 h-6" /> FULFILLMENT<HelpButton title="Paano gumagana ang Fulfillment" sections={HELP} /></h1>
           <div className="flex items-center gap-2 flex-wrap">
             <button onClick={() => load(true)} title="Refresh from Pancake"
               className="h-10 w-10 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 flex items-center justify-center shrink-0">

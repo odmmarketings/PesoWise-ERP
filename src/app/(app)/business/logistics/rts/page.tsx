@@ -14,6 +14,7 @@ import { useShippedOutScans } from "@/lib/shipped-out-store"
 import { useProductBatches, planRestore } from "@/lib/product-batches-store"
 import { useProductItems } from "@/lib/product-items-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
+import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 
 // RTS ITEMS (LHIKE manual) — Return-to-Sender parcels, live from Pancake (orders whose status
 // is Returning/Returned across all connected pages). Features: sortable/filterable table w/
@@ -29,6 +30,79 @@ const fmtDT = (iso: string) => {
   return isNaN(d.getTime()) ? "" : d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 }
 const INP = "h-8 w-full rounded border border-slate-300 px-1.5 text-xs bg-white focus:outline-none focus:border-blue-400"
+
+const HELP: HelpSection[] = [
+  {
+    title: "Ano ang nasa listahang ito?",
+    body: [
+      "Ang mga parcel na ibinabalik sa atin — awtomatikong hinihila mula sa Pancake ang lahat ng order na Returning o Returned sa lahat ng konektadong page.",
+      "Walang inililista rito nang manu-mano. Ang Pancake ang nagsasabi kung alin ang RTS; ang trabaho rito ay ang PISIKAL na pagtanggap at pagbilang.",
+      "Ang TRACKING NUMBER ang susi ng lahat — hindi ang order id. Doon nakakabit ang bawat tatak: natanggap, na-check, na-claim, naibalik sa stock.",
+    ],
+  },
+  {
+    title: "Tatlong hakbang: Unreceived → Received → Checked",
+    body: [
+      "Unreceived (amber) — sinabi ng Pancake na pabalik, pero wala pa sa kamay ninyo.",
+      "Received (asul) — na-scan ninyo ang waybill pagdating. Bilang lang ito; hindi pa binubuksan.",
+      "Checked (berdeng) — binuksan at binilang na: ilan ang mabuti, ilan ang sira, ilan ang nawala.",
+      "Nakatatak ang oras at ang pangalan ng gumawa sa bawat hakbang, kaya masasagot kung sino at kailan.",
+    ],
+  },
+  {
+    title: "CAMERA SCAN — ito ang paraan ng pag-scan",
+    body: [
+      "Pindutin ang CAMERA SCAN, tapos piliin ang mode sa itaas: SCAN & RECEIVE (teal) o SCAN & CHECK (pula). Laging nakikita kung nasaang mode kayo.",
+      "RECEIVE: awtomatiko lahat — i-scan, tapos. Tumataas na rising na tunog ang senyas.",
+      "CHECK: pagkatapos mag-scan, may lalabas na sheet sa ibaba — steppers para sa Goods / Damage / Loss. Naka-default sa buong dami ang Goods; baguhin lang kung may sira. Tatlong beses na tunog ang senyas.",
+      "Puwedeng barcode scanner o typed input kung ayaw bumukas ng camera. Pindutin muna ang screen bago magsimula ang camera — kailangan ng browser ng isang pindot bago magbukas ng camera at tunog.",
+      "⚠ Kailangan ng HTTPS ang camera. Sa LAN IP (http://192.168.x.x) hindi ito bubukas — ang manual o hardware scanner lang ang gagana doon.",
+      "Ang naulit na scan ay tinatanggihan — may mababang buzz at banner kung kailan at sino ang naunang nag-scan.",
+    ],
+  },
+  {
+    title: "⚠ Ang popup ng COG habang nag-RECEIVE",
+    body: [
+      "May violet na popup na hihinto sa scan at magsasabi ng item, dami, at malaking presyo — halimbawa: Lumyra, 2 pcs, COG 35.",
+      "Sinasabi nito kung saang BOX ibabalik ang parcel. Binabasa ito sa naitalang batch noong umalis ang parcel, hindi hula.",
+      "Lumalabas LANG kapag ang item ay may DALAWA O HIGIT PANG magkaibang presyo sa mga batch nito. Kapag iisa ang presyo, walang maipagkakamaling box, kaya hindi ito umaabala.",
+      "⚠ Ang parcel na umalis bago pa naitala ang batch ay dumadaan nang tahimik — walang popup. Hindi iyon sira: mas mabuti ang walang sagot kaysa sa maling hula.",
+    ],
+  },
+  {
+    title: "Pagbukas ng parcel — ang VIEW screen (🔍)",
+    body: [
+      "Dito ilalagay ang Goods / Damage / Loss kada item, ang dahilan (Buyer o Courier), larawan, remarks, at RTS Fee.",
+      "⚠ Kapag may Damage o Loss na higit sa zero, awtomatikong natatatakan ng FOR CLAIM ang parcel — iyon ang isisingil sa courier.",
+      "Nakalista sa HISTORY sidebar kung sino ang humiling, kailan, at kailan na-claim.",
+    ],
+  },
+  {
+    title: "UPLOAD CLAIMS — ang bayad ng courier",
+    body: [
+      "I-download ang template, punan ang TRACKING NUMBER at DATE OF CLAIM, tapos i-upload. Walang column ng halaga: ang halaga ay ang PRESYO MISMO ng parcel, kinukuha rito.",
+      "Ang na-claim ay nagiging violet na 'Claimed'. Ang tracking na wala sa listahan ay binabalaan, hindi tahimik na tinatanggap.",
+    ],
+  },
+  {
+    title: "↩ Restock — pagbabalik sa stock",
+    body: [
+      "Ang berdeng ↩ ay nagbabalik ng parcel sa MISMONG batch na pinanggalingan nito — hindi sa pinakabago. May confirm modal na nagsasabi kung aling batch bago tuluyang gawin.",
+      "⚠ ANG MABUTING PIRASO LANG ANG BUMABALIK. Ang sira at nawala ay hindi na maibebenta; ang pagbabalik sa kanila ay magpapakita ng stock na wala naman.",
+      "Ang hindi pa na-check na parcel ay ipinapalagay na lahat mabuti — nakasulat iyon sa modal bago kumpirmahin.",
+      "Isang beses lang ito puwede kada parcel, kahit ilang device ang sabay pumindot.",
+      "⚠ Ang parcel na umalis bago naitala ang batch ay walang maibabalik na sagot — sasabihin nito na walang naitalang batch imbes na manghula.",
+    ],
+  },
+  {
+    title: "Ang limang counter sa itaas",
+    body: [
+      "May sariling date preset ang mga ito, hiwalay sa filter ng talahanayan. Napipindot lahat — may lalabas na detalyadong listahan.",
+      "EXPECTED RTS (indigo) — lahat ng sinasabi ng Pancake na pabalik sa date range ng TALAHANAYAN, may 'X received · Y pending'. Ito ang panukat kung ilan ang dumating sa inaasahan.",
+      "Received / Claims / Damage / Loss — sinusunod ang sariling preset sa itaas nila.",
+    ],
+  },
+]
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, noCache = false): Promise<any[]> {
   const json = await cachedJson(
@@ -339,7 +413,7 @@ export default function RtsItemsPage() {
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         {/* Header — LHIKE button set */}
         <div className="flex items-center justify-between flex-wrap gap-2 pb-4 border-b border-slate-100">
-          <h1 className="flex items-center gap-2 text-xl font-extrabold text-blue-600 tracking-wide"><Undo2 className="w-6 h-6" /> RTS ITEMS</h1>
+          <h1 className="flex items-center gap-2 text-xl font-extrabold text-blue-600 tracking-wide"><Undo2 className="w-6 h-6" /> RTS ITEMS<HelpButton title="Paano gumagana ang RTS Items" sections={HELP} /></h1>
           <div className="flex items-center gap-2 flex-wrap">
             <button onClick={() => setClaimsOpen(true)} className="h-10 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold tracking-wide">UPLOAD CLAIMS</button>
             <button onClick={() => setCamOpen(true)} className="h-10 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wide flex items-center gap-1.5"><Camera className="w-4 h-4" /> CAMERA SCAN</button>

@@ -10,6 +10,7 @@ import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { useActivePages } from "@/lib/pages-store"
 import { getEcomSetting } from "@/lib/ecom-settings"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
+import { HelpButton, type HelpSection } from "@/components/business/HelpButton"
 import { cachedJson, PANCAKE_CONCURRENCY } from "@/lib/pancake-cache"
 import { courierOf, COURIERS, COURIER_COLOR } from "@/lib/courier"
 import { StatCardsSkeleton, TableSkeleton } from "@/components/business/Skeleton"
@@ -39,6 +40,49 @@ const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH"
 // nakabinbin ang isang waybill, hindi na iyon "pending" — problema na iyon at lalabas
 // pa rin sa 3+ araw (stale) na aging bucket.
 const PPW_LOOKBACK_DAYS = 30
+
+const HELP: HelpSection[] = [
+  {
+    title: "Ano ang PPW?",
+    body: [
+      "PPW = Pending Printed Waybill — naprinta at nadikit na ang waybill, pero NASA BODEGA PA ang parcel. Hindi pa ito kinukuha ng courier.",
+      "Ito ang digital na kapalit ng manwal na PPW sheet: IN (may waybill na) bawas OUT (nakaalis na) = ang natitira sa bodega.",
+      "Walang ipinapasok dito araw-araw. Kinukuwenta ito mula sa Pancake: may tracking number ANG order, at ang status nito ay wala sa Shipped / Delivered / Returning / Returned / Cancelled / Deleted.",
+    ],
+  },
+  {
+    title: "PPW Monitor — ang tab na binabantayan araw-araw",
+    body: [
+      "Kabuuang bilang at halaga, hati kada courier (SPX / J&T). Kapag walang pangalan ang courier — madalas iyon sa hindi pa nakukuhang parcel — ang prefix ng tracking ang sinusundan (SPEPH = SPX, JT o mahabang numero = J&T).",
+      "Ang aging strip ang pinakamahalaga: ngayong araw / 1-2 araw / 3+ araw. Ang 3+ ay hindi normal — nakaprinta na ang waybill pero ilang araw nang hindi nakukuha.",
+      "⚠ Kapag lumalaki ang 3+ araw, tawagan ang courier. Ang parcel na naiwan nang matagal ay madalas hindi na talaga nasundo, hindi lang naaantala.",
+      "Ang listahan ay nakaayos mula pinakamatanda, kaya nasa itaas agad ang problema. May Excel export.",
+    ],
+  },
+  {
+    title: "⚠ 30 araw lang ang hinihila",
+    body: [
+      "Hanggang 30 araw pabalik ang tinitingnan ng PPW. Dati 90 — pero 22 pages x 90 araw ay umaabot ng ~13 minuto ang paghila, at nagti-timeout.",
+      "Sapat ang 30 araw: ang parcel na 30+ araw nang hindi nakukuha ay wala na, hindi pending. Kung may ganoon, nasa 3+ araw (stale) na bucket iyon bago pa mawala sa listahan.",
+      "Snapshot ito ng NGAYON — hindi ito sinusunod ang date filter ng FP tab, kaya hindi makakatakas sa paningin ang mga naiwan.",
+    ],
+  },
+  {
+    title: "Fulfilled Parcel Report (FP) — ang pangalawang tab",
+    body: [
+      "Ilan talaga ang NAKAALIS sa napiling petsa: bilang at halaga kada courier, at hati-hati kada araw. May Excel export.",
+      "Ang basehan ay ang mga umabot na sa Shipped / Delivered / Returning / Returned — hindi lang Shipped, dahil posibleng naabutan na natin ang parcel na Delivered na.",
+      "Ang scan cross-check bar ay ang bilang ng naipadala na may katugmang Shipped Out scan. Kapag mababa ito, hindi nagsi-scan ang warehouse — hindi ibig sabihin na may nawawalang parcel.",
+    ],
+  },
+  {
+    title: "⚠ Bakit magkaiba ang PPW dito at sa Warehouse Dashboard",
+    body: [
+      "Ang PPW card sa Warehouse Dashboard ay sumusunod sa date range na napili doon. Ang page na ito ay 30-araw na snapshot na hindi nagbabago sa date filter.",
+      "Magkaiba talaga sila, at hindi iyon sira. ANG PAGE NA ITO ANG SUSUNDIN kapag PPW ang pinag-uusapan.",
+    ],
+  },
+]
 
 async function fetchPageRows(apiKey: string, pageId: string, from: string, to: string, basis: string, noCache = false): Promise<any[]> {
   const json = await cachedJson(
@@ -240,6 +284,7 @@ export default function PpwPage() {
         <div>
           <h1 className="text-lg font-bold text-blue-600 flex items-center gap-2">
             <ScanBarcode className="w-5 h-5" /> PENDING PRINTED WAYBILL (PPW)
+            <HelpButton title="Paano gumagana ang PPW" sections={HELP} />
           </h1>
           <p className="text-[11px] text-slate-400 mt-0.5">
             Parcels with a printed waybill that the courier has not collected yet · {pagesWithCreds.length} page{pagesWithCreds.length === 1 ? "" : "s"}
