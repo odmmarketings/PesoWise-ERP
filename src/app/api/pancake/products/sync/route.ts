@@ -97,10 +97,13 @@ export async function POST(req: NextRequest) {
       const variation: any = {
         ...(first?.id ? { id: first.id } : {}),
         custom_id: name, barcode: name,
+        // Pinapanatiling OFF kahit sa EDIT — kung hindi, ang unang pag-edit ay
+        // tahimik na magbubukas muli ng negatibong benta.
+        is_sell_negative_variation: false,
         ...(retail !== undefined ? { retail_price: retail } : {}),
         ...(original !== undefined ? { original_price: original } : {}),
       }
-      const payload: any = { name, custom_id: name, variations: [variation] }
+      const payload: any = { name, custom_id: name, is_sell_negative: false, variations: [variation] }
 
       // Deployments differ on method and envelope; try the plain shape first and keep
       // whichever reply actually explains a rejection.
@@ -123,11 +126,20 @@ export async function POST(req: NextRequest) {
     // ── CREATE ────────────────────────────────────────────────────────────────
     const payload = {
       name, custom_id: name,
-      // ⚠ NAKA-OFF (is_hidden) SA PAGLIKHA — hiling ng may-ari, Ago 20 2026.
-      // Ang bagong unit code ay hindi dapat agad mabibenta sa POS: nakatago
-      // muna hanggang sadyang buksan sa Pancake. Ang pagpapakita ay pagpili,
-      // hindi bunga ng pag-save.
-      variations: [{ custom_id: name, barcode: name, retail_price: retail ?? 0, original_price: original, is_hidden: true }],
+      // ⚠ NAKA-OFF ANG "Allow sale of negative inventory" SA PAGLIKHA — hiling
+      // ng may-ari (Ago 21 2026, may screenshot ng toggle). Ang unit code ay
+      // BUNDLE: ang tunay na stock ay nasa mga bahagi nito sa PesoWise, kaya
+      // ang pagpayag ng negatibong benta sa POS ay pagbebenta ng wala.
+      //
+      // ⚠ NASA VARIATION ang switch (`is_sell_negative_variation`); ang
+      // `is_sell_negative` ng produkto ay itinatakda rin para magkasundo.
+      // Napatunayan sa buhay na account, Ago 21 2026.
+      //
+      // HINDI ito `is_hidden`. Naunang binasa kong "naka-off" iyon at MALI:
+      // itinatago niyon ang buong produkto sa POS. Ang hiningi ay ang toggle
+      // sa loob ng produkto, hindi ang pagtatago nito.
+      is_sell_negative: false,
+      variations: [{ custom_id: name, barcode: name, retail_price: retail ?? 0, original_price: original, is_sell_negative_variation: false }],
     }
     const url = `${BASE}/shops/${shop}/products?api_key=${k}`
     let a = await call(url, "POST", payload)
@@ -149,7 +161,7 @@ export async function POST(req: NextRequest) {
     // muling sinusubukan NANG WALA ITO. Hindi ito pagtanggal ng katangian:
     // pagpili ito ng makakalusot na kalahati kaysa sa walang produkto.
     if (!accepted(a) && /already exist/i.test(detailOf(a))) {
-      const bare = { name, variations: [{ retail_price: retail ?? 0, original_price: original, is_hidden: true }] }
+      const bare = { name, is_sell_negative: false, variations: [{ retail_price: retail ?? 0, original_price: original, is_sell_negative_variation: false }] }
       let c = await call(url, "POST", bare)
       if (!accepted(c) && (c.res.status === 400 || c.res.status === 422)) {
         const d = await call(url, "POST", { product: bare })
