@@ -309,7 +309,10 @@ export default function UnitCodesPage() {
   // are the recipe and stay in PesoWise; adding a row changes the Total COG, and THAT is the
   // part Pancake sees. Pancake has no concept of a bundle to receive them into.
   async function syncToPancake(input: NewUnitCodeInput, prevCode?: string) {
-    const targets = input.pages.length ? connectedPages.filter(p => input.pages.includes(p.name)) : connectedPages
+    // ⚠ WALANG "lahat" na default (Ago 20 2026): ang piniling pages LANG ang
+    // pinupuntahan. Ang blangko ay hinaharang na ng submit validation; kung
+    // nakalusot pa rin, WALANG ipapadala — hindi lahat.
+    const targets = connectedPages.filter(p => input.pages.includes(p.name))
     if (targets.length === 0) {
       setSyncReport({ code: input.code, created: 0, updated: 0, errs: ["Walang konektadong Pancake page. Kailangan ng API Key + Page/Shop ID sa Pages & Store bago may mapadalhan."] })
       return
@@ -627,6 +630,12 @@ function FormScreen({ mode, initial, skuAuto, itemOptions, itemLabels, pageOptio
     if (!f.code.trim()) return setErr("Unit Code is required.")
     if (f.code.trim().length > 30) return setErr("The maximum length allowed for the unit code is 30 characters.")
     if (!f.items.some(i => i.name.trim() && i.qty > 0)) return setErr("Add at least one Item with Qty.")
+    if (!(Number(f.selling_price) > 0)) return setErr("Selling Price is required.")
+    // ⚠ REQUIRED ANG PAGES (hiling ng may-ari, Ago 20 2026). Dati, ang walang
+    // pinili ay "default sa LAHAT ng page" — tatlong unit code ang gulat na
+    // lumitaw sa BAWAT Pancake POS page. Ang paglaganap sa lahat ay hindi
+    // dapat bunga ng pagkalimot; pagpili ito, hindi default.
+    if (f.pages.length === 0) return setErr("Select at least one Pancake page — the unit code is pushed only to the pages you pick.")
     setErr("")
     onSave({ ...f, sku: f.sku.trim(), code: f.code.trim(), items: f.items.filter(i => i.name.trim()) }, addUpsell && mode === "add")
   }
@@ -667,7 +676,7 @@ function FormScreen({ mode, initial, skuAuto, itemOptions, itemLabels, pageOptio
               ))}
             </div>
           </FormRow>
-          <FormRow label="Selling Price">
+          <FormRow label="Selling Price" required>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 items-center">
               <input className={`${INP} text-right`} inputMode="decimal" value={f.selling_price || ""} placeholder="0.00"
                 onChange={e => set("selling_price", Number(e.target.value.replace(/[^\d.]/g, "")) || 0)} />
@@ -688,13 +697,17 @@ function FormScreen({ mode, initial, skuAuto, itemOptions, itemLabels, pageOptio
               </div>
             </FormRow>
           )}
-          <FormRow label="Pages with Pancake API Key">
+          {/* ⚠ REQUIRED na ang pages (Ago 20 2026). Dating "walang pinili =
+              default sa LAHAT" — tatlong unit code ang gulat na lumitaw sa
+              bawat Pancake POS page. Ngayon: ang pinili LANG ang pupuntahan,
+              at haharangin ng submit ang blangko. */}
+          <FormRow label="Pages with Pancake API Key" required>
             <div className="space-y-1">
               <PageTagSelect options={pageOptions} selected={f.pages} onChange={v => set("pages", v)} />
-              {(f.pages.length > 0 || pageOptions.length > 0) && (
-                <p className="text-xs text-slate-500">Will also be added to Pages: {(f.pages.length ? f.pages : pageOptions).join(", ")},</p>
+              {f.pages.length > 0 && (
+                <p className="text-xs text-slate-500">Will be added to: {f.pages.join(", ")}</p>
               )}
-              {f.pages.length === 0 && <p className="text-[11px] text-slate-400">Note: not choosing a page sets the item to default — added to all connected Pancake pages.</p>}
+              {f.pages.length === 0 && <p className="text-[11px] text-amber-600 font-medium">Required — pick the page(s) this unit code belongs to; it is pushed only there.</p>}
             </div>
           </FormRow>
         </div>
