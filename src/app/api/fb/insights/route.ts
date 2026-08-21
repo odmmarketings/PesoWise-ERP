@@ -201,6 +201,17 @@ export async function GET(req: NextRequest) {
       // bukas na ad set) laban sa "Ads off" (may bukas na ad set, walang ad).
       const kidsLive: Record<string, number> = {}
       let adsKnown = false
+      // ⚠ ANG CAMPAIGN AY WALANG SARILING ORAS KAPAG ANG AD SET ANG NAKA-SCHEDULE.
+      // Ang oras ng pagsisimula ay itinatakda sa AD SET; ang campaign ay maaaring
+      // may lumipas nang `start_time` (o wala) habang ang lahat ng ad set nito ay
+      // sa Lunes pa magsisimula — kaya "Active" ang campaign gayong "Scheduled"
+      // ang mga anak nito (iniulat ng may-ari, Ago 21 2026).
+      // `kidsStart` = PINAKAMAAGANG simula sa mga BUKAS na ad set. Kapag ang
+      // pinakamaaga ay nasa hinaharap pa, ang LAHAT ay nasa hinaharap — iyon ang
+      // buong sagot sa isang field. Blangko kapag may bukas na ad set na walang
+      // mababasang oras: hindi tayo nanghuhula ng "Scheduled".
+      const kidsStart: Record<string, string> = {}
+      const kidsStartUnknown = new Set<string>()
       if (level === "campaign") {
         try {
           // Aling ad set ang may buhay na ad? Isang hila sa buong account —
@@ -215,7 +226,7 @@ export async function GET(req: NextRequest) {
             }
             adsKnown = true   // ⚠ kapag pumalya ang hila, `kidsLive` ay -1 (hindi alam),
           } catch { adsKnown = false }   //   dahil ang 0 ay magsasabi ng "Ads off" sa LAHAT.
-          const as = await fbGet(`${accountId}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,status,effective_status&limit=500&access_token=${enc}`)
+          const as = await fbGet(`${accountId}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,status,effective_status,start_time&limit=500&access_token=${enc}`)
           for (const s of as.data || []) {
             const cid = s.campaign_id
             kidsTotal[cid] = (kidsTotal[cid] || 0) + 1
@@ -225,6 +236,9 @@ export async function GET(req: NextRequest) {
             if (/active/i.test(s.status || "")) {
               kidsOn[cid] = (kidsOn[cid] || 0) + 1
               if (liveAdsets.has(String(s.id))) kidsLive[cid] = (kidsLive[cid] || 0) + 1
+              const t = s.start_time ? Date.parse(s.start_time) : NaN
+              if (!isFinite(t)) kidsStartUnknown.add(cid)
+              else if (!kidsStart[cid] || t < Date.parse(kidsStart[cid])) kidsStart[cid] = s.start_time
             }
             const b = cents(s.daily_budget) || cents(s.lifetime_budget); if (!b) continue
             adsetAll[cid] = (adsetAll[cid] || 0) + b
@@ -284,6 +298,9 @@ export async function GET(req: NextRequest) {
           // Mga ad set na bukas AT may bukas na ad. -1 = hindi alam (ibang antas,
           // o pumalya ang hila ng ad) — huwag manghula ng "Ads off" mula riyan.
           kidsLive: level === "campaign" && adsKnown ? (kidsLive[id] ?? 0) : -1,
+          // Pinakamaagang simula sa mga bukas na ad set — ito ang batayan ng
+          // "Scheduled" sa campaign. Blangko = walang masasabi.
+          kidsStart: level === "campaign" && !kidsStartUnknown.has(id) ? (kidsStart[id] || "") : "",
           // Learning phase. Sa ad set ay galing sa sarili niyang field; sa ad ay
           // sa MAGULANG na ad set. `status`: LEARNING | SUCCESS | FAIL.
           // `conversions` = ilang optimization event na — ito ang paunlad tungo

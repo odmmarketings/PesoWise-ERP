@@ -114,7 +114,7 @@ const DELIVERY_MAP: Record<string, string> = {
 //   SUCCESS   → tapos na; normal na "Active" ang ipapakita
 const LEARN_TARGET = 50
 type Learning = { status: string; conversions: number } | null
-type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; kidsLive?: number; learning?: Learning; startTime?: string; stopTime?: string }
+type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; kidsLive?: number; kidsStart?: string; learning?: Learning; startTime?: string; stopTime?: string }
 export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad", now = Date.now()): { label: string; tone: "on" | "off" | "warn" | "bad" } {
   const eff = String(r.status || "").toUpperCase()
   const own = String(r.configuredStatus || r.status || "").toUpperCase()
@@ -143,6 +143,19 @@ export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad", n
   const stop = r.stopTime ? Date.parse(r.stopTime) : NaN
   if (!Number.isNaN(start) && start > now) return { label: "Scheduled", tone: "on" }
   if (!Number.isNaN(stop) && stop <= now) return { label: "Completed", tone: "off" }
+  //    ⚠ SA AD SET ITINATAKDA ANG ORAS, HINDI SA CAMPAIGN. Ang campaign ay
+  //    maaaring may lumipas nang `start_time` (o wala) habang ang lahat ng
+  //    BUKAS na ad set nito ay bukas pa magsisimula — kaya "Scheduled" ang
+  //    mababasa mo sa ad set pero "Active" sa campaign sa itaas niya
+  //    (iniulat ng may-ari, Ago 21 2026). `kidsStart` ang PINAKAMAAGANG simula
+  //    sa mga bukas na ad set: kapag ang pinakamaaga ay wala pa, wala pang
+  //    kahit isa — naka-schedule ang buong campaign. Blangko = hindi alam.
+  //    Nauuna ito sa bilang ng anak: ang "Ad set off"/"Ads off" sa isang hindi
+  //    pa nagsisimula ay maling babala, kapareho ng dahilan sa taas.
+  const kidStart = r.kidsStart ? Date.parse(r.kidsStart) : NaN
+  if (level === "campaign" && (r.kidsOn ?? -1) > 0 && !Number.isNaN(kidStart) && kidStart > now) {
+    return { label: "Scheduled", tone: "on" }
+  }
   // 4. Buhay ako — pero may naipapadala ba talaga? Tanungin ang mga anak.
   //    -1 = walang datos ng anak; huwag manghula.
   const on = r.kidsOn ?? -1, total = r.kidsTotal ?? -1
@@ -1171,7 +1184,7 @@ type MgrFocus = {
   /** Bakit ka dinala rito, hal. "2nd scale · ₱1,000 → ₱1,100". Nasa banner. */
   note?: string
 }
-type MgrRow = Row & { createdTime: string; updatedTime: string; startTime: string; stopTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number; kidsLive: number; learning: { status: string; conversions: number } | null }
+type MgrRow = Row & { createdTime: string; updatedTime: string; startTime: string; stopTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number; kidsLive: number; kidsStart: string; learning: { status: string; conversions: number } | null }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
 /** Ilang araw nang umiiral ang object — 0 kung walang petsa mula kay Meta. */
 const daysOldOf = (iso: string) => {
@@ -1621,7 +1634,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
     const a = accById(r.__accId) || account
     return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", startTime: r.startTime || "", stopTime: r.stopTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "",
       kidsOn: typeof r.kidsOn === "number" ? r.kidsOn : -1, kidsTotal: typeof r.kidsTotal === "number" ? r.kidsTotal : -1,
-      kidsLive: typeof r.kidsLive === "number" ? r.kidsLive : -1,
+      kidsLive: typeof r.kidsLive === "number" ? r.kidsLive : -1, kidsStart: r.kidsStart || "",
       learning: r.learning && r.learning.status ? { status: String(r.learning.status), conversions: Number(r.learning.conversions || 0) } : null }
   }
   // ⚠ PAREHONG BITAG NA INAYOS SA DASHBOARD (Ago 6 2026), naiwan dito: ang
