@@ -191,16 +191,41 @@ export async function GET(req: NextRequest) {
       // Ganito rin ang ginagawa ng Ads Manager ni Meta: binibilang niya ang mga
       // anak. Libre ito rito — hinihila na natin ang ad sets para sa budget.
       const kidsOn: Record<string, number> = {}, kidsTotal: Record<string, number> = {}
+      // ⚠ HINDI SAPAT ANG BILANGIN ANG NAKABUKAS NA AD SET. Ang isang ad set na
+      // nakabukas pero WALANG kahit isang naka-on na ad ay wala ring ipinapadala,
+      // kaya ang campaign sa itaas niya ay "Active" ang mababasa gayong wala
+      // namang lumalabas na ad (iniulat ng may-ari, Ago 21 2026: campaign na
+      // 1/3 ang ad set na bukas, at ang isang iyon ay 0/3 ang ad).
+      // `kidsLive` = mga ad set na bukas AT may kahit isang bukas na ad. Ito ang
+      // nagbubukod ng dalawang dahilan ng hindi paglabas: "Ad set off" (walang
+      // bukas na ad set) laban sa "Ads off" (may bukas na ad set, walang ad).
+      const kidsLive: Record<string, number> = {}
+      let adsKnown = false
       if (level === "campaign") {
         try {
-          const as = await fbGet(`${accountId}/adsets?fields=campaign_id,daily_budget,lifetime_budget,status,effective_status&limit=500&access_token=${enc}`)
+          // Aling ad set ang may buhay na ad? Isang hila sa buong account —
+          // ang parehong hila na ginagawa na natin sa antas na ad set.
+          const liveAdsets = new Set<string>()
+          try {
+            let u = `${accountId}/ads?fields=adset_id,status&limit=500&access_token=${enc}`
+            for (let page = 0; u && page < 10; page++) {
+              const j = await fbGet(u)
+              for (const x of j.data || []) if (/active/i.test(x.status || "")) liveAdsets.add(String(x.adset_id))
+              u = j.paging?.next ? j.paging.next.replace(`${BASE}/`, "") : ""
+            }
+            adsKnown = true   // ⚠ kapag pumalya ang hila, `kidsLive` ay -1 (hindi alam),
+          } catch { adsKnown = false }   //   dahil ang 0 ay magsasabi ng "Ads off" sa LAHAT.
+          const as = await fbGet(`${accountId}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,status,effective_status&limit=500&access_token=${enc}`)
           for (const s of as.data || []) {
             const cid = s.campaign_id
             kidsTotal[cid] = (kidsTotal[cid] || 0) + 1
             // `status` = ang sarili niyang on/off. Hindi `effective_status`:
             // "CAMPAIGN_PAUSED" ang laman niyan kapag ang MAGULANG ang patay,
             // at hindi iyon nagsasabi kung binuksan ba ang ad set mismo.
-            if (/active/i.test(s.status || "")) kidsOn[cid] = (kidsOn[cid] || 0) + 1
+            if (/active/i.test(s.status || "")) {
+              kidsOn[cid] = (kidsOn[cid] || 0) + 1
+              if (liveAdsets.has(String(s.id))) kidsLive[cid] = (kidsLive[cid] || 0) + 1
+            }
             const b = cents(s.daily_budget) || cents(s.lifetime_budget); if (!b) continue
             adsetAll[cid] = (adsetAll[cid] || 0) + b
             if (/active/i.test(s.effective_status)) adsetActive[cid] = (adsetActive[cid] || 0) + b
@@ -211,11 +236,18 @@ export async function GET(req: NextRequest) {
       // lahat ng ad nito. Isang dagdag na hila kada account sa antas na ito.
       if (level === "adset") {
         try {
-          const ad = await fbGet(`${accountId}/ads?fields=adset_id,status&limit=500&access_token=${enc}`)
-          for (const x of ad.data || []) {
-            const sid = x.adset_id
-            kidsTotal[sid] = (kidsTotal[sid] || 0) + 1
-            if (/active/i.test(x.status || "")) kidsOn[sid] = (kidsOn[sid] || 0) + 1
+          // ⚠ SUSUNDIN ANG PAHINA. Ang isang account dito ay may 468 ad (Ago 21
+          // 2026) — malapit na sa 500. Kapag lumagpas, ang mga ad set sa huling
+          // pahina ay 0/0 ang mababasa at mawawala ang "Ads off" sa kanila.
+          let u = `${accountId}/ads?fields=adset_id,status&limit=500&access_token=${enc}`
+          for (let page = 0; u && page < 10; page++) {
+            const ad = await fbGet(u)
+            for (const x of ad.data || []) {
+              const sid = x.adset_id
+              kidsTotal[sid] = (kidsTotal[sid] || 0) + 1
+              if (/active/i.test(x.status || "")) kidsOn[sid] = (kidsOn[sid] || 0) + 1
+            }
+            u = ad.paging?.next ? ad.paging.next.replace(`${BASE}/`, "") : ""
           }
         } catch {}
       }
@@ -249,6 +281,9 @@ export async function GET(req: NextRequest) {
           // walang datos.
           kidsOn: level === "ad" ? -1 : (kidsOn[id] ?? 0),
           kidsTotal: level === "ad" ? -1 : (kidsTotal[id] ?? 0),
+          // Mga ad set na bukas AT may bukas na ad. -1 = hindi alam (ibang antas,
+          // o pumalya ang hila ng ad) — huwag manghula ng "Ads off" mula riyan.
+          kidsLive: level === "campaign" && adsKnown ? (kidsLive[id] ?? 0) : -1,
           // Learning phase. Sa ad set ay galing sa sarili niyang field; sa ad ay
           // sa MAGULANG na ad set. `status`: LEARNING | SUCCESS | FAIL.
           // `conversions` = ilang optimization event na — ito ang paunlad tungo

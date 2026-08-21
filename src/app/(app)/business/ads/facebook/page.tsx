@@ -114,7 +114,7 @@ const DELIVERY_MAP: Record<string, string> = {
 //   SUCCESS   → tapos na; normal na "Active" ang ipapakita
 const LEARN_TARGET = 50
 type Learning = { status: string; conversions: number } | null
-type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; learning?: Learning; startTime?: string; stopTime?: string }
+type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; kidsLive?: number; learning?: Learning; startTime?: string; stopTime?: string }
 export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad", now = Date.now()): { label: string; tone: "on" | "off" | "warn" | "bad" } {
   const eff = String(r.status || "").toUpperCase()
   const own = String(r.configuredStatus || r.status || "").toUpperCase()
@@ -148,6 +148,18 @@ export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad", n
   const on = r.kidsOn ?? -1, total = r.kidsTotal ?? -1
   if (level !== "ad" && total > 0 && on === 0) {
     return { label: level === "campaign" ? "Ad set off" : "Ads off", tone: "warn" }
+  }
+  //    ⚠ DALAWANG HAKBANG PABABA ANG CAMPAIGN. Hindi sapat na may bukas na ad
+  //    set: kung ang bukas na ad set na iyon ay walang kahit isang bukas na ad,
+  //    wala pa ring lumalabas — pero "Active" ang mababasa (iniulat ng may-ari,
+  //    Ago 21 2026: 1/3 ang bukas na ad set, at ang isang iyon ay 0/3 ang ad).
+  //    `kidsLive` = bukas na ad set na may bukas na ad. Kapag wala ni isa, ang
+  //    ADS ang dahilan, hindi ang ad set — kaya "Ads off" ang sinasabi natin,
+  //    tulad ng hiling: ad set ang patay → "Ad set off"; ads ang patay → "Ads off".
+  //    -1 = hindi alam (pumalya ang hila) — huwag manghula.
+  const live = r.kidsLive ?? -1
+  if (level === "campaign" && total > 0 && on > 0 && live === 0) {
+    return { label: "Ads off", tone: "warn" }
   }
   // 5. Buhay at may naipapadala — pero nag-aaral pa ba? Ang learning ay
   //    pumapalit sa "Active" sa Ads Manager, hindi dinadagdag sa tabi nito.
@@ -1159,7 +1171,7 @@ type MgrFocus = {
   /** Bakit ka dinala rito, hal. "2nd scale · ₱1,000 → ₱1,100". Nasa banner. */
   note?: string
 }
-type MgrRow = Row & { createdTime: string; updatedTime: string; startTime: string; stopTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number; learning: { status: string; conversions: number } | null }
+type MgrRow = Row & { createdTime: string; updatedTime: string; startTime: string; stopTime: string; bidStrategy: string; campaignId: string; adsetId: string; ownBudget: number; budgetKind: string; thumbnail: string; configuredStatus: string; kidsOn: number; kidsTotal: number; kidsLive: number; learning: { status: string; conversions: number } | null }
 const fmtD = (s: string) => s ? s.slice(0, 10) : "—"
 /** Ilang araw nang umiiral ang object — 0 kung walang petsa mula kay Meta. */
 const daysOldOf = (iso: string) => {
@@ -1609,6 +1621,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
     const a = accById(r.__accId) || account
     return { ...toRow(r, a?.id || "", a?.name || "", a?.owner || ""), createdTime: r.createdTime || "", updatedTime: r.updatedTime || "", startTime: r.startTime || "", stopTime: r.stopTime || "", bidStrategy: r.bidStrategy || "", campaignId: r.campaignId || "", adsetId: r.adsetId || "", ownBudget: r.ownBudget || 0, budgetKind: r.budgetKind || "", thumbnail: r.thumbnail || "", configuredStatus: r.configuredStatus || r.status || "",
       kidsOn: typeof r.kidsOn === "number" ? r.kidsOn : -1, kidsTotal: typeof r.kidsTotal === "number" ? r.kidsTotal : -1,
+      kidsLive: typeof r.kidsLive === "number" ? r.kidsLive : -1,
       learning: r.learning && r.learning.status ? { status: String(r.learning.status), conversions: Number(r.learning.conversions || 0) } : null }
   }
   // ⚠ PAREHONG BITAG NA INAYOS SA DASHBOARD (Ago 6 2026), naiwan dito: ang
@@ -2144,6 +2157,7 @@ function AdsManager({ fb, from, to, focus, onJump }: {
                             return (
                               <span title={`Meta status: ${r.status}`
                                 + (r.kidsTotal >= 0 ? ` · ${r.kidsOn}/${r.kidsTotal} ${level === "campaign" ? "ad sets" : "ads"} on` : "")
+                                + (level === "campaign" && r.kidsLive >= 0 && r.kidsOn > 0 ? ` · ${r.kidsLive} of those ${r.kidsLive === 1 ? "has" : "have"} an ad on` : "")
                                 + (r.learning?.status === "LEARNING"
                                   ? (level === "adset"
                                     ? ` · learning: ${r.learning.conversions} of ~50 optimisation events`
