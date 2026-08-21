@@ -471,8 +471,8 @@ export default function RtsItemsPage() {
                     <p className="py-12 text-center text-slate-400 text-sm">No records in this period.</p>
                   ) : (
                     <table className="w-full text-sm">
-                      <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
-                        <tr className="text-left text-xs text-slate-500">
+                      <thead className="sticky top-0 z-20">
+                        <tr className="bg-slate-50 border-b border-slate-200 text-left text-xs text-slate-500">
                           <th className="px-4 py-2.5 font-semibold whitespace-nowrap">DATE</th>
                           <th className="px-4 py-2.5 font-semibold">TRACKING NUMBER</th>
                           <th className="px-4 py-2.5 font-semibold">CUSTOMER</th>

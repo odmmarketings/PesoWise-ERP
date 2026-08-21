@@ -1141,7 +1141,7 @@ function DailySpend({ daily, loading }: { daily: { date: string; accountName: st
         </div>
         <div className="overflow-x-auto scrollbar-dark max-h-[70vh] overflow-y-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0"><tr className="bg-slate-50 border-b border-slate-200 text-left">
+            <thead className="sticky top-0 z-20"><tr className="bg-slate-50 border-b border-slate-200 text-left">
               {["Date", "Ad Account", "Owner", "Daily Budget", "Amount Spent", "Status"].map(h => <th key={h} className="px-4 py-2.5 font-semibold text-slate-600 whitespace-nowrap">{h}</th>)}
             </tr></thead>
             <tbody>
@@ -3085,8 +3085,8 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                 <div className="py-16 text-center text-slate-400 text-sm">No automated rules yet. Create one from More → Create a new rule.</div>
               ) : (
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
-                    <tr className="text-left text-xs text-slate-500">
+                  <thead className="sticky top-0 z-20">
+                    <tr className="bg-slate-50 border-b border-slate-200 text-left text-xs text-slate-500">
                       <th className="px-4 py-2.5 font-semibold">RULE NAME</th>
                       <th className="px-4 py-2.5 font-semibold" title="The PesoWise user who last created or edited this rule">LAST TOUCHED BY</th>
                       {!currentAccountId && <th className="px-4 py-2.5 font-semibold">AD ACCOUNT</th>}

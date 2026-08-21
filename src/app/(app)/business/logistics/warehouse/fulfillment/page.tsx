@@ -1247,8 +1247,8 @@ function CogSoldModal({ rows, cogByName, parseItems, onClose }: {
             <p className="py-12 text-center text-slate-400 text-sm">No matching order items.</p>
           ) : (
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
-                <tr className="text-left text-xs text-slate-500">
+              <thead className="sticky top-0 z-20">
+                <tr className="bg-slate-50 border-b border-slate-200 text-left text-xs text-slate-500">
                   {["Order Date", "Customer", "Product", "Qty", "COG Each", "COG Total", "Delivery Status"].map(h => <th key={h} className="px-4 py-2.5 font-semibold whitespace-nowrap">{h}</th>)}
                 </tr>
               </thead>
