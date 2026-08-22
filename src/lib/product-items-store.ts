@@ -1,5 +1,5 @@
 "use client"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { fetchRows, writeRow, writeManyRows, deleteRowById } from "@/lib/supa-rows"
 
 // Product Items (Inventory) — item master. Quantities: Goods / Damage / Loss / Released;
@@ -70,11 +70,30 @@ const byNewest = (a: ProductItem, b: ProductItem) => (b.created_at || "").locale
 
 export function useProductItems() {
   const [items, setItems] = useState<ProductItem[]>([])
+  // ⚠ ANG PINAKABAGONG LISTAHAN, LABAS SA RENDER CYCLE. Ang mga mutator sa ibaba
+  // ay dating nagbabasa ng `items` mula sa closure ng render — tama iyon sa iisang
+  // pindot ng tao, pero ang Shipped Out sync ay tumatawag ng releaseStock nang
+  // SUNOD-SUNOD sa loob ng iisang loop, at bawat tawag ay nagsisimula sa PAREHONG
+  // lumang snapshot: 6 na parcel na tig-1 ang bawas ay nagtapos sa `released: 1`,
+  // hindi 6 (nangyari nang totoo, Ago 20 2026 — ang ledger ang nagsumbong). Ang
+  // ref na ito ang pinagpapatungan, kaya nagpapatong ang mga tawag sa halip na
+  // magpatungan.
+  const itemsRef = useRef<ProductItem[]>([])
+  // ⚠ Kapag may NAGBAGO habang naglalakbay ang unang fetch, ang resolusyon nito
+  // ay isang LUMANG litrato — kung papatungan nito ang ref, ang mga bawas na
+  // naipatong habang naghihintay ay bubura at ang mga susunod na upsert ay
+  // magsusulat ng lumang released pabalik sa server. Kapag nauna ang mutation,
+  // panalo ang mutation; ang fetch ay para lang sa hindi pa nagagalaw na simula.
+  const dirtyRef = useRef(false)
   useEffect(() => {
-    setItems(readCache())
-    fetchRows("product_items", normalize, readCache, writeCache).then(list => { if (list) setItems([...list].sort(byNewest)) })
+    const cached = readCache()
+    itemsRef.current = cached
+    setItems(cached)
+    fetchRows("product_items", normalize, readCache, writeCache).then(list => {
+      if (list && !dirtyRef.current) { const sorted = [...list].sort(byNewest); itemsRef.current = sorted; setItems(sorted) }
+    })
   }, [])
-  const persist = useCallback((next: ProductItem[]) => { writeCache(next); setItems(next) }, [])
+  const persist = useCallback((next: ProductItem[]) => { dirtyRef.current = true; itemsRef.current = next; writeCache(next); setItems(next) }, [])
 
   function addItem(input: NewItemInput) {
     const created = normalize({ ...input, id: uid(), created_at: new Date().toISOString() })
@@ -107,9 +126,12 @@ export function useProductItems() {
     if (row) writeRow("product_items", row)
   }
   // Stocks module: apply stock-outs (adds to each item's cumulative `released`).
+  // ⚠ Mula sa `itemsRef`, hindi sa `items`: sunod-sunod na tawag sa iisang loop
+  // (Shipped Out sync) ang karaniwang gumagamit nito, at ang closure na `items`
+  // ay pare-parehong luma sa bawat isa — ang huling tawag lang ang natitira.
   function releaseStock(deltas: { id: string; qty: number }[]) {
     const m = new Map(deltas.map(d => [d.id, d.qty]))
-    const next = items.map(i => m.has(i.id) ? { ...i, released: (i.released || 0) + (m.get(i.id) || 0) } : i)
+    const next = itemsRef.current.map(i => m.has(i.id) ? { ...i, released: (i.released || 0) + (m.get(i.id) || 0) } : i)
     persist(next)
     writeManyRows("product_items", next.filter(i => m.has(i.id)))
   }
@@ -119,7 +141,7 @@ export function useProductItems() {
     const m = new Map(deltas.map(d => [d.id, d.qty]))
     // Hindi bumababa sa zero ang released — mas marami ang naibalik kaysa umalis ay
     // ibig sabihin may mas malalim na problema, at hindi ito dapat itago sa negatibo.
-    const next = items.map(i => m.has(i.id)
+    const next = itemsRef.current.map(i => m.has(i.id)
       ? { ...i, released: Math.max(0, (i.released || 0) - (m.get(i.id) || 0)) }
       : i)
     persist(next)

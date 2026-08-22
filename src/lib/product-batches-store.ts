@@ -1,5 +1,5 @@
 "use client"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { currentUserName } from "@/lib/current-user"
 import { fetchRows, writeRow, writeManyRows } from "@/lib/supa-rows"
 
@@ -182,15 +182,26 @@ export function avgCog(batches: ProductBatch[]) {
 export function useProductBatches() {
   const [batches, setBatches] = useState<ProductBatch[]>([])
   const [loaded, setLoaded] = useState(false)
+  // ⚠ Kapareho ng releaseStock (product-items-store, Ago 20 2026): ang Shipped
+  // Out sync ay tumatawag ng consume() kada parcel sa IISANG closure — kung ang
+  // render-frozen na `batches` ang babasahin, bawat parcel ay kakain sa PAREHONG
+  // hindi pa nagagalaw na batch at ang huling sulat lang ang matitira (mali ang
+  // consumed, mali ang COGS kada parcel, mali ang RTS provenance). Ref ang
+  // binabasa at pinagpapatungan; ang huling-dumating na fetch ay hindi na
+  // pumapatong kapag may galaw na (dirtyRef), para hindi mabura ang naipaton.
+  const batchesRef = useRef<ProductBatch[]>([])
+  const dirtyRef = useRef(false)
 
   useEffect(() => {
-    setBatches(readCache())
+    const cached = readCache()
+    batchesRef.current = cached
+    setBatches(cached)
     fetchRows("product_batches", normalize, readCache, writeCache).then(list => {
-      if (list) setBatches(list)
+      if (list && !dirtyRef.current) { batchesRef.current = list; setBatches(list) }
       setLoaded(true)
     })
   }, [])
-  const persist = useCallback((next: ProductBatch[]) => { writeCache(next); setBatches(next) }, [])
+  const persist = useCallback((next: ProductBatch[]) => { dirtyRef.current = true; batchesRef.current = next; writeCache(next); setBatches(next) }, [])
 
   const byItem = useCallback((itemId: string) => batches.filter(b => b.item_id === itemId), [batches])
 
@@ -221,7 +232,7 @@ export function useProductBatches() {
     const result: { item_id: string; cogsValue: number; short: number; lines: ConsumeLine[] }[] = []
 
     for (const d of deltas) {
-      const mine = batches
+      const mine = batchesRef.current
         .filter(b => b.item_id === d.id)
         // Isinasama ang mga naunang pagbawas sa loob ng iisang tawag na ito, kung hindi
         // ay parehong batch ang kakainin ng dalawang linya ng iisang order.
@@ -237,7 +248,7 @@ export function useProductBatches() {
     }
 
     if (patch.size) {
-      const next = batches.map(b => patch.has(b.id) ? { ...b, consumed: patch.get(b.id)! } : b)
+      const next = batchesRef.current.map(b => patch.has(b.id) ? { ...b, consumed: patch.get(b.id)! } : b)
       persist(next)
       writeManyRows("product_batches", next.filter(b => patch.has(b.id)))
     }
@@ -252,7 +263,7 @@ export function useProductBatches() {
     const back = new Map<string, number>()
     for (const l of lines) back.set(l.batch_id, (back.get(l.batch_id) || 0) + l.qty)
     if (back.size === 0) return
-    const next = batches.map(b => back.has(b.id)
+    const next = batchesRef.current.map(b => back.has(b.id)
       // Hindi bumababa sa zero: ang negatibong consumed ay magpapalabas ng stock na
       // hindi naman natanggap kailanman.
       ? { ...b, consumed: Math.max(0, b.consumed - (back.get(b.id) || 0)) }

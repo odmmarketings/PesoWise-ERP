@@ -1,5 +1,5 @@
 "use client"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { fetchRows, writeRow } from "@/lib/supa-rows"
 
 // Stock release log — every STOCKS UPDATE submit is recorded here (audit trail for the
@@ -43,15 +43,26 @@ const byNewest = (a: StockRelease, b: StockRelease) => (b.date || "").localeComp
 
 export function useStockReleases() {
   const [releases, setReleases] = useState<StockRelease[]>([])
+  // ⚠ Kapareho ng releaseStock (product-items-store): ang Shipped Out sync ay
+  // tumatawag ng addRelease nang sunod-sunod sa IISANG closure, kaya ang bawat
+  // tawag ay dating nagsisimula sa parehong lumang listahan at ang huli lang ang
+  // natitira sa session cache (ang DB ay tama — kada row ang sulat). Ref ang
+  // pinagpapatungan; ang fetch ay hindi na pumapatong kapag may nagbago na.
+  const releasesRef = useRef<StockRelease[]>([])
+  const dirtyRef = useRef(false)
   useEffect(() => {
-    setReleases(readCache())
-    fetchRows("stock_releases", normalize, readCache, writeCache).then(list => { if (list) setReleases([...list].sort(byNewest)) })
+    const cached = readCache()
+    releasesRef.current = cached
+    setReleases(cached)
+    fetchRows("stock_releases", normalize, readCache, writeCache).then(list => {
+      if (list && !dirtyRef.current) { const sorted = [...list].sort(byNewest); releasesRef.current = sorted; setReleases(sorted) }
+    })
   }, [])
-  const persist = useCallback((next: StockRelease[]) => { writeCache(next); setReleases(next) }, [])
+  const persist = useCallback((next: StockRelease[]) => { dirtyRef.current = true; releasesRef.current = next; writeCache(next); setReleases(next) }, [])
 
   function addRelease(input: Omit<StockRelease, "id" | "date">) {
     const created: StockRelease = { ...input, id: uid(), date: new Date().toISOString() }
-    persist([created, ...releases])
+    persist([created, ...releasesRef.current])
     writeRow("stock_releases", created)
   }
   return { releases, addRelease }

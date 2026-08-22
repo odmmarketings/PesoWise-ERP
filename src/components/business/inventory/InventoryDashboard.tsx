@@ -3,7 +3,7 @@ import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Wallet, Boxes, Tag, AlertTriangle, TrendingDown, PackageOpen, Eye, EyeOff,
-  BarChart3, RefreshCw, ScanSearch, CheckCircle2, XCircle, Skull,
+  BarChart3, RefreshCw, ScanSearch, CheckCircle2, XCircle, Skull, History as HistoryIcon,
 } from "lucide-react"
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line,
@@ -12,6 +12,8 @@ import {
 import { itemRemaining, type ProductItem } from "@/lib/product-items-store"
 import { isMotherAccount } from "@/lib/users-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
+import { useShippedOutScans } from "@/lib/shipped-out-store"
+import { buildStockOutHistory } from "@/lib/stock-out-history"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
@@ -173,6 +175,22 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
     }
     return Array.from(m, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8)
   }, [live])
+
+  // ── STOCK-OUT HISTORY — ledger + scans na nasa memorya na; walang bagong fetch ─
+  const scanStore = useShippedOutScans()
+  const [hFrom, setHFrom] = useState(monthStart())
+  const [hTo, setHTo] = useState(dstr(new Date()))
+  // Mga balidong pangalan — dito nahuhuli pati ang HATING-tugma na parcel
+  // ("1x Lumyra, 1x Bago": bumabawas ng 1, pero ang "Bago" ay tahimik na wala).
+  const knownNames = useMemo(() => {
+    const set = new Set<string>()
+    for (const i of items) if (!i.deleted) set.add(i.name.trim().toLowerCase())
+    for (const c of unitStore.codes) if (c.code) set.add(c.code.trim().toLowerCase())
+    return set
+  }, [items, unitStore.codes])
+  const history = useMemo(
+    () => buildStockOutHistory(releases.releases, scanStore.scans, hFrom, hTo, knownNames),
+    [releases.releases, scanStore.scans, hFrom, hTo, knownNames])
 
   // ── STOCK-OUT AUDIT: manual (Stocks releases) vs Pancake shipped-out ────────
   const [audFrom, setAudFrom] = useState(monthStart())
@@ -447,6 +465,145 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
         </div>
       </div>
 
+      {/* ── STOCK-OUT HISTORY — ano ang AKTWAL na lumabas, hango sa ledger.
+          Hindi ito ang `released` na counter ng item: ang ledger ay may petsa,
+          ref at dami kada labas, at ito ang nananatiling tama kahit magkamali
+          ang counter. Ang "Awaiting Pickup" ay ang backlog na na-scan na ng
+          bodega pero hindi pa kinukuha ng rider — sa sandali ng pagkuha ng
+          rider nagiging Shipped ang POS, at doon lang bumabawas. ── */}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+              <HistoryIcon className="w-4 h-4 text-indigo-600" /> Stock-Out History
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Every unit deducted from inventory — Shipped-Out parcels (deducted the moment the rider
+              picks up and the POS flips to Shipped) plus manual Stocks releases.
+            </p>
+          </div>
+          <DateRangePicker a={hFrom} b={hTo} variant="header"
+            onApply={(a, b) => { setHFrom(a || monthStart()); setHTo(b || dstr(new Date())) }} placeholder="This month" />
+        </div>
+        <div className="p-4 space-y-3">
+          {/* ⚠ Ang dalawang peso tile ay col-span-2 sa phone: sa 375px, ang
+              "₱1,234,567.89" ay ~147px sa 20px extrabold — lampas sa ~108px na
+              tile ng 2-col grid, at ang katabing tile ang pumipinta sa ibabaw
+              (napatunayan sa sukat, hindi hula). Buong hilera = kasya lahat. */}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5">
+            <SummaryTile label="Units Deducted" value={num(history.totals.units)} tone="plain" />
+            <SummaryTile label="Parcels Shipped Out" value={num(history.totals.parcels)} tone="plain" />
+            <SummaryTile label="Parcel Amount (COD)" value={peso(history.totals.amount)} tone="plain" className="col-span-2 md:col-span-1" />
+            <SummaryTile label="COGS Value" value={peso(history.totals.cogs)} tone="plain" className="col-span-2 md:col-span-1" />
+            <SummaryTile label="Scanned — Awaiting Pickup" value={num(history.pending.length)}
+              tone={history.pending.length ? "warn" : "good"} className="col-span-2 md:col-span-1" />
+          </div>
+          {history.totals.returns > 0 && (
+            <p className="text-[11px] text-slate-400">
+              {num(history.totals.returns)} unit{history.totals.returns === 1 ? "" : "s"} came back via RTS in this
+              range — net out is {num(history.totals.units - history.totals.returns)}.
+            </p>
+          )}
+
+          {history.pending.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-xs font-semibold text-amber-800">
+                {num(history.pending.length)} parcel{history.pending.length === 1 ? "" : "s"} scanned by the
+                warehouse but not yet picked up by the rider — nothing deducted yet. Each one deducts the
+                moment the POS marks it Shipped.
+              </p>
+              <p className="text-[11px] text-amber-700 mt-1 font-mono">
+                {history.pending.slice(0, 6).map(p => p.tracking_no).join(" · ")}
+                {history.pending.length > 6 && ` · +${num(history.pending.length - 6)} more`}
+              </p>
+            </div>
+          )}
+
+          {(history.zero.count > 0 || history.zero.names.length > 0) && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+              <p className="text-xs font-semibold text-rose-800 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" /> These order names match no Product Item or Unit Code — their
+                lines deduct nothing{history.zero.count > 0 && <> ({num(history.zero.count)} parcel{history.zero.count === 1 ? "" : "s"} deducted 0 units entirely)</>}:
+              </p>
+              <p className="text-[11px] text-rose-700 mt-1">
+                {history.zero.names.slice(0, 12).map(n => `${n.name} (${num(n.qty)})`).join(" · ")}
+                {history.zero.names.length > 12 && ` · +${num(history.zero.names.length - 12)} more`}
+              </p>
+              <p className="text-[11px] text-rose-700 mt-1">
+                Fix: create a Product Item or Unit Code with the exact same name, or rename the product on Pancake POS.
+              </p>
+            </div>
+          )}
+
+          {history.products.length === 0 ? (
+            <p className="text-sm text-slate-400 italic py-4 text-center">No units were deducted in this range.</p>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[480px] text-sm border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-[11px] font-semibold uppercase tracking-wide border-b border-slate-200">
+                        <th className="px-4 py-2.5 text-left">Product</th>
+                        <th className="px-4 py-2.5 text-right">Shipped Out</th>
+                        <th className="px-4 py-2.5 text-right">Manual</th>
+                        <th className="px-4 py-2.5 text-right">Returns</th>
+                        <th className="px-4 py-2.5 text-right">Net (pcs)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {history.products.map(p => (
+                        <tr key={p.item_id} className="hover:bg-slate-50/70">
+                          <td className="px-4 py-2.5">
+                            <p className="font-semibold text-slate-800 leading-tight">{p.name || p.sku}</p>
+                            <p className="text-[11px] text-slate-400 font-mono">{p.sku}</p>
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{num(p.shipped)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{num(p.manual)}</td>
+                          <td className={`px-4 py-2.5 text-right tabular-nums ${p.returned > 0 ? "text-emerald-600 font-semibold" : "text-slate-400"}`}>{p.returned > 0 ? num(p.returned) : "—"}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums font-bold text-slate-800">{num(p.net)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-50 border-t border-slate-200 text-[13px] font-bold text-slate-700">
+                        <td className="px-4 py-2.5">Total</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{num(history.totals.shippedUnits)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{num(history.totals.manualUnits)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{history.totals.returns > 0 ? num(history.totals.returns) : "—"}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{num(history.totals.units - history.totals.returns)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <p className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Recent Stock-Outs
+                </p>
+                <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100">
+                  {history.recent.filter(r => r.units !== 0).slice(0, 15).map((r, i) => (
+                    <div key={i} className="px-4 py-2 flex items-center gap-2 text-sm">
+                      <div className="min-w-0 flex-1">
+                        <p className="leading-tight truncate">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${r.isReturn ? "bg-emerald-50 text-emerald-700" : r.category === "Shipped Out" ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-600"}`}>{r.category}</span>{" "}
+                          <span className="font-mono text-[11px] text-slate-500">{r.ref}</span>
+                        </p>
+                        <p className="text-[11px] text-slate-400 truncate">{r.summary || "—"} · {fmtHistDT(r.date)}</p>
+                      </div>
+                      <span className={`tabular-nums font-bold whitespace-nowrap ${r.isReturn ? "text-emerald-600" : "text-slate-800"}`}>
+                        {r.isReturn ? `+${num(-r.units)} back` : `${num(r.units)} pcs`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* ── STOCK-OUT AUDIT ── */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
@@ -569,17 +726,21 @@ function ChartBox({ title, subtitle, children }: { title: string; subtitle?: str
     </div>
   )
 }
+const fmtHistDT = (iso: string) => {
+  const t = new Date(iso)
+  return isNaN(t.getTime()) ? "—" : t.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
 const Empty = ({ label = "No data yet." }: { label?: string }) => (
   <div className="h-[220px] flex items-center justify-center text-sm text-slate-400 italic">{label}</div>
 )
 
-function SummaryTile({ label, value, tone }: { label: string; value: string; tone: "good" | "warn" | "bad" | "plain" }) {
+function SummaryTile({ label, value, tone, className = "" }: { label: string; value: string; tone: "good" | "warn" | "bad" | "plain"; className?: string }) {
   const cls = tone === "good" ? "bg-emerald-50 border-emerald-200 text-emerald-700"
     : tone === "bad" ? "bg-rose-50 border-rose-200 text-rose-700"
     : tone === "warn" ? "bg-amber-50 border-amber-200 text-amber-700"
     : "bg-slate-50 border-slate-200 text-slate-700"
   return (
-    <div className={`rounded-xl border px-4 py-3 ${cls}`}>
+    <div className={`rounded-xl border px-4 py-3 ${cls} ${className}`}>
       <p className="text-xl font-extrabold tabular-nums leading-none">{value}</p>
       <p className="text-[10px] font-semibold uppercase tracking-wider mt-1 opacity-80">{label}</p>
     </div>

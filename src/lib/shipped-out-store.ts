@@ -88,16 +88,20 @@ export function useShippedOutScans() {
     const businessId = await getBusinessId()
     if (!businessId) { setLoaded(true); return }
     const supabase = createSupabaseBrowserClient()
-    const out: ShippedScan[] = []
+    // ⚠ Map sa id, hindi array: offset pagination ito, at ang insert na dumating
+    // sa PAGITAN ng dalawang pahina ay nagtutulak ng mga row pababa — ang dulo ng
+    // pahina 1 ay lumilitaw ulit sa umpisa ng pahina 2. Ang dobleng row ay
+    // dobleng pera sa kahit anong nagsusuma ng scans (Stock-Out History).
+    const byId = new Map<string, ShippedScan>()
     const PAGE = 1000
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabase.from("shipped_out_scans").select("*")
-        .eq("business_id", businessId).order("created_at", { ascending: false }).range(from, from + PAGE - 1)
+        .eq("business_id", businessId).order("created_at", { ascending: false }).order("id").range(from, from + PAGE - 1)
       if (error || !data) break
-      out.push(...data.map(rowTo))
+      for (const r of data) { const row = rowTo(r); if (!byId.has(row.id)) byId.set(row.id, row) }
       if (data.length < PAGE) break
     }
-    setScans(out)
+    setScans(Array.from(byId.values()))
     setLoaded(true)
   }, [])
   useEffect(() => { refresh() }, [refresh])
