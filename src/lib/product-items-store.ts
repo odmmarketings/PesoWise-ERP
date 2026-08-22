@@ -1,6 +1,6 @@
 "use client"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { fetchRows, writeRow, writeManyRows, deleteRowById } from "@/lib/supa-rows"
+import { applyCounterDeltas, fetchRows, writeRow, writeManyRows, deleteRowById } from "@/lib/supa-rows"
 
 // Product Items (Inventory) — item master. Quantities: Goods / Damage / Loss / Released;
 // Remaining = Goods − Damage − Loss − Released. "Released" accumulates stock-outs from the
@@ -70,6 +70,10 @@ const byNewest = (a: ProductItem, b: ProductItem) => (b.created_at || "").locale
 
 export function useProductItems() {
   const [items, setItems] = useState<ProductItem[]>([])
+  // `loaded` = tapos na ang unang hila sa server (tagumpay man o hindi). Ang
+  // sync ng Shipped Out ay HINDI dapat magbawas bago ito — ang mga resipe mula
+  // sa lumang cache ay pumipili ng maling item.
+  const [loaded, setLoaded] = useState(false)
   // ⚠ ANG PINAKABAGONG LISTAHAN, LABAS SA RENDER CYCLE. Ang mga mutator sa ibaba
   // ay dating nagbabasa ng `items` mula sa closure ng render — tama iyon sa iisang
   // pindot ng tao, pero ang Shipped Out sync ay tumatawag ng releaseStock nang
@@ -91,6 +95,7 @@ export function useProductItems() {
     setItems(cached)
     fetchRows("product_items", normalize, readCache, writeCache).then(list => {
       if (list && !dirtyRef.current) { const sorted = [...list].sort(byNewest); itemsRef.current = sorted; setItems(sorted) }
+      setLoaded(true)
     })
   }, [])
   const persist = useCallback((next: ProductItem[]) => { dirtyRef.current = true; itemsRef.current = next; writeCache(next); setItems(next) }, [])
@@ -133,7 +138,12 @@ export function useProductItems() {
     const m = new Map(deltas.map(d => [d.id, d.qty]))
     const next = itemsRef.current.map(i => m.has(i.id) ? { ...i, released: (i.released || 0) + (m.get(i.id) || 0) } : i)
     persist(next)
-    writeManyRows("product_items", next.filter(i => m.has(i.id)))
+    // ⚠ DELTA, hindi buong row. Ang absolute na upsert ay nagpapatungan sa
+    // pagitan ng mga device (parehong nagbasa ng 100 → 101 at 102, nawala ang
+    // isa) at dinadala pati ang LUMANG goods/name ng snapshot na ito pabalik
+    // sa server. Ang server na mismo ang nagdadagdag (RPC 0033, may fallback).
+    return applyCounterDeltas("product_items", "released", "apply_item_releases",
+      deltas.map(d => ({ id: d.id, delta: d.qty })))
   }
 
   /** Pagbabalik ng nagbalik na parcel — binabawasan ang `released` kaya tumataas ang Remaining. */
@@ -145,10 +155,13 @@ export function useProductItems() {
       ? { ...i, released: Math.max(0, (i.released || 0) - (m.get(i.id) || 0)) }
       : i)
     persist(next)
-    writeManyRows("product_items", next.filter(i => m.has(i.id)))
+    // Kapareho ng releaseStock: delta pababa, ang server ang nagbabawas at
+    // hindi lumulusot sa zero (greatest(0, …) sa RPC at sa fallback).
+    return applyCounterDeltas("product_items", "released", "apply_item_releases",
+      deltas.map(d => ({ id: d.id, delta: -d.qty })))
   }
 
   // Usable items (for pickers): active, not deleted, not archived.
   const activeItems = items.filter(i => i.status === "Active" && !i.deleted && !i.archived)
-  return { items, activeItems, addItem, addMany, updateItem, softDelete, restoreItem, hardDelete, setArchived, releaseStock, restockStock }
+  return { items, loaded, activeItems, addItem, addMany, updateItem, softDelete, restoreItem, hardDelete, setArchived, releaseStock, restockStock }
 }

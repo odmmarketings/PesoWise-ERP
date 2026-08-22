@@ -10,6 +10,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
 import { itemRemaining, type ProductItem } from "@/lib/product-items-store"
+import { buildRecipes, parseOrderItems } from "@/lib/shipped-out-sync"
 import { isMotherAccount } from "@/lib/users-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
@@ -53,11 +54,6 @@ async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
 }
 
-// "2x Lumyra, 1x Iba" → [{qty, name}] — kapareho ng Fulfillment parser.
-const parseItems = (orderItem: string) => String(orderItem || "").split(",").map(s => s.trim()).filter(Boolean).map(seg => {
-  const m = seg.match(/^(\d+)\s*x\s*(.+)$/i)
-  return m ? { qty: Number(m[1]) || 1, name: m[2].trim() } : { qty: 1, name: seg }
-})
 
 type AuditRow = { item: ProductItem; expected: number; manual: number }
 type AuditResult = {
@@ -187,7 +183,9 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
   // ("1x Lumyra, 1x Bago": bumabawas ng 1, pero ang "Bago" ay tahimik na wala).
   const knownNames = useMemo(() => {
     const set = new Set<string>()
-    for (const i of items) if (!i.deleted) set.add(i.name.trim().toLowerCase())
+    // Hindi kasama ang archived: kung puro archived ang may hawak ng pangalan,
+    // hindi talaga bumabawas ang parcel — dapat itong LUMITAW sa unmatched.
+    for (const i of items) if (!i.deleted && !i.archived) set.add(i.name.trim().toLowerCase())
     for (const c of unitStore.codes) if (c.code) set.add(c.code.trim().toLowerCase())
     return set
   }, [items, unitStore.codes])
@@ -201,22 +199,12 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
   const [auditing, setAuditing] = useState(false)
   const [audit, setAudit] = useState<AuditResult | null>(null)
 
-  // Order name → mga product item components. Unang plain items (sarili nila, qty 1),
-  // tapos unit codes (bundle recipes) — kapareho ng Fulfillment COG mapping.
-  const recipeByName = useMemo(() => {
-    const alive = items.filter(i => !i.deleted)
-    const byName = new Map(alive.map(i => [i.name.toLowerCase(), i]))
-    const m = new Map<string, { itemId: string; qty: number }[]>()
-    for (const i of alive) if (!m.has(i.name.toLowerCase())) m.set(i.name.toLowerCase(), [{ itemId: i.id, qty: 1 }])
-    for (const c of unitStore.codes) {
-      if (!c.code) continue
-      const comps = c.items
-        .map(r => ({ itemId: byName.get(r.name.toLowerCase())?.id || "", qty: r.qty || 1 }))
-        .filter(x => x.itemId)
-      if (comps.length) m.set(c.code.toLowerCase(), comps)
-    }
-    return m
-  }, [items, unitStore.codes])
+  // Order name → mga product item components — ANG IISANG buildRecipes ng
+  // shipped-out-sync, hindi sariling kopya: doon nakatira ang pagpili sa tamang
+  // row kapag doble ang pangalan (archived vs totoo) at ang buo-o-wala na
+  // bundle. Kapag naghiwalay ang kopya, magkaiba ang bibilangin ng audit at
+  // ang talagang binabawas ng sync — at tahimik iyon.
+  const recipeByName = useMemo(() => buildRecipes(items, unitStore.codes), [items, unitStore.codes])
 
   async function runAudit() {
     setAuditing(true)
@@ -232,7 +220,7 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
         const rows = await fetchShippedRows(p.api_key, p.pancake_page_id || p.shop_id, from, to)
         for (const r of rows) {
           orders++
-          for (const li of parseItems(r.order_item)) {
+          for (const li of parseOrderItems(r.order_lines || r.order_item)) {
             const recipe = recipeByName.get(li.name.toLowerCase())
             if (!recipe) { unmapped.set(li.name, (unmapped.get(li.name) || 0) + li.qty); continue }
             for (const c of recipe) expected.set(c.itemId, (expected.get(c.itemId) || 0) + li.qty * c.qty)

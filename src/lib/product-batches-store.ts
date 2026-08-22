@@ -1,7 +1,7 @@
 "use client"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { currentUserName } from "@/lib/current-user"
-import { fetchRows, writeRow, writeManyRows } from "@/lib/supa-rows"
+import { applyCounterDeltas, fetchRows, writeRow, writeManyRows } from "@/lib/supa-rows"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // PRODUCT BATCHES — FIFO cost layering.
@@ -250,7 +250,14 @@ export function useProductBatches() {
     if (patch.size) {
       const next = batchesRef.current.map(b => patch.has(b.id) ? { ...b, consumed: patch.get(b.id)! } : b)
       persist(next)
-      writeManyRows("product_batches", next.filter(b => patch.has(b.id)))
+      // ⚠ DELTA, hindi absolute — ang dami ng bawat linya ng plano ang eksaktong
+      // idinagdag sa batch, kaya iyon mismo ang ipinapadala. Dalawang device na
+      // sabay na kumakain sa iisang batch ay nagpapatong na ngayon sa server sa
+      // halip na magpatungan.
+      const deltas = new Map<string, number>()
+      for (const r of result) for (const l of r.lines) deltas.set(l.batch_id, (deltas.get(l.batch_id) || 0) + l.qty)
+      void applyCounterDeltas("product_batches", "consumed", "apply_batch_consumed",
+        Array.from(deltas, ([id, delta]) => ({ id, delta })))
     }
     return result
   }
@@ -269,7 +276,8 @@ export function useProductBatches() {
       ? { ...b, consumed: Math.max(0, b.consumed - (back.get(b.id) || 0)) }
       : b)
     persist(next)
-    writeManyRows("product_batches", next.filter(b => back.has(b.id)))
+    void applyCounterDeltas("product_batches", "consumed", "apply_batch_consumed",
+      Array.from(back, ([id, qty]) => ({ id, delta: -qty })))
   }
 
   /**

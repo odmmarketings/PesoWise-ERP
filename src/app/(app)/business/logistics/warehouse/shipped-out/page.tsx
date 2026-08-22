@@ -216,7 +216,12 @@ export default function ShippedOutPage() {
   const [loading, setLoading] = useState(false)
   const [loadErr, setLoadErr] = useState("")
   const win = useMemo(() => ({
-    from: winA || monthStart(),
+    // ⚠ HINDI puwedeng monthStart lang. Ang window ay `inserted_at` (petsa ng
+    // paggawa ng ORDER), kaya ang order na ginawa Ago 28 na kukunin ng rider sa
+    // Set 2 ay WALA sa "Set 1..ngayon" — hindi makikita ng sync kailanman at
+    // hindi mababawas kailanman. Umaabot ang default ng 14 araw pabalik kahit
+    // lumagpas ang buwan; ang guhit ng reset ang pumipigil sa sobrang luma.
+    from: winA || (() => { const b = dstr(new Date(Date.now() - 14 * 86400000)); const m = monthStart(); return b < m ? b : m })(),
     to: winB || dstr(new Date()),
   }), [winA, winB])
   const pagesKey = pagesWithCreds.map(p => `${p.api_key}~${p.pancake_page_id || p.shop_id}~${p.name}`).join("|")
@@ -289,7 +294,14 @@ export default function ShippedOutPage() {
   /** Ang NAG-IISANG lugar kung saan bumababa ang inventory. Tumatakbo lang kapag
    *  nanalo tayo sa claim — hindi kailanman kapag "already". */
   async function applyDeduction(row: any, code: string) {
-    const { items, total } = explodeOrderItems(String(row.order_item || ""), recipeByName)
+    const { items, total } = explodeOrderItems(row.order_lines || String(row.order_item || ""), recipeByName)
+    // ⚠ HUWAG ANGKININ ANG WALANG MAI-BABAWAS. Ang device na walang laman o
+    // luma ang cache ng resipe ay dating nag-a-angkin ng parcel na may
+    // items: [] at total: 0 — tuluyang nakakandado ang parcel sa "bawas na"
+    // nang WALANG nabawas, at hindi na ito maaabot ng device na tama ang
+    // resipe. Iniiwan itong hindi claimed: sa sandaling magkaroon ng tamang
+    // Product Item o Unit Code, ang susunod na takbo ang babawas nang totoo.
+    if (items.length === 0) return "unmapped"
     const res = await store.claimDeduction(parcelInfo(row, code), items, total)
     if (res !== "claimed") return res            // "already" o error — walang binabawas
     if (items.length) {
@@ -305,6 +317,8 @@ export default function ShippedOutPage() {
         used.reduce((s, u) => s + u.cogsValue, 0),
         used.reduce((s, u) => s + u.short, 0))
       releases.addRelease({
+        // Idempotent na id — ang parehong parcel ay iisang ledger row magpakailanman.
+        id: "rel_shp_" + code.toLowerCase(),
         category: "Shipped Out", ref: code,
         items: items.map(i => ({ item_id: i.item_id, sku: i.sku, name: i.name, required: 1, release: i.deducted, deducted: i.deducted })),
       })
@@ -318,10 +332,16 @@ export default function ShippedOutPage() {
   // Ligtas ulit-ulitin: ang claim gate sa DB ang huling nagpapasya, hindi ito.
   const [syncing, setSyncing] = useState(false)
   const [syncedCount, setSyncedCount] = useState(0)
+  const [syncTick, setSyncTick] = useState(0)
   const syncBusy = useRef(false)
 
   useEffect(() => {
-    if (syncBusy.current || !store.loaded || loading || rows.length === 0) return
+    // ⚠ HINTAYIN ANG SERVER BAGO MAGBAWAS. Ang mga resipe ay galing sa
+    // product items at unit codes — kapag ang Pancake rows ang naunang dumating
+    // sa mga hila ng Supabase, lumang cache ang batayan ng bawas (maling item,
+    // maling batch). Ang `loaded` ng bawat store ay totoo lang pagkatapos ng
+    // unang hila.
+    if (syncBusy.current || !store.loaded || !products.loaded || !batches.loaded || loading || rows.length === 0) return
     const done = new Set(store.scans.filter(s => s.deducted).map(s => s.tracking_no.toLowerCase()))
     const pending = rows.filter(r => isDeductable(r) && !done.has(String(r.tracking_no).trim().toLowerCase()))
     if (pending.length === 0) return
@@ -337,9 +357,13 @@ export default function ShippedOutPage() {
       if (n > 0) { setSyncedCount(c => c + n); await store.refresh() }
       setSyncing(false)
       syncBusy.current = false
+      // Kung may rows na dumating habang tumatakbo ito, ang effect ay hindi na
+      // babalik mag-isa (busy noon) — ang tick ang nagpapabalik ng pagsusuri.
+      // Hindi ito umiikot: kapag walang pending, walang takbo at walang tick.
+      setSyncTick(t => t + 1)
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, store.loaded, loading])
+  }, [rows, store.loaded, products.loaded, batches.loaded, loading, syncTick])
 
   // ── Scan handling ────────────────────────────────────────────────────────────
   const [manual, setManual] = useState("")
@@ -366,9 +390,26 @@ export default function ShippedOutPage() {
 
     const key = code.toLowerCase()
     const existing = store.scans.find(s => s.tracking_no.toLowerCase() === key)
-    if (existing) {
+    // ⚠ "ALREADY SCANNED" lang kapag may MANUAL na tatak na. Ang row na gawa ng
+    // Pancake sync (nauna ang rider sa warehouse scan) ay walang manual na
+    // tatak — dating tinatanggihan ito rito kaya HINDI naitatala ang scan ng
+    // warehouse kailanman, at laging mali ang manual-vs-auto na paghahambing.
+    if (existing && existing.manual_scanned_at) {
       beep("error")
-      showBanner({ kind: "err", title: "ALREADY SCANNED", sub: `${code} — na-scan na noong ${fmtDT(existing.created_at)}${existing.scanned_by ? ` · ${existing.scanned_by}` : ""}` })
+      showBanner({ kind: "err", title: "ALREADY SCANNED", sub: `${code} — na-scan na noong ${fmtDT(existing.manual_scanned_at)}${existing.manual_scanned_by || existing.scanned_by ? ` · ${existing.manual_scanned_by || existing.scanned_by}` : ""}` })
+      return
+    }
+    if (existing) {
+      // Nauna ang Pancake — itatak ang manual sa row na buo na ang datos.
+      setBusy(true)
+      await store.markManualScan({
+        tracking_no: existing.tracking_no, courier: existing.courier, page_name: existing.page_name,
+        order_id: existing.order_id, customer: existing.customer, order_item: existing.order_item,
+        amount: existing.amount, date: existing.date,
+      })
+      setBusy(false)
+      beep("ok")
+      showBanner({ kind: "ok", title: existing.deducted ? "SCANNED ✓ · BAWAS NA" : "SCANNED ✓ · HINDI PA BAWAS", sub: `${code} — naitala ang scan ng warehouse (nauna ang Pancake).` })
       return
     }
     const row = byTracking.get(key)
@@ -381,7 +422,7 @@ export default function ShippedOutPage() {
     // Ang manual scan ay TALAAN ng warehouse — hindi ito bumabawas ng inventory.
     // Ang Pancake shipped ang bumabawas, kaya iisa lang ang pinagmumulan ng bawas.
     // Binubuklat pa rin ang resipe para maipakita AGAD kung may hindi magkakatugma.
-    const { items } = explodeOrderItems(String(row.order_item || ""), recipeByName)
+    const { items } = explodeOrderItems(row.order_lines || String(row.order_item || ""), recipeByName)
 
     // May item bang kailangan ng pili (dalawang presyo ang may laman) na wala pang
     // balidong sagot ngayong sesyon? Itigil ang scan at itanong MUNA — hindi
@@ -403,7 +444,7 @@ export default function ShippedOutPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pancake row, kapareho ng handleScan
   async function recordScan(row: any, code: string, picks: Record<string, string>) {
     const key = code.toLowerCase()
-    const { items, unmapped } = explodeOrderItems(String(row.order_item || ""), recipeByName)
+    const { items, unmapped } = explodeOrderItems(row.order_lines || String(row.order_item || ""), recipeByName)
     const parcelPicks: Record<string, string> = {}
     for (const i of items) if (validPickOf(i.item_id, picks)) parcelPicks[i.item_id] = picks[i.item_id]
 

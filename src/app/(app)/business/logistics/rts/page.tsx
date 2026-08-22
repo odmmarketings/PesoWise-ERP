@@ -229,6 +229,8 @@ export default function RtsItemsPage() {
     const deltas = Array.from(perItem, ([id, qty]) => ({ id, qty }))
     productStore.restockStock(deltas)
     releaseLog.addRelease({
+      // Idempotent na id — ang parehong pagbabalik ay iisang ledger row.
+      id: "rel_rts_" + String(tracking).toLowerCase(),
       category: "RTS Restock", ref: tracking,
       items: deltas.map(d => {
         const it = productStore.items.find(x => x.id === d.id)

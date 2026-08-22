@@ -22,30 +22,59 @@ export type RecipeMap = Map<string, RecipeComponent[]>
  */
 export function buildRecipes(items: ProductItem[], codes: UnitCode[]): RecipeMap {
   const alive = items.filter(i => !i.deleted)
-  const byName = new Map(alive.map(i => [i.name.toLowerCase(), i]))
-  const m: RecipeMap = new Map()
+  // ⚠ MAY DOBLENG PANGALAN SA TOTOONG DATOS (Ago 22 2026: "Educational Flash
+  // Card" = 3 buhay na row — 2 archived na walang stock + 1 totoo). Ang dating
+  // `new Map(alive.map(...))` ay ANG HULI ANG PANALO, at doon tumama ang
+  // archived na walang laman: ang bundle ay babawas sa patay na row habang
+  // buo ang totoong stock. Ang pagpili ay sadyang pinapanigan ang item na
+  // tunay na binebenta — hindi archived, Active, may natitirang stock — at
+  // ang pinakabago kapag tabla. Ang TRIM ay pareho ring kasama: ang pangalang
+  // may espasyo sa dulo ay hindi dapat mag-iba ng item.
+  const remaining = (i: ProductItem) => i.goods - i.damage - i.loss - (i.released || 0)
+  const score = (i: ProductItem) => (i.archived ? 0 : 8) + (i.status === "Active" ? 4 : 0) + (remaining(i) > 0 ? 2 : 0)
+  const best = new Map<string, ProductItem>()
   for (const i of alive) {
-    const k = i.name.toLowerCase()
-    if (!m.has(k)) m.set(k, [{ itemId: i.id, sku: i.sku, name: i.name, qty: 1 }])
+    const k = i.name.trim().toLowerCase()
+    if (!k) continue
+    const prev = best.get(k)
+    if (!prev || score(i) > score(prev) || (score(i) === score(prev) && (i.created_at || "") > (prev.created_at || ""))) best.set(k, i)
   }
+  const m: RecipeMap = new Map()
+  for (const [k, i] of best) m.set(k, [{ itemId: i.id, sku: i.sku, name: i.name, qty: 1 }])
   for (const c of codes) {
     if (!c.code) continue
-    const comps = c.items
-      .map(r => {
-        const it = byName.get(r.name.toLowerCase())
-        return it ? { itemId: it.id, sku: it.sku, name: it.name, qty: r.qty || 1 } : null
-      })
-      .filter(Boolean) as RecipeComponent[]
-    if (comps.length) m.set(c.code.toLowerCase(), comps)
+    // ⚠ BUO O WALA. Ang bundle na may nawawalang sangkap ay HINDI mina-map nang
+    // kalahati: ang "1x A + 1x B" na hindi mahanap si B ay babawas lang kay A
+    // nang tahimik — mas mabuti ang 0 na kitang-kita sa unmatched banner kaysa
+    // kulang na bawas na walang nakakapansin.
+    const comps = c.items.map(r => {
+      const it = best.get(String(r.name || "").trim().toLowerCase())
+      return it ? { itemId: it.id, sku: it.sku, name: it.name, qty: r.qty || 1 } : null
+    })
+    if (comps.length && comps.every(Boolean)) m.set(c.code.trim().toLowerCase(), comps as RecipeComponent[])
   }
   return m
 }
 
-/** "2x Lumyra, 1x LUM2X" → [{qty:2,name:"Lumyra"}, {qty:1,name:"LUM2X"}] */
-export function parseOrderItems(orderItem: string) {
+/**
+ * "2x Lumyra, 1x LUM2X" → [{qty:2,name:"Lumyra"}, {qty:1,name:"LUM2X"}] — O ang
+ * STRUCTURED na `order_lines` ng row, kapag meron. ⚠ Ang teksto ay pinagdugtong
+ * ng ", " galing sa Pancake, kaya ang produktong may comma sa PANGALAN
+ * ("Lumyra Set, 2 Boxes") ay nahahati pabalik sa dalawang maling linya — ang
+ * array ang buo ang hugis at iyon ang unahin ng tumatawag kapag hawak.
+ * ⚠ Ang "0x Lumyra" ay ZERO — hindi 1: ang linyang zinero ng staff ay hindi
+ * naibenta, at ang `|| 1` dito noon ay nagbabawas ng isang pirasong hindi
+ * lumabas kailanman.
+ */
+export function parseOrderItems(orderItem: string | { qty: number; name: string }[]) {
+  if (Array.isArray(orderItem)) {
+    return orderItem
+      .map(l => ({ qty: Math.max(0, Number(l?.qty) || 0), name: String(l?.name || "").trim() }))
+      .filter(l => l.name)
+  }
   return String(orderItem || "").split(",").map(s => s.trim()).filter(Boolean).map(seg => {
     const m = seg.match(/^(\d+)\s*x\s*(.+)$/i)
-    return m ? { qty: Number(m[1]) || 1, name: m[2].trim() } : { qty: 1, name: seg }
+    return m ? { qty: Math.max(0, Number(m[1])), name: m[2].trim() } : { qty: 1, name: seg }
   })
 }
 
@@ -54,10 +83,11 @@ export function parseOrderItems(orderItem: string) {
  * Ang `unmapped` ay ang mga pangalang walang katugmang unit code o product item —
  * ipinapakita ito sa UI dahil ibig sabihin nito ay may hindi nababawasan.
  */
-export function explodeOrderItems(orderItem: string, recipes: RecipeMap) {
+export function explodeOrderItems(orderItem: string | { qty: number; name: string }[], recipes: RecipeMap) {
   const perItem = new Map<string, ShippedScanItem>()
   const unmapped: string[] = []
   for (const li of parseOrderItems(orderItem)) {
+    if (li.qty <= 0) continue   // zinerong linya — walang naibenta, walang babawasin
     const recipe = recipes.get(li.name.toLowerCase())
     if (!recipe) { unmapped.push(li.name); continue }
     for (const c of recipe) {

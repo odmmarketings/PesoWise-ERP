@@ -60,9 +60,12 @@ export function useStockReleases() {
   }, [])
   const persist = useCallback((next: StockRelease[]) => { dirtyRef.current = true; releasesRef.current = next; writeCache(next); setReleases(next) }, [])
 
-  function addRelease(input: Omit<StockRelease, "id" | "date">) {
-    const created: StockRelease = { ...input, id: uid(), date: new Date().toISOString() }
-    persist([created, ...releasesRef.current])
+  // Ang tumatawag ay maaaring magbigay ng SARILING id (hal. "rel_shp_" +
+  // tracking): dahil upsert-sa-id ang sulat, ang pag-ulit ng parehong bawas
+  // ay HINDI na nagdodoble ng ledger row — ligtas nang ulitin balang araw.
+  function addRelease(input: Omit<StockRelease, "id" | "date"> & { id?: string }) {
+    const created: StockRelease = { ...input, id: input.id || uid(), date: new Date().toISOString() }
+    persist([created, ...releasesRef.current.filter(r => r.id !== created.id)])
     writeRow("stock_releases", created)
   }
   return { releases, addRelease }

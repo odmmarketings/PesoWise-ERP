@@ -122,6 +122,21 @@ export function buildStockOutHistory(
     }
   }
 
+  // Ang mga hindi pa bawas na scan ay MAY pangalan na ring masusuri: mula nang
+  // hindi na inaangkin ng sync ang walang katugma, ang ganap na hindi tumutugmang
+  // parcel ay nananatiling hindi deducted — kung ang mga deducted lang ang
+  // titingnan, mawawala sila sa banner at walang gagawa ng itatamang item/code.
+  if (knownNames) {
+    for (const s of scans) {
+      if (s.deducted || !s.manual_scanned_at || day10(s.manual_scanned_at) < cutoff) continue
+      for (const li of parseOrderItems(s.order_item)) {
+        if (knownNames.has(String(li.name || "").trim().toLowerCase())) continue
+        const k = visibleName(li.name)
+        badNames.set(k, (badNames.get(k) || 0) + (Number(li.qty) || 1))
+      }
+    }
+  }
+
   // ── Na-scan na, hindi pa bawas — anumang petsa: backlog ito, hindi history ─
   const pending = scans
     .filter(s => s.manual_scanned_at && !s.deducted && day10(s.manual_scanned_at) >= cutoff)

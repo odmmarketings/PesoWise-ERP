@@ -204,6 +204,13 @@ function mapOrderRow(o: any) {
   const orderItem = items
     .map(it => `${it?.quantity || 0}x ${it?.variation_info?.name ?? it?.product_name ?? "item"}`)
     .join(", ")
+  // ⚠ Ang orderItem ay TEKSTONG pinagdugtong ng ", " — ang pangalang may comma
+  // ay nahahati pabalik sa parser at MALING item ang mababawasan. Ito ang buo
+  // ang hugis; ito ang binabasa ng Shipped Out deduction kapag hawak.
+  const orderLines = items.map(it => ({
+    qty: Number(it?.quantity || 0),
+    name: String(it?.variation_info?.name ?? it?.product_name ?? "").trim(),
+  }))
   // Parcel Qty = number of DIFFERENT products in the order (distinct product names), not total units.
   const distinctProducts = new Set(
     items.map(it => String(it?.variation_info?.name ?? it?.product_name ?? "").trim().toLowerCase()).filter(Boolean)
@@ -297,6 +304,7 @@ function mapOrderRow(o: any) {
     courier: String(partner?.partner_name || partner?.name || "").trim(),
     parcel_status: parcelStatus,            // courier/shipping status
     order_status: o?.status_name || "",     // order process status (New, Confirmed, Shipped, …)
+    order_lines: orderLines,
     encoded_date: toPHDate(inserted),
     shipped_out_date: toPHDate(shippedOut),
     date_added: toPHDate(inserted),

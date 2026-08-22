@@ -57,6 +57,34 @@ export function writeManyRows(table: string, rows: { id: string }[]) {
   })()
 }
 
+/**
+ * DELTA sa isang numerong hanay — HINDI absolute na upsert. Ang absolute na
+ * sulat mula sa kliyente ay nagpapatungan sa pagitan ng mga device (parehong
+ * nagbasa ng 100, nagsulat ng 101 at 102 — nawala ang isang bawas) at kayang
+ * i-urong ng lumang cache ang server. Dito ang SERVER ang nagdadagdag:
+ *   1. RPC (migration 0033) — atomic, ito ang tunay na ayos.
+ *   2. Kapag wala pa ang function: basahin ang kasalukuyang halaga sa server
+ *      at isulat LANG ang hanay na iyon — makitid ang bintana (isang round
+ *      trip) at hindi na nadadala ang buong lumang row.
+ * Hindi bumababa sa zero — kapareho ng dating asal ng restock.
+ */
+export async function applyCounterDeltas(
+  table: string, column: string, rpcName: string,
+  deltas: { id: string; delta: number }[],
+): Promise<void> {
+  const real = deltas.filter(d => d.delta !== 0)
+  if (real.length === 0) return
+  const supabase = createSupabaseBrowserClient()
+  const { error } = await supabase.rpc(rpcName, { deltas: real })
+  if (!error) return
+  for (const d of real) {
+    const { data } = await supabase.from(table).select(column).eq("id", d.id).maybeSingle()
+    if (!data) continue
+    const cur = Number((data as unknown as Record<string, unknown>)[column]) || 0
+    await supabase.from(table).update({ [column]: Math.max(0, cur + d.delta) }).eq("id", d.id)
+  }
+}
+
 export function deleteRowById(table: string, id: string) {
   void (async () => {
     const supabase = createSupabaseBrowserClient()
