@@ -14,6 +14,7 @@ import { isMotherAccount } from "@/lib/users-store"
 import { useStockReleases } from "@/lib/stock-releases-store"
 import { useShippedOutScans } from "@/lib/shipped-out-store"
 import { buildStockOutHistory } from "@/lib/stock-out-history"
+import { STOCK_OUT_FROM } from "@/lib/shipped-out-sync"
 import { useUnitCodes } from "@/lib/unit-codes-store"
 import { useActivePages } from "@/lib/pages-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
@@ -178,7 +179,9 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
 
   // ── STOCK-OUT HISTORY — ledger + scans na nasa memorya na; walang bagong fetch ─
   const scanStore = useShippedOutScans()
-  const [hFrom, setHFrom] = useState(monthStart())
+  // Hindi bumababa sa guhit ng reset ang simula — ang builder mismo ang huling
+  // pader, pero ang picker ay dapat magsabi ng totoo tungkol sa ipinapakita.
+  const [hFrom, setHFrom] = useState(() => { const m = monthStart(); return m > STOCK_OUT_FROM ? m : STOCK_OUT_FROM })
   const [hTo, setHTo] = useState(dstr(new Date()))
   // Mga balidong pangalan — dito nahuhuli pati ang HATING-tugma na parcel
   // ("1x Lumyra, 1x Bago": bumabawas ng 1, pero ang "Bago" ay tahimik na wala).
@@ -479,7 +482,8 @@ export function InventoryDashboard({ items }: { items: ProductItem[] }) {
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
               Every unit deducted from inventory — Shipped-Out parcels (deducted the moment the rider
-              picks up and the POS flips to Shipped) plus manual Stocks releases.
+              picks up and the POS flips to Shipped) plus manual Stocks releases. History starts at the
+              inventory reset ({STOCK_OUT_FROM}); older parcels are already inside the reset count.
             </p>
           </div>
           <DateRangePicker a={hFrom} b={hTo} variant="header"

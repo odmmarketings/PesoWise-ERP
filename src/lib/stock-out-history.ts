@@ -14,7 +14,7 @@
 //
 // Relative ang import na ito (hindi "@/lib") NANG SINASADYA: pinapayagan nitong
 // i-compile ng tsc ang file na mag-isa para sa Node test suite.
-import { parseOrderItems } from "./shipped-out-sync"
+import { parseOrderItems, STOCK_OUT_FROM } from "./shipped-out-sync"
 import type { StockRelease } from "@/lib/stock-releases-store"
 import type { ShippedScan } from "@/lib/shipped-out-store"
 
@@ -62,7 +62,13 @@ export function buildStockOutHistory(
    *  ibinigay, ang bawat linya ng bawat nabawasang parcel ay sinusuri — hindi
    *  lang ang mga parcel na 0 ang kabuuang bawas. */
   knownNames?: Set<string>,
+  /** Ang guhit ng reset — walang binibilang bago rito (kahit anong piliin sa
+   *  date picker). Default ang STOCK_OUT_FROM; ang mga test ang nagpapasa ng
+   *  mas maagang guhit para masubok ang mekanika nang hiwalay sa patakaran. */
+  cutoff: string = STOCK_OUT_FROM,
 ): StockOutHistory {
+  // Ang mas huli sa dalawa ang umiiral — hindi kayang lampasan ng picker ang guhit.
+  const lo = from > cutoff ? from : cutoff
   // ── Kada-produkto, hati sa pinagmulan ─────────────────────────────────────
   // ⚠ TATLONG balde, hindi dalawa: ang RTS Restock ay nagtatala ng NEGATIBONG
   //   deducted (pabalik sa istante). Kung isisilid iyon sa "Manual", magiging
@@ -73,7 +79,7 @@ export function buildStockOutHistory(
   let shippedUnits = 0, manualUnits = 0, returnUnits = 0
   const recent: HistoryRecent[] = []
   for (const r of releases) {
-    if (!inRange(day10(r.date), from, to)) continue
+    if (!inRange(day10(r.date), lo, to)) continue
     const isShipped = r.category === "Shipped Out"
     let units = 0
     for (const it of r.items) {
@@ -99,7 +105,7 @@ export function buildStockOutHistory(
   let parcels = 0, amount = 0, cogs = 0, zeroCount = 0
   const badNames = new Map<string, number>()
   for (const s of scans) {
-    if (!s.deducted || !inRange(day10(s.deducted_at), from, to)) continue
+    if (!s.deducted || !inRange(day10(s.deducted_at), lo, to)) continue
     parcels++
     amount += Number(s.amount) || 0
     cogs += Number(s.cogs_value) || 0
@@ -118,7 +124,7 @@ export function buildStockOutHistory(
 
   // ── Na-scan na, hindi pa bawas — anumang petsa: backlog ito, hindi history ─
   const pending = scans
-    .filter(s => s.manual_scanned_at && !s.deducted)
+    .filter(s => s.manual_scanned_at && !s.deducted && day10(s.manual_scanned_at) >= cutoff)
     .sort((a, b) => (b.manual_scanned_at || "").localeCompare(a.manual_scanned_at || ""))
     .map(s => ({ tracking_no: s.tracking_no, manual_scanned_at: s.manual_scanned_at, by: s.manual_scanned_by || s.scanned_by || "" }))
 

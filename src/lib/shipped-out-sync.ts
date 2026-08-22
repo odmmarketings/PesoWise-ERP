@@ -90,7 +90,27 @@ export function hasLeftWarehouse(orderStatus: string): boolean {
   return LEFT_WAREHOUSE.some(g => g.some(m => s.includes(m)))
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ANG GUHIT NG RESET (hatol ng may-ari, Ago 22 2026: "reset tayo, mga na scan
+// lang ngayong araw"). Nang buksan ang Stock-Out History, 1,927 LUMANG parcel
+// (Ago 1 pasulong, bago pa magkaroon ng unit codes) ang nasipsip ng sync at
+// "nabawasan" — ₱1.1M ang lumabas na COD sa dashboard na kakasimula pa lang.
+// Ang mga parcel na umalis BAGO ang guhit ay kasama na sa pisikal na bilang ng
+// inventory reset, kaya ang pagbawas sa kanila ngayon ay DOBLENG bawas.
+//
+// Nasa code ang guhit at hindi sa database NANG SINASADYA: minsanang pangyayari
+// ang reset, ang `inventory_resets` na table (migration 0032) ay hindi pa
+// tumatakbo sa Supabase, at ang guhit na pare-pareho sa bawat makina ay kailangan
+// NGAYON. Kapag nag-reset muli ang may-ari, ang petsang ito ang inuusog.
+// PH na petsa ito — ang `shipped_out_date` ng row ay PH na rin (toPHDate).
+export const STOCK_OUT_FROM = "2026-08-22"
+
 /** Isang Pancake row na karapat-dapat nang bawasan sa inventory. */
-export function isDeductable(row: { tracking_no?: string; order_status?: string }) {
-  return !!String(row.tracking_no || "").trim() && hasLeftWarehouse(String(row.order_status || ""))
+export function isDeductable(row: { tracking_no?: string; order_status?: string; shipped_out_date?: string }) {
+  if (!String(row.tracking_no || "").trim() || !hasLeftWarehouse(String(row.order_status || ""))) return false
+  // Bago ang guhit — o WALANG mapatunayang petsa ng pag-alis — hindi binabawas.
+  // Ang blangko ay halos tiyak na lumang backfill; ang tunay na kinuha ng rider
+  // ay may `time_send_partner`. Mas mabuti ang kulang na kitang-kita sa audit
+  // kaysa dobleng bawas na tahimik.
+  return String(row.shipped_out_date || "") >= STOCK_OUT_FROM
 }
