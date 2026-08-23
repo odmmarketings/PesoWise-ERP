@@ -18,6 +18,9 @@ import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
 import { ScalingTracker, type TrackerFocus } from "@/components/business/ads/ScalingTracker"
 import { PartnerTasks } from "@/components/business/ads/PartnerTasks"
+import { MonitorCheckButton } from "@/components/business/ads/MonitorCheckButton"
+import { useMonitorRounds, windowFor } from "@/lib/monitor-store"
+import { slotStateAt } from "@/lib/manila"
 import { CommentsModal } from "@/components/business/ads/CommentsModal"
 import { useCommentCounts } from "@/lib/ads-comments-store"
 import { useAdsPins, pinnedFirst, pinOrder } from "@/lib/ads-pins"
@@ -269,6 +272,9 @@ export default function FacebookAdsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Iisang instance ng Monitoring Rounds sa buong pahina — ang parehong datos
+  // ang binabasa ng check button sa Ads Manager at ng dashboard sa Tasks.
+  const monitorRounds = useMonitorRounds()
   const [tab, setTab] = useState<Tab>(() => {
     if (typeof window === "undefined") return "dashboard"
     const firstMount = !fbTabMounted
@@ -278,6 +284,8 @@ export default function FacebookAdsPage() {
     try {
       const q = new URLSearchParams(window.location.search)
       if (q.get("focus")) return "manager"
+      // Galing sa abiso/kandado ng Monitoring Rounds — diretso sa Ads Manager.
+      if (q.get("round")) return "manager"
     } catch {}
     let isReload = false
     try { isReload = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type === "reload" } catch {}
@@ -330,6 +338,14 @@ export default function FacebookAdsPage() {
         name: deepLink.name, campaignId: deepLink.campaignId }
     : null)
   const openInManager = useCallback((f: MgrFocus) => { setMgrFocus(f); setTab("manager") }, [])
+  // "Start round" habang NASA pahinang ito: walang remount sa soft navigation,
+  // kaya event ang pinapakinggan — lipat sa manager; ang AdsManager ang bahala
+  // sa pagpili ng account.
+  useEffect(() => {
+    const onRound = () => { setMgrFocus(null); setTrackerFocus(null); setTab("manager") }
+    window.addEventListener("pesowise:round", onRound)
+    return () => window.removeEventListener("pesowise:round", onRound)
+  }, [])
   // Kabaligtarang direksyon: Ads Manager → Testing/Scaling/Monitoring, sala na.
   const [trackerFocus, setTrackerFocus] = useState<TrackerFocus | null>(null)
   const jumpToTracker = useCallback((t: Tab, f: TrackerFocus) => { setTrackerFocus(f); setTab(t) }, [])
@@ -472,8 +488,8 @@ export default function FacebookAdsPage() {
           : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} focus={trackerFocus} />
             : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} focus={trackerFocus} />
               : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} onOpenInManager={openInManager} focus={trackerFocus} />
-              : tab === "tasks" ? <PartnerTasks accounts={dataAccounts} onSignals={setTasksCount} />
-              : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} onJump={jumpToTracker} />}
+              : tab === "tasks" ? <PartnerTasks accounts={dataAccounts} onSignals={setTasksCount} rounds={monitorRounds} />
+              : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} onJump={jumpToTracker} rounds={monitorRounds} />}
     </div>
   )
 }
@@ -1221,10 +1237,11 @@ const PREVIEW_FORMATS = [
 // kaya hindi naaabot ang FB #17 rate limit. `load(true)` (pagkatapos ng tunay
 // na pagbabago sa Meta) ang naglilinis ng LAHAT.
 
-function AdsManager({ fb, from, to, focus, onJump }: {
+function AdsManager({ fb, from, to, focus, onJump, rounds }: {
   fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null
   /** Paglundag papuntang Testing/Scaling/Monitoring, sala na sa ad account. */
   onJump: (tab: Tab, f: TrackerFocus) => void
+  rounds: ReturnType<typeof useMonitorRounds>
 }) {
   const [accId, setAccId] = useState(focus?.accountId || "all")   // default: All ad accounts
   // Sinasabay ang Owner sa focus: kung ang ad account lang ang itatakda, ang
@@ -1246,6 +1263,48 @@ function AdsManager({ fb, from, to, focus, onJump }: {
   // ay basta ipinapasok sa unang halaga ng state — walang effect na kailangan,
   // walang kumukurap na "All ad accounts" muna bago mag-filter.
   const [focusOn, setFocusOn] = useState<MgrFocus | null>(focus ?? null)
+
+  // ── MONITORING ROUNDS sa loob ng manager ───────────────────────────────────
+  // Ang mga account na HINDI PA na-check sa kasalukuyang bukas/late na bintana,
+  // pinakamalaking gastos muna — ito ang landas ng round.
+  const dueAccountIds = useMemo(() => {
+    const ids: { id: string; spend: number }[] = []
+    for (const c of rounds.checks) {
+      if (c.checked_at) continue
+      const setting = rounds.settings.find(s => s.owner === c.owner)
+      const w = windowFor(setting, c)
+      if (!w) continue
+      const st = slotStateAt(w)
+      if (st !== "open" && st !== "late") continue
+      if (!mgrAccounts.some(a => a.id === c.account_id)) continue
+      ids.push({ id: c.account_id, spend: c.spend_at_freeze })
+    }
+    return ids.sort((a, b) => b.spend - a.spend).map(x => x.id)
+  }, [rounds.checks, rounds.settings, mgrAccounts])
+  // ?round=HH:MM → simulan sa unang hindi pa na-check na account.
+  const roundBoot = useRef(false)
+  useEffect(() => {
+    if (!rounds.loaded || roundBoot.current) return
+    try {
+      const q = new URLSearchParams(window.location.search)
+      if (!q.get("round")) { roundBoot.current = true; return }
+      // ⚠ Huwag sunugin ang boot habang wala pang laman ang listahan — ang
+      // cold-cache na pagbukas mula sa abiso ay nauunahan ng loaded bago pa
+      // dumating ang mga account; maghihintay ito sa unang may-lamang render.
+      if (dueAccountIds.length) { roundBoot.current = true; setAccId(dueAccountIds[0]) }
+    } catch { roundBoot.current = true }
+  }, [rounds.loaded, dueAccountIds])
+  // Ang event mula sa popup/kandado habang bukas ang pahina.
+  useEffect(() => {
+    const onRound = () => { if (dueAccountIds.length) setAccId(dueAccountIds[0]) }
+    window.addEventListener("pesowise:round", onRound)
+    return () => window.removeEventListener("pesowise:round", onRound)
+  }, [dueAccountIds])
+  // Pagkatapos ng bawat matagumpay na check — diretso sa susunod na account.
+  const advanceRound = useCallback(() => {
+    const next = dueAccountIds.find(id => id !== accId)
+    if (next) setAccId(next)
+  }, [dueAccountIds, accId])
   const [level, setLevel] = useState<MgrLevel>(focus?.level ?? "campaign")
   // Meta-style multi-select: selecting upstream rows filters the downstream panels.
   // Kapag may focus, naka-tsek na agad ang pinanggalingan: kaya kung pipindutin
@@ -1939,12 +1998,26 @@ function AdsManager({ fb, from, to, focus, onJump }: {
           <span className="text-[10px] uppercase tracking-wider text-slate-400">Manage Ad Account</span>
           <select value={accId} onChange={e => setAccId(e.target.value)} className="h-10 rounded-lg border border-slate-300 px-3 text-sm bg-white min-w-[220px]">
             <option value="all">All ad accounts</option>
-            {visibleAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {/* Ang ● sa option = kasama sa kasalukuyang round at hindi pa na-check. */}
+            {visibleAccounts.map(a => <option key={a.id} value={a.id}>{dueAccountIds.includes(a.id) ? "● " : ""}{a.name}</option>)}
           </select>
         </div>
         <Sel value={fOwner} onChange={setFOwner} opts={["All", ...owners]} label="Owner" />
         <Sel value={objMgr} onChange={v => setObjMgr(v as Obj)} opts={["All", "Conversions", "Messaging"]} label="Objective" />
         <Sel value={fStatus} onChange={setFStatus} opts={["All", "Active", "Paused", "With spend"]} label="Status" />
+        {/* MONITORING ROUNDS: ang chip/pindutan ay LILITAW LANG sa iisang
+            account na bahagi ng isang round — dito mismo pinapatunayan ng
+            partner na binantayan niya ang account na nakabukas sa screen. */}
+        {account && (
+          <div className="ml-auto flex items-center gap-2 flex-wrap min-w-0">
+            {dueAccountIds.length > 0 && (
+              <span className="text-[11px] font-semibold text-slate-400 whitespace-nowrap">
+                Round: {dueAccountIds.length} left
+              </span>
+            )}
+            <MonitorCheckButton account={account} rounds={rounds} onDone={advanceRound} />
+          </div>
+        )}
       </div>
 
       {/* Saan ka galing at ano ang tinitingnan — at paano bumalik sa lahat. */}

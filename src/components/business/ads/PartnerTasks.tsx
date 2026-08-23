@@ -13,6 +13,8 @@ import {
 } from "@/lib/partner-tasks-store"
 import { Skeleton } from "@/components/ui/dash"
 import { useErpUsers, type ErpUser } from "@/lib/users-store"
+import { MonitorDashboard } from "@/components/business/ads/MonitorDashboard"
+import type { useMonitorRounds } from "@/lib/monitor-store"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PARTNER TASKS — trabaho kada media buyer, may deadline at premyo, at ang
@@ -68,9 +70,10 @@ const DEADLINE_TONE: Record<string, string> = {
   none: "bg-slate-100 text-slate-500",
 }
 
-export function PartnerTasks({ accounts, onSignals }: {
+export function PartnerTasks({ accounts, onSignals, rounds }: {
   accounts: FBAccount[]
   onSignals?: (n: number) => void
+  rounds?: ReturnType<typeof useMonitorRounds>
 }) {
   const store = usePartnerTasks()
   const [me, setMe] = useState<Me>({ email: "", name: "", mother: false, position: "" })
@@ -284,6 +287,8 @@ export function PartnerTasks({ accounts, onSignals }: {
   // ── UI ─────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
+      {/* Monitoring Rounds — kasunod mismo ng tasks, iisang lugar ang lahat. */}
+      {rounds && <MonitorDashboard rounds={rounds} accounts={accounts} isAdmin={isAdmin} />}
       {store.error && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-[13px] text-amber-800 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />

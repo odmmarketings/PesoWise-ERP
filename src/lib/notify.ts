@@ -49,6 +49,13 @@ export type NotifyInput = {
   href?: string
   severity?: NotifSeverity
   details?: Record<string, any>
+  /** Ang SISTEMA ang nagsasalita, hindi ang user ng device. Kailangan ito ng
+   *  mga abisong pinapadala ng "kung sinong device ang nanalo sa mutex"
+   *  (Monitoring Rounds): kapag ang partner mismo ang nanalo, ang abisong may
+   *  aktor na siya ay ITINATAGO ng feed sa kanya — hindi niya makikita ang
+   *  sarili niyang round. Walang aktor ang system na abiso, kaya kita ng lahat
+   *  ng pinag-uukulan. */
+  asSystem?: boolean
 }
 
 /** Nagpapadala ng abiso. Hindi kailanman nagta-throw; hindi kailangang i-await. */
@@ -63,8 +70,8 @@ export function notify(n: NotifyInput): void {
         audience: n.audience,
         department: n.department || "",
         recipient_email: (n.toEmail || "").toLowerCase(),
-        actor_name: currentUserName() || "",
-        actor_email: (currentUserEmail() || "").toLowerCase(),
+        actor_name: n.asSystem ? "PesoWise" : currentUserName() || "",
+        actor_email: n.asSystem ? "" : (currentUserEmail() || "").toLowerCase(),
         type: n.type, title: n.title, body: n.body || "", href: n.href || "",
         severity: n.severity || "info", details: n.details || {},
       })

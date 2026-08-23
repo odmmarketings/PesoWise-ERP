@@ -9,6 +9,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { PagesProvider } from "@/lib/pages-store"
 import { syncRosterFromSupabase } from "@/lib/users-store"
 import { AdsPrefetcher } from "@/lib/use-ads-prefetch"
+import { MonitorClock } from "@/components/business/ads/MonitorClock"
 import type { Plan } from "@/lib/types"
 
 // Kaparehong hugis ng cookie na itinatakda ng /api/auth/login, para pareho ang
@@ -166,6 +167,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {/* Pinapainit ang Facebook Ads mula sa pagbukas ng app — nasa
                   ibang pahina ka pa lang, puno na ang cache pagdating mo. */}
               <AdsPrefetcher />
+              {/* Monitoring Rounds: popup sa oras ng bantay + ang kandado ng app */}
+              <MonitorClock />
               {children}
             </PagesProvider>
           ) : (
