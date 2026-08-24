@@ -193,7 +193,8 @@ export function useCommentCounts(objectIds: string[]) {
       if (error || !data) return
       const m: Record<string, number> = {}
       for (const r of data as any[]) m[r.object_id] = (m[r.object_id] || 0) + 1
-      setCounts(m)
+      // Parehong bilang = parehong object — walang re-render ng talahanayan.
+      setCounts(prev => JSON.stringify(prev) === JSON.stringify(m) ? prev : m)
     } catch { /* walang bilang = walang badge */ }
   }, [key])
 

@@ -108,13 +108,19 @@ async function refreshShared(): Promise<void> {
         if (missingTable(e)) { publish({ migrationNeeded: true, loaded: true }); return }
         publish({ error: e?.message || "", loaded: true }); return
       }
-      publish({
-        migrationNeeded: false, error: "", loaded: true,
+      const next = {
         settings: (st.data || []).map(rowSetting),
         slots: (sl.data || []).map(rowSlot),
         checks: (ch.data || []).map(rowCheck),
         lockEnabled: cf.data ? cf.data.lock_enabled !== false : true,
-      })
+      }
+      // ⚠ Ang poll na nagpapa-render ng LAHAT ng subscriber (kasama ang buong
+      // Ads Manager) kada minuto kahit WALANG nagbago ay nagpapaputol-putol ng
+      // video preview at ng scroll. Kapag pareho ang laman, walang publish.
+      const same = G.loaded && !G.migrationNeeded && G.error === ""
+        && JSON.stringify([G.settings, G.slots, G.checks, G.lockEnabled])
+        === JSON.stringify([next.settings, next.slots, next.checks, next.lockEnabled])
+      if (!same) publish({ migrationNeeded: false, error: "", loaded: true, ...next })
     } finally { inflight = null }
   })()
   return inflight
@@ -244,6 +250,11 @@ function cancelPhonePush(slot: MonitorSlot) {
   })()
 }
 
+// Ang backfill ng "walang nakaobserba" ay minsanan kada slot kada session —
+// kung hindi, kada 30s na tick ay may inuulit na insert na tatanggihan lang
+// ng unique key (409 sa network log, ingay sa Supabase).
+const backfillTried = new Set<string>()
+
 let freezeBusy = false
 async function freezeDueSlotsShared(accounts: FBAccount[]) {
   if (freezeBusy || G.migrationNeeded || !G.loaded) return
@@ -263,8 +274,11 @@ async function freezeDueSlotsShared(accounts: FBAccount[]) {
       //    nakaobserba", hindi "clear" at hindi rin nawawala nang tahimik. ─────
       for (const past of windowsAround(times, now)) {
         if (slotStateAt(past, now) !== "missed") continue
+        const bk = `${s.owner}|${past.date}|${past.time}`
+        if (backfillTried.has(bk)) continue
         const has = G.slots.some(x => x.owner === s.owner && x.slot_date === past.date && x.slot_time === past.time)
-        if (has) continue
+        if (has) { backfillTried.add(bk); continue }
+        backfillTried.add(bk)
         await supabase.from("monitor_slots").insert({
           business_id: businessId, owner: s.owner, slot_date: past.date, slot_time: past.time,
           frozen_by: "", account_count: -1,

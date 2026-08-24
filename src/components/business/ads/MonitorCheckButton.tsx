@@ -44,7 +44,8 @@ export function MonitorCheckButton({ account, rounds, onDone }: { account: FBAcc
     [rounds.settings, account.owner])
 
   // Ang mga check row NG ACCOUNT NA ITO na buhay pa ang bintana ngayon.
-  const nowTick = useTick(1_000)
+  // 15s — sapat sa chip/minsLeft; ang mabilis na tick ay sa quiz countdown lang.
+  const nowTick = useTick(15_000)
   const live = useMemo(() => {
     void nowTick
     const out: { check: MonitorCheck; state: "open" | "late" | "done" | "missed" }[] = []
@@ -136,6 +137,14 @@ export function MonitorCheckButton({ account, rounds, onDone }: { account: FBAcc
     setAttempts(a => a + 1)
     setLockedUntil(Date.now() + WRONG_LOCK_MS)
   }
+  // Ang countdown ng maling-sagot ay nangangailangan ng sariling mabilis na
+  // tick — pero HABANG bukas lang ang quiz, hindi buong araw sa bawat button.
+  const [, forceLockTick] = useState(0)
+  useEffect(() => {
+    if (phase !== "quiz") return
+    const iv = setInterval(() => forceLockTick(x => x + 1), 500)
+    return () => clearInterval(iv)
+  }, [phase])
 
   async function save(verdict: "ok" | "action") {
     const target = flowCheck || due?.check

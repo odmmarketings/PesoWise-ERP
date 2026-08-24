@@ -1,5 +1,5 @@
 "use client"
-import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment, memo } from "react"
 import {
   Megaphone, RefreshCw, Wallet, TrendingUp, ShoppingCart, Target, MessageSquare, ClipboardList,
   LayoutDashboard, CalendarDays, Settings2, ChevronDown, Search, Play, Pause, Link2,
@@ -1291,6 +1291,16 @@ const agoOf = (iso: string) => {
   if (!iso) return ""
   return d === 0 ? "today" : d === 1 ? "yesterday" : d < 30 ? `${d}d ago` : `${Math.floor(d / 30)}mo ago`
 }
+// ⚠ Ang iframe ng preview ay HINDI dapat madampian ng reconciliation kada
+// re-render ng napakabigat na AdsManager (mga poll, mga tick): ang anumang
+// paggalaw ng iframe sa DOM ay MULING NAGLO-LOAD ng laman nito — putol-putol
+// at paulit-ulit na nagre-refresh ang video (iniulat ng may-ari, Ago 25 2026).
+// Ang memo sa html string ang pader: hangga't pareho ang html, hindi na
+// binibisita ni React ang subtree na ito.
+const PreviewBody = memo(function PreviewBody({ html }: { html: string }) {
+  return <div dangerouslySetInnerHTML={{ __html: html }} />
+})
+
 // Ad-preview placement formats (mirrors Meta's preview switcher).
 const PREVIEW_FORMATS = [
   { key: "MOBILE_FEED_STANDARD", label: "Mobile feed" },
@@ -2018,7 +2028,7 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
               {previewLoading ? (
                 <div className="self-center text-slate-400 text-sm flex items-center gap-2"><RefreshCw className="w-4 h-4 animate-spin" /> Loading preview…</div>
               ) : previewHtml ? (
-                <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                <PreviewBody html={previewHtml} />
               ) : (
                 <div className="self-center text-slate-400 text-sm">Preview not available for this ad/format.</div>
               )}

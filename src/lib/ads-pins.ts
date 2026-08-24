@@ -78,7 +78,12 @@ async function refreshShared(): Promise<void> {
         level: r.object_level || "campaign", name: r.object_name || "",
       }
       writeCache(order, meta)
-      publish({ order, meta, loaded: true, shared: true })
+      // Kapareho ng monitor-store: kapag walang nagbago, walang publish — ang
+      // bawat publish ay re-render ng bawat talahanayang nakikinig sa pins.
+      const same = G.loaded && G.shared
+        && JSON.stringify([G.order, G.meta]) === JSON.stringify([order, meta])
+      if (!same) publish({ order, meta, loaded: true, shared: true })
+      else if (!G.loaded) publish({ loaded: true })
     } finally { inflight = null }
   })()
   return inflight
