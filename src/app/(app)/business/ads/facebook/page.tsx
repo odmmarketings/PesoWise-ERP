@@ -386,6 +386,11 @@ export default function FacebookAdsPage() {
   const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>(dashBoot.trend)
   const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>(dashBoot.daily)
   const [loading, setLoading] = useState(false)
+  // ⚠ Hiwalay sa `loading`: ang Refresh ay sinadyang WALANG skeleton (nakatayo
+  // ang dashboard habang pumapasok ang bago) — pero dahil doon, walang kahit
+  // anong galaw ang pindutan at mukhang patay (iniulat ng may-ari, Ago 24 2026).
+  // Ito ang nagpapaikot sa icon habang tumatakbo ang tunay na fresh na hila.
+  const [refreshing, setRefreshing] = useState(false)
 
   const pageIdByName = useMemo(() => Object.fromEntries(pages.map(p => [p.name, p.id])), [pages])
   // Pull spend from every registered account that has creds (not only status="Active"), so an
@@ -475,7 +480,15 @@ export default function FacebookAdsPage() {
         <div className="flex items-center gap-2">
           <DateRangePicker a={from} b={to} variant="header" withMax
             onApply={(a, b) => { setFrom(a || defaultDateA()); setTo(b || defaultDateB()) }} placeholder="Today" />
-          <button onClick={() => load(true)} className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
+          <button
+            onClick={() => { if (refreshing) return; setRefreshing(true); void load(true).finally(() => setRefreshing(false)) }}
+            disabled={refreshing}
+            title="Refresh — pulls fresh numbers from Meta right now"
+            className={`h-9 px-3 rounded-lg border transition active:scale-90 ${refreshing
+              ? "border-blue-300 bg-blue-50 text-blue-600"
+              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-blue-600"}`}>
+            <RefreshCw className={`w-4 h-4 ${(refreshing || loading) ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </div>
 
