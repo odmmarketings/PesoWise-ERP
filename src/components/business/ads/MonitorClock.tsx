@@ -7,6 +7,7 @@ import { useMonitorRounds, myMonitorSetting, windowFor } from "@/lib/monitor-sto
 import { timesOf, activeWindow, slotStateAt } from "@/lib/manila"
 import { whoAmI, type Me } from "@/lib/notify"
 import { scanSound } from "@/lib/scan-sound"
+import { initPush } from "@/lib/push"
 
 // Kapareho ng ADS_POSITION_RE ng PartnerTasks — sadyang HINDI ina-import: ang
 // clock na ito ay naka-mount sa layout ng BAWAT pahina, at ang pag-import ng
@@ -34,6 +35,9 @@ export function MonitorClock() {
   const router = useRouter()
   const [me, setMe] = useState<Me>({ email: "", name: "", mother: false, position: "" })
   useEffect(() => { setMe(whoAmI()) }, [])
+  // Itali ang phone push sa email — kaya kahit sarado na ang app mamaya, ang
+  // naka-iskedyul na paalala ng rounds ay aabot pa rin sa device na ito.
+  useEffect(() => { if (me.email) initPush(me.email) }, [me.email])
 
   // Ang 30s tick ay panloob na orasan lang (bintana ng slot); ang 60s poll ng
   // datos ay nasa IISANG shared store na — hindi na dito.

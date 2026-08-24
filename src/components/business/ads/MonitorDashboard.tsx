@@ -4,6 +4,7 @@ import { ShieldCheck, AlertTriangle, Settings2, BellRing, ChevronDown, ChevronUp
 import type { FBAccount } from "@/lib/fb-store"
 import { useMonitorRounds, windowFor, type MonitorCheck, type MonitorSlot } from "@/lib/monitor-store"
 import { timesOf, slotWindows, slotStateAt, manilaToday, SHIFT_TIMES } from "@/lib/manila"
+import { enablePush } from "@/lib/push"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MONITORING ROUNDS DASHBOARD — nasa itaas ng Tasks tab para iisang lugar ang
@@ -90,7 +91,7 @@ export function MonitorDashboard({ rounds, accounts, isAdmin }: {
         </div>
         <div className="flex items-center gap-2">
           {"Notification" in globalThis && Notification.permission === "default" && (
-            <button onClick={() => Notification.requestPermission()}
+            <button onClick={() => { void Notification.requestPermission(); enablePush() }}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-300 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
               <BellRing className="w-3.5 h-3.5" /> Enable alerts
             </button>

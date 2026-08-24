@@ -38,6 +38,8 @@ export interface MonitorSetting {
 export interface MonitorSlot {
   id: string; owner: string; slot_date: string; slot_time: string
   frozen_at: string; frozen_by: string; account_count: number; missed_notified: boolean
+  /** Mga naka-iskedyul na OneSignal push (0037) — binubura pagkatapos ng round. */
+  push_ids: string[]
 }
 export interface MonitorCheck {
   id: string; slot_id: string; owner: string; slot_date: string; slot_time: string
@@ -59,6 +61,7 @@ const rowSlot = (r: any): MonitorSlot => ({
   id: r.id, owner: r.owner || "", slot_date: r.slot_date || "", slot_time: r.slot_time || "",
   frozen_at: r.frozen_at || "", frozen_by: r.frozen_by || "",
   account_count: Number(r.account_count) || 0, missed_notified: !!r.missed_notified,
+  push_ids: Array.isArray(r.push_ids) ? r.push_ids.map(String) : [],
 })
 const rowCheck = (r: any): MonitorCheck => ({
   id: r.id, slot_id: r.slot_id, owner: r.owner || "", slot_date: r.slot_date || "", slot_time: r.slot_time || "",
@@ -178,6 +181,69 @@ export function makeSpendChoices(real: number): number[] {
 }
 
 // ── Mga aksyon (module-level; lahat ay nagre-refresh ng IISANG estado) ────────
+// ── PHONE PUSH (OneSignal, sa pamamagitan ng /api/push/monitor) ──────────────
+// Ang serye ng paalala ay naka-iskedyul sa SERVER ni OneSignal sa mismong
+// sandali ng freeze — kaya tumutunog ang phone kahit walang PesoWise na
+// nakabukas kahit saan. Kada 5 minuto habang on time, kada 10 kapag late na
+// (hatol ng may-ari: "tutunog every 5 mins"). Binubura ang natitira kapag
+// natapos o lumipas ang round.
+function pushTimesFor(w: SlotWindow, now = Date.now()): string[] {
+  const times: string[] = []
+  for (let t = now; t < w.lateCapMs && times.length < 10; ) {
+    times.push(new Date(t).toISOString())
+    t += (t < w.onTimeUntilMs ? 5 : 10) * 60_000
+  }
+  return times
+}
+async function schedulePhonePush(slotId: string, owner: string, w: SlotWindow, count: number) {
+  try {
+    const email = rosterEmailByName(owner)
+    if (!email) return
+    const r = await fetch("/api/push/monitor", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email, times: pushTimesFor(w),
+        title: `${w.time} monitoring round`,
+        message: `${count} account${count === 1 ? "" : "s"} to check — open PesoWise.`,
+        // Path lang — ang server ang magdidikit ng sariling origin (ligtas sa
+        // pekeng URL na galing sa kliyente).
+        path: `${HREF}?round=${encodeURIComponent(w.time)}`,
+      }),
+    })
+    const j = await r.json().catch(() => ({}))
+    if (j?.ok && Array.isArray(j.ids) && j.ids.length) {
+      const businessId = await getBusinessId()
+      if (!businessId) return
+      const supabase = createSupabaseBrowserClient()
+      // Kapag wala pa ang 0037 (push_ids), papalya lang ang update — tuloy ang
+      // lahat; ang hindi lang mabubura ay ang mga paalala pagkatapos matapos.
+      await supabase.from("monitor_slots").update({ push_ids: j.ids })
+        .eq("business_id", businessId).eq("id", slotId)
+    }
+  } catch { /* walang push — nariyan pa rin ang popup at bell */ }
+}
+function cancelPhonePush(slot: MonitorSlot) {
+  if (!slot.push_ids?.length) return
+  // ⚠ KANSELA MUNA, saka bura ng listahan — kapag sabay na fire-and-forget ang
+  // dalawa at pumalya ang kansela, nabura na ang ids at WALANG makakakansela
+  // pa: tutunog ang phone para sa gawang tapos na, magpakailanman sa serye.
+  void (async () => {
+    try {
+      const r = await fetch("/api/push/monitor", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", ids: slot.push_ids }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!j?.ok) return   // hindi nakansela — panatilihin ang ids para masubukang muli
+      const businessId = await getBusinessId()
+      if (!businessId) return
+      const supabase = createSupabaseBrowserClient()
+      await supabase.from("monitor_slots").update({ push_ids: [] })
+        .eq("business_id", businessId).eq("id", slot.id)
+    } catch { /* susubukan sa susunod na pagkakataon */ }
+  })()
+}
+
 let freezeBusy = false
 async function freezeDueSlotsShared(accounts: FBAccount[]) {
   if (freezeBusy || G.migrationNeeded || !G.loaded) return
@@ -270,6 +336,7 @@ async function freezeDueSlotsShared(accounts: FBAccount[]) {
           await refreshShared()
           continue
         }
+        void schedulePhonePush(won.id, s.owner, w, spends.length)
         const email = rosterEmailByName(s.owner)
         if (email) notify({
           audience: "user", toEmail: email, type: "monitor-round", severity: "info",
@@ -297,6 +364,7 @@ async function claimMissedShared(slot: MonitorSlot, unchecked: number) {
     .eq("business_id", businessId).eq("id", slot.id).eq("missed_notified", false)
     .select("id")
   if (!data || data.length === 0) return   // ibang device na ang nagbalita
+  cancelPhonePush(slot)
   notify({
     audience: "admin", type: "monitor-missed", severity: "warning",
     title: `${slot.owner} missed the ${slot.slot_time} monitoring round`,
@@ -329,7 +397,20 @@ async function checkInShared(check: MonitorCheck, ev: {
     .eq("business_id", businessId).eq("id", check.id).is("checked_at", null)
     .select("id")
   if (error) return error.message
-  if (data && data.length) { await refreshShared(); return "done" }
+  if (data && data.length) {
+    // ⚠ DERETSONG tanong sa DB kung may natitira pa — ang refreshShared ay may
+    // inflight na dedupe at maaaring LUMANG larawan ang ibalik, at ang minsang
+    // nalaktawang kansela ay hindi na mauulit (walang susunod na check-in).
+    const { data: rem } = await supabase.from("monitor_checks").select("id")
+      .eq("business_id", businessId).eq("slot_id", check.slot_id).is("checked_at", null).limit(1)
+    if (!rem || rem.length === 0) {
+      const { data: slotRow } = await supabase.from("monitor_slots").select("*")
+        .eq("business_id", businessId).eq("id", check.slot_id).maybeSingle()
+      if (slotRow) cancelPhonePush(rowSlot(slotRow))
+    }
+    await refreshShared()
+    return "done"
+  }
   // ⚠ Ang 0-row ay DALAWANG magkaibang kuwento: (a) nauna ang ibang device —
   // ayos iyon; (b) TINANGGIHAN ng RLS (hindi pumasa sa is_monitor_eligible) —
   // ang pagsabi ng "tapos" doon ay tahimik na pagtatapon ng bawat check ng

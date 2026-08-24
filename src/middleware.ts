@@ -7,6 +7,9 @@ import type { NextRequest } from "next/server"
 const PUBLIC_PATHS = [
   "/", "/login", "/register", "/forgot-password",
   "/manifest.webmanifest", "/icon.svg", "/apple-icon.png",
+  // ⚠ Ang service worker ay hinihila ng BROWSER nang walang cookie — kapag
+  // nire-redirect sa /login, pumapalya ang registration at PATAY ang push.
+  "/OneSignalSDKWorker.js",
 ]
 
 export function middleware(request: NextRequest) {

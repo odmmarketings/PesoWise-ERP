@@ -605,7 +605,11 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
     netValue: s.netValue + x.r.purchaseValue * (1 - x.rts),
   }), { spend: 0, purchases: 0, netValue: 0 }), [withNet])
   const netAll = agg.spend > 0 ? agg.netValue / (agg.spend * VAT) : 0
-  const grossAll = agg.spend > 0 ? withNet.reduce((s, x) => s + x.r.purchaseValue, 0) / agg.spend : 0
+  // ⚠ PAREHONG may VAT ang net at gross (hatol ng may-ari, Ago 24 2026: "yung
+  // roas talaga is yung kasama na vat"). Dati, ang gross ay hinahati sa spend
+  // NA WALANG VAT — kaya ang agwat ng net at gross ay pinaghalong RTS at VAT,
+  // at walang makapagsabi kung alin ang kumain. Ngayon: RTS LANG ang pagitan.
+  const grossAll = agg.spend > 0 ? withNet.reduce((s, x) => s + x.r.purchaseValue, 0) / (agg.spend * VAT) : 0
   const totalValue = withNet.reduce((s, x) => s + x.r.purchaseValue, 0)
   const cpp = agg.purchases > 0 ? agg.spend / agg.purchases : 0
   const budgetInPlay = useMemo(() => scoped.filter(r => /active/i.test(r.status)).reduce((s, r) => s + r.budget, 0), [scoped])
@@ -715,10 +719,19 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
             <Kpi label={`Net ROAS ${rangeLabel}`} value={dec(netAll) + "x"} sub={`gross ${dec(grossAll)}x`}
               accent={netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
+            {/* Ang budget ni Meta ay PRE-VAT, kaya ang pacing (% spent) ay
+                pre-VAT din ang paghahambing — mansanas sa mansanas. Ang budget
+                mismo ay NAKASAKTO NA SA PETSA mula sa server: kasama ang mga
+                naka-iskedyul MAMAYA ngayong araw, wala ang sa bukas pa o tapos na. */}
+            {/* Ang pacing (% spent) ay ARAW-sa-ARAW na paghahambing — sa
+                maraming araw na saklaw, ang range-total ÷ isang-araw na budget
+                ay 700%+ na walang kahulugan, kaya sa NGAYON lang ipinapakita. */}
             <Kpi label="Ad Budget / day" value={peso(budgetInPlay)}
-              sub={budgetInPlay > 0 ? `${Math.round((agg.spend / budgetInPlay) * 100)}% spent · ${activeCount} active` : `${activeCount} active`}
+              sub={isToday && budgetInPlay > 0 ? `${Math.min(999, Math.round((agg.spend / budgetInPlay) * 100))}% spent · ${activeCount} active` : `${activeCount} active`}
               accent="from-slate-700 to-slate-800" />
-            <Kpi label="Ad Spend" value={peso(agg.spend)} sub={`incl. VAT ${peso(agg.spend * VAT)}`} accent="from-blue-600 to-blue-700" />
+            {/* Ang headline ay ang spend na GINAGAMIT NG ROAS (may VAT) — ito
+                ang tunay na lumalabas na pera; ang bago-mag-VAT ay ang sub. */}
+            <Kpi label="Ad Spend" value={peso(agg.spend * VAT)} sub={`before VAT ${peso(agg.spend)}`} accent="from-blue-600 to-blue-700" />
             <Kpi label="Sales" value={peso(totalValue)} sub={`net ${peso(agg.netValue)} after RTS`} accent="from-violet-500 to-violet-600" />
             <Kpi label="Total Purchases" value={num(agg.purchases)}
               sub={agg.purchases > 0 ? `avg value ${peso(totalValue / agg.purchases)}` : undefined} accent="from-fuchsia-500 to-pink-600" />

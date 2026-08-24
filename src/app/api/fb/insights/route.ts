@@ -190,6 +190,29 @@ export async function GET(req: NextRequest) {
       // campaign na wala nang naipapadala (iniulat ng may-ari, Ago 15 2026).
       // Ganito rin ang ginagawa ng Ads Manager ni Meta: binibilang niya ang mga
       // anak. Libre ito rito — hinihila na natin ang ad sets para sa budget.
+      // ── "TUMATAKBO BA NGAYON (araw ng Manila)?" — para sa AD BUDGET / DAY ─
+      // Ang budget ay dapat NAKASAKTO SA PETSA (hatol ng may-ari, Ago 24 2026):
+      // ang ad set na naka-iskedyul MAMAYA ngayong araw ay gagastos ngayong
+      // araw — kasama; ang sa BUKAS pa magsisimula ay hindi pa dapat bumibilang
+      // sa "gagastusin ngayong araw"; ang natapos na (lumipas ang stop) ay hindi
+      // na rin. Ang `effective_status` ay bulag sa orasan, kaya petsa mismo ang
+      // sinusuri. Manila ang araw — doon nagba-badyet ang negosyo.
+      const MNL = 8 * 3600_000
+      const mnlDay = (ms: number) => new Date(ms + MNL).toISOString().slice(0, 10)
+      const todayMnl = mnlDay(Date.now())
+      // ⚠ Ang "budget NGAYON" ay may saysay lang kapag ang tinitingnang saklaw
+      // ay umaabot sa araw na ito. Sa LUMANG saklaw (kahapon palang ang dulo),
+      // ang pag-zero ng mga natapos na ay magpapawala ng budget sa tabi ng
+      // totoong gastos noon — kasinungalingan tungkol sa nakaraan. Doon,
+      // ibinabalik ang dating asal: walang date gate.
+      const rangeIncludesToday = !to || to >= todayMnl
+      const runsToday = (start?: string, stop?: string) => {
+        const st = start ? Date.parse(start) : NaN
+        const sp = stop ? Date.parse(stop) : NaN
+        if (isFinite(st) && mnlDay(st) > todayMnl) return false   // sa hinaharap na ARAW pa
+        if (isFinite(sp) && mnlDay(sp) < todayMnl) return false   // tapos na bago pa ngayon
+        return true
+      }
       const kidsOn: Record<string, number> = {}, kidsTotal: Record<string, number> = {}
       // ⚠ HINDI SAPAT ANG BILANGIN ANG NAKABUKAS NA AD SET. Ang isang ad set na
       // nakabukas pero WALANG kahit isang naka-on na ad ay wala ring ipinapadala,
@@ -200,6 +223,12 @@ export async function GET(req: NextRequest) {
       // nagbubukod ng dalawang dahilan ng hindi paglabas: "Ad set off" (walang
       // bukas na ad set) laban sa "Ads off" (may bukas na ad set, walang ad).
       const kidsLive: Record<string, number> = {}
+      // May kahit ISANG bukas na ad set ba na tumatakbo NGAYON? Ito ang date
+      // gate ng CBO: ang badyet ay nasa campaign pero ang ORAS ay nasa ad sets
+      // (walang dalang budget ang CBO ad sets, kaya hindi sila sumasala sa
+      // budget sums) — kung wala nito, ang CBO na sa Lunes pa magsisimula ay
+      // bumibilang na ngayon (ang mismong sobrang bilang na inaalis natin).
+      const kidsRunToday: Record<string, boolean> = {}
       let adsKnown = false
       // ⚠ ANG CAMPAIGN AY WALANG SARILING ORAS KAPAG ANG AD SET ANG NAKA-SCHEDULE.
       // Ang oras ng pagsisimula ay itinatakda sa AD SET; ang campaign ay maaaring
@@ -226,7 +255,7 @@ export async function GET(req: NextRequest) {
             }
             adsKnown = true   // ⚠ kapag pumalya ang hila, `kidsLive` ay -1 (hindi alam),
           } catch { adsKnown = false }   //   dahil ang 0 ay magsasabi ng "Ads off" sa LAHAT.
-          const as = await fbGet(`${accountId}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,status,effective_status,start_time&limit=500&access_token=${enc}`)
+          const as = await fbGet(`${accountId}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,status,effective_status,start_time,end_time&limit=500&access_token=${enc}`)
           for (const s of as.data || []) {
             const cid = s.campaign_id
             kidsTotal[cid] = (kidsTotal[cid] || 0) + 1
@@ -236,11 +265,19 @@ export async function GET(req: NextRequest) {
             if (/active/i.test(s.status || "")) {
               kidsOn[cid] = (kidsOn[cid] || 0) + 1
               if (liveAdsets.has(String(s.id))) kidsLive[cid] = (kidsLive[cid] || 0) + 1
+              if (runsToday(s.start_time, s.end_time)) kidsRunToday[cid] = true
               const t = s.start_time ? Date.parse(s.start_time) : NaN
               if (!isFinite(t)) kidsStartUnknown.add(cid)
               else if (!kidsStart[cid] || t < Date.parse(kidsStart[cid])) kidsStart[cid] = s.start_time
             }
-            const b = cents(s.daily_budget) || cents(s.lifetime_budget); if (!b) continue
+            // ⚠ DAILY LANG ang pumapasok sa "/ day" na sums. Ang LIFETIME na
+            // halaga ay buong laki ng buong takbo — ang pagdagdag niyon kada
+            // araw ay ~60x na pagpapalaki ng "Ad Budget / day" (napatunayan sa
+            // review, Ago 24 2026). Ang budgetKind ay nananatiling nagsasabi
+            // ng "lifetime" sa manager para kitang-kita pa rin ang halaga doon.
+            const b = cents(s.daily_budget); if (!b) continue
+            // Petsa muna bago pera — pero sa KASALUKUYANG saklaw lang.
+            if (rangeIncludesToday && !runsToday(s.start_time, s.end_time)) continue
             adsetAll[cid] = (adsetAll[cid] || 0) + b
             if (/active/i.test(s.effective_status)) adsetActive[cid] = (adsetActive[cid] || 0) + b
           }
@@ -286,7 +323,23 @@ export async function GET(req: NextRequest) {
         const ownBudget = ownDaily || ownLife
         return {
           id, name: r[nameF] || m.name, status: m.effective_status || "—", configuredStatus: m.status || m.effective_status || "", objective: m.objective || "",
-          budget: level === "campaign" ? (ownBudget || adsetActive[id] || adsetAll[id] || 0) : (level === "adset" ? ownBudget : 0),
+          // Ang campaign na hindi tumatakbo NGAYON ay walang badyet ngayon.
+          // ⚠ SA CBO, NASA AD SETS ANG ORAS: ang start_time ng campaign ay
+          // lumipas o blangko habang ang mga ad set ay sa Lunes pa — kaya ang
+          // sariling petsa ng campaign ay HINDI sapat; kailangang may kahit
+          // isang bukas na ad set na tumatakbo ngayon (kidsRunToday). Kapag
+          // WALANG nakikitang ad set (bagong campaign, pumalya ang hila),
+          // ang sariling petsa na lang ang masusunod — hindi tayo nagpaparusa
+          // sa kawalan ng datos. Sa lumang saklaw, walang date gate.
+          budget: level === "campaign"
+            ? (!rangeIncludesToday
+              ? (cents(m.daily_budget) || adsetActive[id] || adsetAll[id] || 0)
+              : (runsToday(m.start_time, m.stop_time) && ((kidsTotal[id] ?? 0) === 0 || kidsRunToday[id] === true)
+                ? (cents(m.daily_budget) || adsetActive[id] || adsetAll[id] || 0)
+                : 0))
+            : (level === "adset"
+              ? (!rangeIncludesToday ? cents(m.daily_budget) : (runsToday(m.start_time, m.stop_time) ? cents(m.daily_budget) : 0))
+              : 0),
           // ownBudget = this object's own budget (0 → inherits from campaign/ad sets). budgetKind = daily|lifetime.
           ownBudget, budgetKind: ownDaily ? "daily" : ownLife ? "lifetime" : "",
           // Bilang ng anak — ito ang batayan ng "Ad set off" / "Ads off".
