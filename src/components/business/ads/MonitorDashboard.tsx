@@ -112,7 +112,7 @@ export function MonitorDashboard({ rounds, accounts, isAdmin }: {
           </div>
         )}
 
-        {isAdmin && showConfig && <ConfigPanel rounds={rounds} ownerNames={ownerNames} />}
+        {isAdmin && showConfig && <ConfigPanel rounds={rounds} ownerNames={ownerNames} accounts={liveAccounts} />}
 
         {/* ── ANG ARAW NA ITO ─────────────────────────────────────────────────── */}
         <div className="space-y-2">
@@ -228,10 +228,9 @@ export function MonitorDashboard({ rounds, accounts, isAdmin }: {
   )
 }
 
-// ── ADMIN: shift kada partner + ang kandado ng app ────────────────────────────
-function ConfigPanel({ rounds, ownerNames }: { rounds: Rounds; ownerNames: string[] }) {
+// ── ADMIN: shift, ORAS at SAKLAW kada partner + ang kandado ng app ───────────
+function ConfigPanel({ rounds, ownerNames, accounts }: { rounds: Rounds; ownerNames: string[]; accounts: FBAccount[] }) {
   const all = useMemo(() => Array.from(new Set([...ownerNames, ...rounds.settings.map(s => s.owner)])).sort(), [ownerNames, rounds.settings])
-  const [saving, setSaving] = useState("")
   const [err, setErr] = useState("")
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
@@ -243,39 +242,83 @@ function ConfigPanel({ rounds, ownerNames }: { rounds: Rounds; ownerNames: strin
       </label>
       {err && <p className="text-[11px] text-rose-600">⚠ {err}</p>}
       <div className="divide-y divide-slate-200">
-        {all.map(o => {
-          const s = rounds.settings.find(x => x.owner === o)
-          return (
-            <div key={o} className="py-2 flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-semibold text-slate-800 w-40 truncate">{o}</span>
-              <select defaultValue={s?.shift || "am"} id={`shift-${o}`}
-                className="px-2 py-1 rounded border border-slate-300 text-xs bg-white">
-                <option value="am">AM — {SHIFT_TIMES.am.join(", ")}</option>
-                <option value="pm">PM — {SHIFT_TIMES.pm.join(", ")}</option>
-                <option value="custom">Custom</option>
-              </select>
-              <input id={`times-${o}`} defaultValue={(s?.custom_times || []).join(", ")} placeholder="09:00, 14:30"
-                className="px-2 py-1 rounded border border-slate-300 text-xs w-36" />
-              <label className="flex items-center gap-1 text-[11px] text-slate-600">
-                <input type="checkbox" id={`on-${o}`} defaultChecked={s ? s.enabled : true} /> enabled
-              </label>
-              <button disabled={saving === o} onClick={async () => {
-                setSaving(o)
-                const shift = (document.getElementById(`shift-${o}`) as HTMLSelectElement).value
-                const raw = (document.getElementById(`times-${o}`) as HTMLInputElement).value
-                const times = raw.split(",").map(x => x.trim()).filter(x => /^\d{2}:\d{2}$/.test(x))
-                const on = (document.getElementById(`on-${o}`) as HTMLInputElement).checked
-                const m = await rounds.saveSetting(o, shift, times, on)
-                setErr(m || ""); setSaving("")
-              }} className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-700 disabled:opacity-50">
-                {saving === o ? "Saving…" : s ? "Save" : "Add"}
-              </button>
-              {s && !s.enabled && <span className="text-[10px] text-slate-400 uppercase font-bold">off</span>}
-            </div>
-          )
-        })}
+        {all.map(o => <ConfigRow key={o} owner={o} rounds={rounds} accounts={accounts} onError={setErr} />)}
       </div>
       {!all.length && <p className="text-xs text-slate-400 italic">No ad-account owners found yet.</p>}
+    </div>
+  )
+}
+
+// Isang partner, isang hilera — may sariling estado ang SAKLAW: "Active with
+// spend" (kusa ang listahan) o "Custom" (pinipili ng admin kung aling mga
+// account ang babantayan niya kada round, may gastos man o wala — pwede ring
+// account ng iba, hal. marketing na inatasang magbantay).
+function ConfigRow({ owner, rounds, accounts, onError }: {
+  owner: string; rounds: Rounds; accounts: FBAccount[]; onError: (m: string) => void
+}) {
+  const s = rounds.settings.find(x => x.owner === owner)
+  const [shift, setShift] = useState(s?.shift || "am")
+  const [times, setTimes] = useState((s?.custom_times || []).join(", "))
+  const [enabled, setEnabled] = useState(s ? s.enabled : true)
+  const [scope, setScope] = useState(s?.scope || "active")
+  // Custom na listahan — kapag blangko pa, ang sariling mga account niya ang
+  // paunang tsek (iyon ang malamang na ibig sabihin bago pa magbawas/magdagdag).
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(
+    s?.custom_accounts?.length ? s.custom_accounts : accounts.filter(a => a.owner === owner).map(a => a.id)))
+  const [saving, setSaving] = useState(false)
+  const togglePick = (id: string) => setPicked(prev => {
+    const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n
+  })
+  return (
+    <div className="py-2 space-y-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-slate-800 w-40 truncate">{owner}</span>
+        <select value={shift} onChange={e => setShift(e.target.value)}
+          className="px-2 py-1 rounded border border-slate-300 text-xs bg-white">
+          <option value="am">AM — {SHIFT_TIMES.am.join(", ")}</option>
+          <option value="pm">PM — {SHIFT_TIMES.pm.join(", ")}</option>
+          <option value="custom">Custom times</option>
+        </select>
+        {shift === "custom" && (
+          <input value={times} onChange={e => setTimes(e.target.value)} placeholder="09:00, 14:30"
+            className="px-2 py-1 rounded border border-slate-300 text-xs w-36" />
+        )}
+        <select value={scope} onChange={e => setScope(e.target.value)}
+          title="What this person must monitor each round"
+          className="px-2 py-1 rounded border border-slate-300 text-xs bg-white">
+          <option value="active">Their accounts with spend (auto)</option>
+          <option value="custom">Custom account list</option>
+        </select>
+        <label className="flex items-center gap-1 text-[11px] text-slate-600">
+          <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} /> enabled
+        </label>
+        <button disabled={saving} onClick={async () => {
+          setSaving(true)
+          const list = times.split(",").map(x => x.trim()).filter(x => /^d{2}:d{2}$/.test(x))
+          const m = await rounds.saveSetting(owner, shift, list, enabled, scope, scope === "custom" ? [...picked] : [])
+          onError(m || ""); setSaving(false)
+        }} className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-700 disabled:opacity-50">
+          {saving ? "Saving…" : s ? "Save" : "Add"}
+        </button>
+        {s && !s.enabled && <span className="text-[10px] text-slate-400 uppercase font-bold">off</span>}
+      </div>
+      {scope === "custom" && (
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            Accounts to monitor every round ({picked.size} picked)
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-1">
+            {accounts.map(a => (
+              <label key={a.id} className="flex items-center gap-1.5 text-[12px] text-slate-700 min-w-0">
+                <input type="checkbox" checked={picked.has(a.id)} onChange={() => togglePick(a.id)} />
+                <span className="truncate">{a.name}</span>
+                {a.owner && a.owner !== owner && <span className="text-[10px] text-slate-400 shrink-0">({a.owner})</span>}
+              </label>
+            ))}
+          </div>
+          {picked.size === 0 && <p className="text-[11px] text-amber-600 mt-1">⚠ Nothing picked — their rounds will be empty.</p>}
+        </div>
+      )}
     </div>
   )
 }

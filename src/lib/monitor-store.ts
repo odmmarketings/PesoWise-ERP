@@ -31,6 +31,9 @@ import type { FBAccount } from "@/lib/fb-store"
 
 export interface MonitorSetting {
   id: string; owner: string; shift: string; custom_times: string[]; enabled: boolean
+  /** "active" = mga account niyang may gastos sa araw ng slot (kusa);
+   *  "custom" = takdang listahan ng fb_accounts.id, may gastos man o wala. */
+  scope: string; custom_accounts: string[]
 }
 export interface MonitorSlot {
   id: string; owner: string; slot_date: string; slot_time: string
@@ -48,6 +51,9 @@ export interface MonitorCheck {
 const rowSetting = (r: any): MonitorSetting => ({
   id: r.id, owner: r.owner || "", shift: r.shift || "am",
   custom_times: Array.isArray(r.custom_times) ? r.custom_times : [], enabled: r.enabled !== false,
+  // Bago ang 0036, wala ang mga kolum na ito — "active" ang dating asal.
+  scope: r.scope === "custom" ? "custom" : "active",
+  custom_accounts: Array.isArray(r.custom_accounts) ? r.custom_accounts.map(String) : [],
 })
 const rowSlot = (r: any): MonitorSlot => ({
   id: r.id, owner: r.owner || "", slot_date: r.slot_date || "", slot_time: r.slot_time || "",
@@ -202,13 +208,25 @@ async function freezeDueSlotsShared(accounts: FBAccount[]) {
       if (!w) continue
       const already = G.slots.some(x => x.owner === s.owner && x.slot_date === w.date && x.slot_time === w.time)
       if (already) continue
-      const mine = live.filter(a => a.owner === s.owner)
+      // "active" = mga account NIYA na may gastos; "custom" = ang takdang
+      // listahan ng admin — kahit walang gastos, kahit account ng iba (hal.
+      // marketing na inatasang magbantay ng account ng partner).
+      const mine = s.scope === "custom"
+        ? live.filter(a => s.custom_accounts.includes(a.id))
+        : live.filter(a => a.owner === s.owner)
       if (mine.length === 0) continue
       // ⚠ Gastos sa ARAW NG SLOT (w.date) — hindi manilaToday().
       const spends: { a: FBAccount; spend: number }[] = []
       let anyNull = false
       for (const a of mine) {
         const sp = await spendOfOn(a, w.date)
+        if (s.scope === "custom") {
+          // Takdang tungkulin ito — kasama kahit ₱0 o bigo ang hila; ang gastos
+          // ay ebidensya lang, hindi pamantayan ng pagsama.
+          if (sp === null) anyNull = true
+          spends.push({ a, spend: sp ?? 0 })
+          continue
+        }
         if (sp === null) { anyNull = true; continue }
         if (sp > 0) spends.push({ a, spend: sp })
       }
@@ -330,15 +348,22 @@ export function useMonitorRounds() {
   const checkIn = useCallback(checkInShared, [])
   const claimMissed = useCallback(claimMissedShared, [])
 
-  const saveSetting = useCallback(async (owner: string, shift: string, customTimes: string[], enabled: boolean) => {
+  const saveSetting = useCallback(async (owner: string, shift: string, customTimes: string[], enabled: boolean,
+    scope: string = "active", customAccounts: string[] = []) => {
     const businessId = await getBusinessId()
     if (!businessId) return "No business"
     const supabase = createSupabaseBrowserClient()
     const { error } = await supabase.from("monitor_settings").upsert({
       business_id: businessId, owner, shift, custom_times: customTimes, enabled,
+      scope: scope === "custom" ? "custom" : "active", custom_accounts: customAccounts,
       updated_at: new Date().toISOString(), updated_by: currentUserName() || "",
     }, { onConflict: "business_id,owner" })
-    if (error) return missingTable(error) ? "Run migration 0034_ads_monitoring.sql in Supabase first." : error.message
+    if (error) {
+      if (missingTable(error)) return "Run migration 0034_ads_monitoring.sql in Supabase first."
+      // Wala pa ang 0036 (scope/custom_accounts na kolum) — sabihin nang tumpak.
+      if (/scope|custom_accounts/.test(String(error.message || ""))) return "Run migration 0036_monitor_scope.sql in Supabase first."
+      return error.message
+    }
     await refreshShared()
     return ""
   }, [])
