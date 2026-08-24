@@ -717,7 +717,10 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
               "magkano ang nagastos". Ang pares na Budget/Spend ang nagsasabi
               kung gaano kabilis ubusin ng araw ang nakalaan (pacing). */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-            <Kpi label={`Net ROAS ${rangeLabel}`} value={dec(netAll) + "x"} sub={`gross ${dec(grossAll)}x`}
+            {/* ⚠ Ang "gross" ay may VAT DIN — ang pagitan nila ay RTS lang.
+                Tinanong ng may-ari kung "wala bang VAT ang nasa baba" (Ago 24
+                2026), kaya tahasang sinasabi na ng sub kung ano ang pagkakaiba. */}
+            <Kpi label={`Net ROAS ${rangeLabel}`} value={dec(netAll) + "x"} sub={`${dec(grossAll)}x before RTS · both incl. VAT`}
               accent={netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
             {/* Ang budget ni Meta ay PRE-VAT, kaya ang pacing (% spent) ay
                 pre-VAT din ang paghahambing — mansanas sa mansanas. Ang budget
