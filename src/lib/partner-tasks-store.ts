@@ -31,6 +31,9 @@ export interface PartnerTask {
   submitted_at: string
   done_at: string
   approved_by: string
+  /** Deep link papunta sa mismong ad na aayusin (0038) — blangko kung wala. */
+  link_href: string
+  link_label: string
 }
 
 export interface PartnerTarget {
@@ -102,9 +105,71 @@ const rowToTask = (r: any): PartnerTask => ({
   created_at: r.created_at, created_by_name: r.created_by_name || "",
   created_by_email: (r.created_by_email || "").toLowerCase(),
   submitted_at: r.submitted_at || "", done_at: r.done_at || "", approved_by: r.approved_by || "",
+  link_href: r.link_href || "", link_label: r.link_label || "",
 })
 
 const HREF = "/business/ads/facebook"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GUMAWA NG TASK MULA SAAN MAN (hatol ng may-ari, Ago 25 2026: "bukod sa
+// comment, add task sa kanila... pag pinindot nila ma reredirect sila sa ads").
+// Hindi hook: ang CommentsModal ay tumatawag dito nang hindi hinihila ang
+// buong board. Ang `link` ay deep link papunta sa mismong ad — kapag wala pa
+// ang 0038 (walang link_href na kolum), sinusubukan muli NANG WALANG link:
+// mas mabuti ang task na walang pindutan kaysa walang task.
+// ─────────────────────────────────────────────────────────────────────────────
+export type TaskLink = { href: string; label: string }
+const missingLinkColumns = (e: any) =>
+  e && (e.code === "42703" || e.code === "PGRST204" || /link_href|link_label/.test(String(e?.message || "")))
+
+export async function createPartnerTasksDirect(input: {
+  title: string; details: string; owners: string[]; deadline: string; reward: string; link?: TaskLink
+}): Promise<string> {
+  const businessId = await getBusinessId()
+  if (!businessId || input.owners.length === 0 || !input.title.trim()) return "Missing title or partner"
+  const supabase = createSupabaseBrowserClient()
+  const base = input.owners.map(o => ({
+    business_id: businessId, title: input.title.trim(), details: input.details.trim(),
+    owner: o, deadline: input.deadline || null, reward: input.reward.trim(),
+    created_by_name: currentUserName() || "", created_by_email: (currentUserEmail() || "").toLowerCase(),
+  }))
+  let { error } = await supabase.from("partner_tasks").insert(
+    input.link ? base.map(r => ({ ...r, link_href: input.link!.href, link_label: input.link!.label })) : base)
+  if (error && input.link && missingLinkColumns(error)) {
+    ;({ error } = await supabase.from("partner_tasks").insert(base))
+  }
+  if (error) return error.message
+  // Abiso kada tatanggap — at ang pindot sa abiso ay dumederetso na rin sa ad,
+  // hindi lang sa pahina (parehong deep link ng task mismo).
+  for (const o of input.owners) {
+    const email = rosterEmailByName(o)
+    if (!email) continue
+    notify({
+      audience: "user", toEmail: email, type: "task-assigned", severity: "info",
+      title: `New task: "${input.title.trim()}"`,
+      body: [
+        input.link ? `Opens the ad: ${input.link.label}` : "",
+        input.deadline ? `Deadline ${input.deadline}` : "",
+        input.reward ? `Reward: ${input.reward}` : "",
+      ].filter(Boolean).join(" · "),
+      // ⚠ HINDI NAKATALI SA 0038. Ang deep link ng ABISO ay nakaimbak sa
+      // notifications (0027) at binabasa ng kampana — ang nawawala pre-0038 ay
+      // ang PINDUTAN sa task card lang. Ang pagtanggal ng link dito ay
+      // pagkitil sa tanging landas na gumagana pa (nahuli ng review, Ago 25).
+      href: input.link?.href || HREF,
+    })
+  }
+  return ""
+}
+
+/** Ang listahan ng maaatasan, mula sa roster cache — para sa CommentsModal. */
+export function taskAssigneesFromCache(adOwners: string[]): TaskAssignee[] {
+  if (typeof window === "undefined") return []
+  try {
+    const roster: any[] = JSON.parse(localStorage.getItem("pesowise_users") || "[]")
+    return buildTaskAssignees(Array.isArray(roster) ? roster : [], adOwners, rosterEmailByName)
+  } catch { return buildTaskAssignees([], adOwners, () => "") }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SINO ANG MAY KARAPATAN SA BOARD (hatol ng may-ari, Ago 24 2026: "pwede mag
@@ -143,6 +208,103 @@ export function canEditTask(me: TaskActor, t: { created_by_email: string; create
   if (e && (t.created_by_email || "").toLowerCase() === e) return true
   const n = (me.name || "").trim().toLowerCase()
   return !!n && (t.created_by_name || "").trim().toLowerCase() === n
+}
+
+// ── ANG MAAATASAN — parehong pangkat ng Tasks board: partners + marketing ───
+export type TaskAssignee = { name: string; email: string; partner: boolean }
+
+/**
+ * PURO at nasusubok: sino ang lalabas sa "assign as task" na picker ng
+ * CommentsModal. Partners (may ad account) muna, tapos marketing mula sa
+ * roster; iisang tao (iisang email) = iisang chip, at ang pangalang may ad
+ * account ang mananaig — doon naka-key ang mga target ng board. Ang `emailOf`
+ * ay iniinject (rosterEmailByName sa browser) para manatiling puro ito.
+ */
+export function buildTaskAssignees(
+  roster: { full_name?: string; username?: string; email?: string; position?: string; status?: string; deleteAt?: string | null }[],
+  adOwners: string[],
+  emailOf: (name: string) => string,
+): TaskAssignee[] {
+  const byName = new Map<string, TaskAssignee>()
+  const put = (name: string, email: string, partner: boolean) => {
+    const key = name.trim()
+    if (!key) return
+    const prev = byName.get(key)
+    byName.set(key, { name: key, email: email || prev?.email || "", partner: partner || prev?.partner || false })
+  }
+  for (const o of adOwners) put(o, (emailOf(o) || "").toLowerCase(), true)
+  for (const u of roster) {
+    // Ang umalis na ay hindi na binibigyan ng bagong trabaho.
+    if (u.status !== "Active" || u.deleteAt) continue
+    if (!ADS_ROLE_RE.test(u.position || "")) continue
+    put(String(u.full_name || u.username || "").trim(), String(u.email || "").toLowerCase(), false)
+  }
+  const byEmail = new Map<string, TaskAssignee>()
+  const out: TaskAssignee[] = []
+  for (const a of byName.values()) {
+    if (!a.email) { out.push(a); continue }
+    const prev = byEmail.get(a.email)
+    if (!prev) { byEmail.set(a.email, a); out.push(a); continue }
+    prev.partner = prev.partner || a.partner
+    if (a.partner && !adOwners.includes(prev.name)) prev.name = a.name
+  }
+  return out.sort((a, b) => (a.partner === b.partner ? 0 : a.partner ? -1 : 1) || a.name.localeCompare(b.name))
+}
+
+/**
+ * Sino ang na-@mention sa komento — ang unang hula ng tatanggap ng task.
+ *
+ * ⚠ DALAWANG PANGALAN ANG IISANG TAO. Ang @-picker ay naglalagay ng pangalang
+ * ROSTER ("Eugene Noval Andaya"), samantalang ang chip ay may pangalang
+ * AD-ACCOUNT ("Eugene Andaya") — sadya iyon, doon naka-key ang mga target ng
+ * board. Ang tuwirang `includes` ay hindi kailanman magtutugma sa taong iyon
+ * (nahuli ng review, Ago 25 2026), kaya ang EMAIL ang tulay.
+ *
+ * ⚠ MAY HANGGANAN ANG PANGALAN. Ang "@Erica Cruz" ay naglalaman ng "@Eric" —
+ * kaya kung walang tsek sa susunod na titik, may makakatanggap ng trabahong
+ * hindi para sa kanya.
+ */
+export function preselectMentioned(
+  body: string,
+  chips: { name: string; email: string }[],
+  roster: { name: string; email: string }[] = [],
+): string[] {
+  const low = (body || "").toLowerCase()
+  const tagged = (n: string) => {
+    const name = (n || "").trim().toLowerCase()
+    if (!name) return false
+    let i = low.indexOf(`@${name}`)
+    while (i >= 0) {
+      const after = low[i + 1 + name.length]
+      if (!after || !/[\p{L}\p{N}]/u.test(after)) return true
+      i = low.indexOf(`@${name}`, i + 1)
+    }
+    return false
+  }
+  return chips
+    .filter(c => tagged(c.name)
+      || (!!c.email && roster.some(r => r.email === c.email && tagged(r.name))))
+    .map(c => c.name)
+}
+
+/**
+ * Ang paliwanag sa loob ng task — saan galing at ano ang gagawin.
+ *
+ * ⚠ HINDI NANGANGAKO NG PINDUTAN. Pre-0038 ay walang link ang card (ang abiso
+ * lang ang may landas), kaya ang "open the ad FROM THIS TASK" ay magiging
+ * sinungaling doon (nahuli ng review, Ago 25 2026).
+ */
+export function taskDetailsFrom(level: string, name: string, account: string): string {
+  return `From an ad comment on ${level} "${name}" (${account}). Open the ad, fix it, then mark as done.`
+}
+
+/**
+ * Ang komento mismo ang pamagat ng task — pinuputol sa 90 na titik para hindi
+ * bumaha ang card, at "…" ang pahiwatig ng naputol.
+ */
+export function taskTitleFrom(body: string): string {
+  const t = body.replace(/\s+/g, " ").trim()
+  return t.length <= 90 ? t : t.slice(0, 89).trimEnd() + "…"
 }
 
 export function usePartnerTasks() {
@@ -194,32 +356,13 @@ export function usePartnerTasks() {
   }, [])
   useEffect(() => { refresh() }, [refresh])
 
-  /** Isang task kada napiling partner — ang parehong utos sa tatlo ay tatlong row. */
-  const createTasks = useCallback(async (input: { title: string; details: string; owners: string[]; deadline: string; reward: string }) => {
-    const businessId = await getBusinessId()
-    if (!businessId || input.owners.length === 0 || !input.title.trim()) return "Missing title or partner"
-    const supabase = createSupabaseBrowserClient()
-    const { error } = await supabase.from("partner_tasks").insert(input.owners.map(o => ({
-      business_id: businessId, title: input.title.trim(), details: input.details.trim(),
-      owner: o, deadline: input.deadline || null, reward: input.reward.trim(),
-      created_by_name: currentUserName() || "", created_by_email: (currentUserEmail() || "").toLowerCase(),
-    })))
-    if (error) return error.message
-    // Abiso sa bawat partner — pangalan ang hawak natin; email mula sa roster.
-    // Kapag walang tugma sa roster, WALANG pinadadalhan (hindi "all": ang task
-    // ni Eric ay hindi balita para kina Eugene at Larry).
-    for (const o of input.owners) {
-      const email = rosterEmailByName(o)
-      if (!email) continue
-      notify({
-        audience: "user", toEmail: email, type: "task-assigned", severity: "info",
-        title: `New task: "${input.title.trim()}"`,
-        body: [input.deadline ? `Deadline ${input.deadline}` : "", input.reward ? `Reward: ${input.reward}` : ""].filter(Boolean).join(" · "),
-        href: HREF,
-      })
-    }
-    await refresh()
-    return ""
+  /** Isang task kada napiling partner — ang parehong utos sa tatlo ay tatlong
+   * row. Ang tunay na gawain ay nasa createPartnerTasksDirect: iisang batas
+   * para sa board at sa CommentsModal. */
+  const createTasks = useCallback(async (input: { title: string; details: string; owners: string[]; deadline: string; reward: string; link?: TaskLink }) => {
+    const err = await createPartnerTasksDirect(input)
+    if (!err) await refresh()
+    return err
   }, [refresh])
 
   const updateTask = useCallback(async (id: string, patch: { title?: string; details?: string; owner?: string; deadline?: string; reward?: string }) => {

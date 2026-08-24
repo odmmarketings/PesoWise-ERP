@@ -111,11 +111,13 @@ export function useAdsComments(objectId: string) {
 
   useEffect(() => { refresh() }, [refresh])
 
-  const add = useCallback(async (body: string, ctx: { level: string; name: string; account: string; href: string; accountId?: string; campaignId?: string }) => {
+  // Nagbabalik ng TOTOO kapag nakapost — ang "add task" na kasunod ay hindi
+  // dapat gumawa ng task para sa komentong hindi naman pumasok.
+  const add = useCallback(async (body: string, ctx: { level: string; name: string; account: string; href: string; accountId?: string; campaignId?: string }): Promise<boolean> => {
     const text = body.trim()
-    if (!text) return
+    if (!text) return false
     const businessId = await getBusinessId()
-    if (!businessId) return
+    if (!businessId) return false
     const people = rosterPeople()
     const mentions = extractMentions(text, people)
     const me = (currentUserEmail() || "").toLowerCase()
@@ -126,7 +128,7 @@ export function useAdsComments(objectId: string) {
       author_name: currentUserName() || "", author_email: me,
       body: text, mentions,
     })
-    if (error) { setError(error.message); return }
+    if (error) { setError(error.message); return false }
     // Abiso sa bawat na-tag — maliban sa sarili mo (walang saysay i-tag ang sarili).
     for (const email of mentions) {
       if (email === me) continue
@@ -144,6 +146,7 @@ export function useAdsComments(objectId: string) {
       })
     }
     await refresh()
+    return true
   }, [objectId, refresh])
 
   // ── Acknowledge / resolve ──────────────────────────────────────────────────

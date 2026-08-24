@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ClipboardList, Plus, X, Pencil, Trash2, Check, Undo2, Send, Gift, Target, UserPlus, MailWarning,
-  AlertTriangle, RefreshCw, Trophy, CheckCircle2, Hourglass,
+  AlertTriangle, RefreshCw, Trophy, CheckCircle2, Hourglass, ExternalLink,
 } from "lucide-react"
 import type { FBAccount } from "@/lib/fb-store"
 import { VAT, usePageRts } from "@/lib/scaling-signals"
@@ -69,6 +69,18 @@ const DEADLINE_TONE: Record<string, string> = {
   soon: "bg-amber-50 text-amber-700",
   late: "bg-rose-50 text-rose-700",
   none: "bg-slate-100 text-slate-500",
+}
+
+// Ang task mula sa komento sa ad ay may deep link pabalik sa MISMONG ad
+// (hatol ng may-ari, Ago 25 2026: "pag pinindot nila sa task nila ma
+// reredirect sila sa ads na aayusin nila"). Ang Tasks tab ay nakatira sa
+// LOOB ng /business/ads/facebook — ang router.push sa parehong ruta ay
+// walang remount, kaya ang parehong CustomEvent na ginagamit ng kampana ang
+// daan: ang page-level listener ang lilipat sa Ads Manager nakatutok sa ad.
+function openTaskLink(href: string) {
+  const q = href.split("?")[1] || ""
+  if (!q || typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent("pesowise:deeplink", { detail: { query: q } }))
 }
 
 export function PartnerTasks({ accounts, onSignals, rounds }: {
@@ -471,7 +483,14 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
                         {initials(t.owner)}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className={`block text-[13px] font-semibold leading-snug ${st === "done" ? "text-slate-500" : "text-slate-800"}`}>{t.title}</span>
+                        {t.link_href ? (
+                          <button onClick={() => openTaskLink(t.link_href)} title="Open the exact ad in Ads Manager"
+                            className={`block w-full text-left text-[13px] font-semibold leading-snug break-words hover:text-blue-600 hover:underline ${st === "done" ? "text-slate-500" : "text-slate-800"}`}>
+                            {t.title}
+                          </button>
+                        ) : (
+                          <span className={`block text-[13px] font-semibold leading-snug break-words ${st === "done" ? "text-slate-500" : "text-slate-800"}`}>{t.title}</span>
+                        )}
                         {t.details && <span className="block text-[11px] text-slate-500 leading-snug mt-0.5 line-clamp-2">{t.details}</span>}
                       </span>
                       {canEdit(t) && (
@@ -485,6 +504,12 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${DEADLINE_TONE[dl.tone]}`}>{dl.label}</span>
+                      {t.link_href && (
+                        <button onClick={() => openTaskLink(t.link_href)} title="Open the exact ad in Ads Manager"
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 flex items-center gap-1 max-w-[180px]">
+                          <ExternalLink className="w-2.5 h-2.5 shrink-0" /> <span className="truncate">{t.link_label || "Open ad"}</span>
+                        </button>
+                      )}
                       {t.reward && (
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex items-center gap-1 ${
                           st === "done" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>

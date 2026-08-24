@@ -23,6 +23,8 @@ import { useMonitorRounds, windowFor } from "@/lib/monitor-store"
 import { slotStateAt } from "@/lib/manila"
 import { CommentsModal } from "@/components/business/ads/CommentsModal"
 import { useCommentCounts } from "@/lib/ads-comments-store"
+import { canCreateTask, taskAssigneesFromCache } from "@/lib/partner-tasks-store"
+import { whoAmI, type Me } from "@/lib/notify"
 import { useAdsPins, pinnedFirst, pinOrder } from "@/lib/ads-pins"
 import {
   MGR_CACHE, MGR_INFLIGHT, MGR_TTL, DASH_CACHE, DASH_INFLIGHT, DASH_TTL,
@@ -1340,6 +1342,10 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
   // Manageable accounts = any registered, credentialed, non-archived account.
   const mgrAccounts = useMemo(() => fb.accounts.filter(a => !a.archived && a.ad_account_id && a.token), [fb.accounts])
   const owners = useMemo(() => Array.from(new Set(mgrAccounts.map(a => a.owner).filter(Boolean))).sort(), [mgrAccounts])
+  // ── "ADD TASK" MULA SA KOMENTO — sino ako at sino ang maaatasan ────────────
+  const [meMgr, setMeMgr] = useState<Me>({ email: "", name: "", mother: false, position: "" })
+  useEffect(() => { setMeMgr(whoAmI()) }, [])
+  const taskPeople = useMemo(() => taskAssigneesFromCache(owners), [owners])
   const visibleAccounts = useMemo(() => mgrAccounts.filter(a => fOwner === "All" || a.owner === fOwner), [mgrAccounts, fOwner])
   const accById = (id: string) => mgrAccounts.find(a => a.id === id) || null
   const isAll = accId === "all"
@@ -2474,6 +2480,7 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
         <CommentsModal objectId={commentFor.id} level={level} name={commentFor.name}
           account={commentFor.accountName} href="/business/ads/facebook"
           accountId={commentFor.accountId} campaignId={commentFor.campaignId || undefined}
+          canTask={canCreateTask(meMgr, owners)} assignees={taskPeople}
           // Nasa Ads Manager ka na kapag bukas ang modal na ito, kaya ang
           // paglundag ay HINDI pag-navigate palabas: isinasara nito ang modal at
           // pinipinto ang tanawin sa mismong object — ad account at hilera —
