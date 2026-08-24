@@ -346,6 +346,40 @@ export default function FacebookAdsPage() {
     window.addEventListener("pesowise:round", onRound)
     return () => window.removeEventListener("pesowise:round", onRound)
   }, [])
+  // Ang pindot sa abiso (komento/tag) habang BUKAS NA ang pahinang ito — ang
+  // kampana ay nagpapadala ng event sa halip na soft-push na walang epekto.
+  useEffect(() => {
+    const onDeep = (e: Event) => {
+      const query = String((e as CustomEvent).detail?.query || "")
+      const q = new URLSearchParams(query)
+      const id = q.get("focus")
+      if (!id) return
+      const lvl = q.get("level")
+      setTrackerFocus(null)
+      setMgrFocus({
+        level: (lvl === "adset" || lvl === "ad" ? lvl : "campaign") as MgrLevel,
+        id, name: q.get("name") || "", accountId: q.get("acc") || "",
+        campaignId: q.get("camp") || undefined,
+      })
+      setTab("manager")
+    }
+    window.addEventListener("pesowise:deeplink", onDeep)
+    return () => window.removeEventListener("pesowise:deeplink", onDeep)
+  }, [])
+  // ⚠ LINISIN ANG URL pagkatapos konsumihin ang deep link. Kung mananatili ang
+  // ?focus/?round, ang Ctrl+R ay paulit-ulit na bumabalik sa pinag-usapang ad
+  // kahit matagal ka nang lumipat ng tab (iniulat ng may-ari, Ago 24 2026). Ang
+  // URL ay minsanang utos, hindi permanenteng kalagayan. (Ang mga anak ay
+  // nakapagbasa na — ang effect ng magulang ay tumatakbo PAGKATAPOS ng render
+  // at ng mga effect ng mga anak.)
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search)
+      if (q.get("focus") || q.get("round") || q.get("tab")) {
+        window.history.replaceState({}, "", window.location.pathname)
+      }
+    } catch { /* walang window sa SSR */ }
+  }, [])
   // Kabaligtarang direksyon: Ads Manager → Testing/Scaling/Monitoring, sala na.
   const [trackerFocus, setTrackerFocus] = useState<TrackerFocus | null>(null)
   const jumpToTracker = useCallback((t: Tab, f: TrackerFocus) => { setTrackerFocus(f); setTab(t) }, [])
@@ -1263,6 +1297,20 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
   // ay basta ipinapasok sa unang halaga ng state — walang effect na kailangan,
   // walang kumukurap na "All ad accounts" muna bago mag-filter.
   const [focusOn, setFocusOn] = useState<MgrFocus | null>(focus ?? null)
+  // Ang BAGONG focus habang naka-mount na (pindot sa abiso habang bukas ang
+  // pahina) — inuulit ang eksaktong pag-seed ng mga initializer sa itaas.
+  const focusSeen = useRef(focus)
+  useEffect(() => {
+    if (!focus || focus === focusSeen.current) return
+    focusSeen.current = focus
+    setFocusOn(focus)
+    setAccId(focus.accountId || "all")
+    setFOwner(focus.owner || "All")
+    setLevel(focus.level ?? "campaign")
+    setSelCampaigns(seed(focus.level === "campaign" ? focus.id : focus.campaignId))
+    setSelAdsets(seed(focus.level === "adset" ? focus.id : undefined))
+    setSelAds(new Set())
+  }, [focus])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── MONITORING ROUNDS sa loob ng manager ───────────────────────────────────
   // Ang mga account na HINDI PA na-check sa kasalukuyang bukas/late na bintana,
@@ -1282,18 +1330,19 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
     return ids.sort((a, b) => b.spend - a.spend).map(x => x.id)
   }, [rounds.checks, rounds.settings, mgrAccounts])
   // ?round=HH:MM → simulan sa unang hindi pa na-check na account.
+  // ⚠ Kinukuha sa UNANG render (lazy initializer) — nililinis ng magulang ang
+  // URL pagkatapos ng mount, kaya ang pagbasa sa loob ng effect ay mahuhuli.
+  const [roundParam] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("round") || "" } catch { return "" }
+  })
   const roundBoot = useRef(false)
   useEffect(() => {
-    if (!rounds.loaded || roundBoot.current) return
-    try {
-      const q = new URLSearchParams(window.location.search)
-      if (!q.get("round")) { roundBoot.current = true; return }
-      // ⚠ Huwag sunugin ang boot habang wala pang laman ang listahan — ang
-      // cold-cache na pagbukas mula sa abiso ay nauunahan ng loaded bago pa
-      // dumating ang mga account; maghihintay ito sa unang may-lamang render.
-      if (dueAccountIds.length) { roundBoot.current = true; setAccId(dueAccountIds[0]) }
-    } catch { roundBoot.current = true }
-  }, [rounds.loaded, dueAccountIds])
+    if (!rounds.loaded || roundBoot.current || !roundParam) return
+    // Huwag sunugin ang boot habang wala pang laman ang listahan — ang
+    // cold-cache na pagbukas mula sa abiso ay nauunahan ng loaded bago pa
+    // dumating ang mga account; maghihintay ito sa unang may-lamang render.
+    if (dueAccountIds.length) { roundBoot.current = true; setAccId(dueAccountIds[0]) }
+  }, [rounds.loaded, dueAccountIds, roundParam])
   // Ang event mula sa popup/kandado habang bukas ang pahina.
   useEffect(() => {
     const onRound = () => { if (dueAccountIds.length) setAccId(dueAccountIds[0]) }

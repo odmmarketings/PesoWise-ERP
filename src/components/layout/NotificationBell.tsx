@@ -33,7 +33,17 @@ export function NotificationBell() {
   const go = (n: Notif) => {
     markRead(n.id)
     setOpen(false)
-    if (n.href) router.push(n.href)
+    if (!n.href) return
+    const [path, query] = n.href.split("?")
+    // ⚠ Kapag NASA pahinang iyon ka na, ang router.push ay soft navigation —
+    // walang remount, at ang deep link (?focus=…) ay binabasa lang sa mount,
+    // kaya walang nangyayari hanggang mag-refresh (iniulat ng may-ari, Ago 24
+    // 2026). Ang event ang daan: ang pahina mismo ang nakikinig at gumagalaw.
+    if (query && typeof window !== "undefined" && path === window.location.pathname) {
+      window.dispatchEvent(new CustomEvent("pesowise:deeplink", { detail: { query } }))
+    } else {
+      router.push(n.href)
+    }
   }
 
   return (

@@ -27,7 +27,7 @@ export function Topbar({ plan, trialEndsAt, onToggleSidebar, onUpgrade, onToggle
   // higit pa sa itaas. `bg-white/95` ay may dark rule na, kaya hindi ito
   // nagiging maputing guhit sa madilim na tema.
   return (
-    <header className="h-16 bg-white/95 backdrop-blur-md border-b border-slate-200 flex items-center px-4 gap-4 sticky top-0 z-30">
+    <header className="h-16 bg-white/95 backdrop-blur-md border-b border-slate-200 flex items-center px-4 gap-4 sticky top-0 z-50">
       {/* Cellphone: drawer. Desktop: tuluyang pagsasara. Dalawang buton, hindi
           isang buton na nanghuhula ng laki ng screen. */}
       <button

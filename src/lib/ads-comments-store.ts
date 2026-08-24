@@ -197,6 +197,14 @@ export function useCommentCounts(objectIds: string[]) {
     } catch { /* walang bilang = walang badge */ }
   }, [key])
 
-  useEffect(() => { refresh() }, [refresh])
+  // Ang komento ng ibang tao ay dapat lumitaw nang hindi ka nagre-refresh:
+  // poll kada 60s + refetch sa pagbalik ng focus (parehong ritmo ng notify feed).
+  useEffect(() => {
+    refresh()
+    const iv = setInterval(refresh, 60_000)
+    const onFocus = () => refresh()
+    window.addEventListener("focus", onFocus)
+    return () => { clearInterval(iv); window.removeEventListener("focus", onFocus) }
+  }, [refresh])
   return { counts, refresh }
 }
