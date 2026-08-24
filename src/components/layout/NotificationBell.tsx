@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Bell, Check, RefreshCw } from "lucide-react"
-import { useNotifications, agoLabel, type Notif } from "@/lib/notify"
+import { useNotifications, agoLabel, isMention, type Notif } from "@/lib/notify"
 
 // Kampana sa Topbar — nakikita sa BAWAT pahina, kaya ito ang pintuan ng buong
 // notification feature. Badge = bilang ng hindi pa nababasa; dropdown = huling
@@ -17,6 +17,11 @@ const SEV_DOT: Record<string, string> = {
 export function NotificationBell() {
   const { items, unread, loading, error, markRead, markAllRead, refresh } = useNotifications(30)
   const [open, setOpen] = useState(false)
+  // "@ Mentions" — para makita agad kung saan ka na-tag (hiling ng may-ari,
+  // Ago 24 2026). Salaan lang ito ng tanawin; hindi nito ginagalaw ang unread.
+  const [onlyMentions, setOnlyMentions] = useState(false)
+  const mentions = items.filter(isMention)
+  const shown = onlyMentions ? mentions : items
   const router = useRouter()
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -62,7 +67,16 @@ export function NotificationBell() {
       {open && (
         <div className="absolute right-0 top-full mt-2 w-[360px] max-w-[92vw] bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden">
           <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-            <span className="text-sm font-bold text-slate-800">Notifications</span>
+            <span className="flex items-center gap-1.5">
+              <span className="text-sm font-bold text-slate-800">Notifications</span>
+              <button onClick={() => setOnlyMentions(m => !m)}
+                title="Only notifications where you were mentioned"
+                className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${onlyMentions
+                  ? "bg-indigo-600 text-white border-indigo-600"
+                  : "bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50"}`}>
+                @ Mentions{mentions.filter(n => !n.read).length > 0 ? ` (${mentions.filter(n => !n.read).length})` : ""}
+              </button>
+            </span>
             <span className="flex items-center gap-1">
               {unread > 0 && (
                 <button onClick={markAllRead}
@@ -79,11 +93,11 @@ export function NotificationBell() {
           <div className="max-h-[420px] overflow-y-auto scrollbar-dark">
             {error ? (
               <p className="px-4 py-6 text-[12px] text-rose-600">{error}</p>
-            ) : items.length === 0 ? (
+            ) : shown.length === 0 ? (
               <p className="px-4 py-8 text-[13px] text-slate-400 text-center">
-                {loading ? "Loading…" : "Wala pang abiso."}
+                {loading ? "Loading…" : onlyMentions ? "Nobody has mentioned you yet." : "Wala pang abiso."}
               </p>
-            ) : items.map(n => (
+            ) : shown.map(n => (
               <button key={n.id} onClick={() => go(n)}
                 className={`w-full text-left px-4 py-2.5 border-b border-slate-50 hover:bg-slate-50 flex items-start gap-2.5 ${n.read ? "opacity-60" : ""}`}>
                 <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${n.read ? "bg-slate-200" : SEV_DOT[n.severity] || SEV_DOT.info}`} />

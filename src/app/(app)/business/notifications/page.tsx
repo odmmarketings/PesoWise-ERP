@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Bell, Check, RefreshCw } from "lucide-react"
-import { useNotifications, agoLabel, type Notif } from "@/lib/notify"
+import { useNotifications, agoLabel, isMention, type Notif } from "@/lib/notify"
 
 // Buong listahan ng abiso — ang dropdown sa kampana ay huling 30 lang; dito
 // ang kasaysayan, may filter kada uri at severity.
@@ -17,14 +17,17 @@ export default function NotificationsPage() {
   const { items, unread, loading, error, refresh, markRead, markAllRead } = useNotifications(500)
   const [fSev, setFSev] = useState("All")
   const [fRead, setFRead] = useState("All")
+  const [fMention, setFMention] = useState(false)
   const router = useRouter()
 
   const view = useMemo(() => items.filter(n => {
+    if (fMention && !isMention(n)) return false
     if (fSev !== "All" && n.severity !== fSev.toLowerCase()) return false
     if (fRead === "Unread" && n.read) return false
     if (fRead === "Read" && !n.read) return false
     return true
-  }), [items, fSev, fRead])
+  }), [items, fSev, fRead, fMention])
+  const mentionCount = useMemo(() => items.filter(isMention).length, [items])
 
   // Kada araw — parehong pagbasa ng Activity Log.
   const grouped = useMemo(() => {
@@ -62,6 +65,14 @@ export default function NotificationsPage() {
           <button key={s} onClick={() => setFSev(s)}
             className={`px-3 py-1.5 rounded-full text-sm border ${fSev === s ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>{s}</button>
         ))}
+        <span className="w-px bg-slate-200 mx-1" />
+        <button onClick={() => setFMention(m => !m)}
+          title="Only notifications where you were mentioned"
+          className={`px-3 py-1.5 rounded-full text-sm border font-semibold ${fMention
+            ? "bg-indigo-600 text-white border-indigo-600"
+            : "bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50"}`}>
+          @ Mentions{mentionCount > 0 ? ` (${mentionCount})` : ""}
+        </button>
         <span className="w-px bg-slate-200 mx-1" />
         {["All", "Unread", "Read"].map(s => (
           <button key={s} onClick={() => setFRead(s)}

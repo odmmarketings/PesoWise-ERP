@@ -230,6 +230,11 @@ export function useNotifications(limit = 200) {
   return { items, unread, loading, error, refresh, markRead, markAllRead }
 }
 
+/** Abiso ba itong NA-MENTION ka (hal. @tag sa ads comment)? Iisang kahulugan
+ *  para sa kampana at sa buong pahina — kapag may bagong uri ng mention balang
+ *  araw, isama sa type ang salitang "mention" at sasama ito rito nang kusa. */
+export const isMention = (n: { type: string }) => /mention/i.test(n.type || "")
+
 /** Mababasang oras: "2m ago", "3h ago", "Aug 14". */
 export function agoLabel(iso: string): string {
   const t = new Date(iso).getTime()
