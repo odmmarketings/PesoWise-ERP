@@ -625,17 +625,22 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
   const sumSpend = (xs: { r: Row }[]) => xs.reduce((s, x) => s + x.r.spend, 0)
 
   // ── BRAND CARDS — kada ad account, hindi kada campaign ─────────────────────
+  // ⚠ Mula sa LAHAT ng campaign, hindi lang sa may gastos: sa unang minuto ng
+  // araw ay ₱0 pa ang lahat, at ang blangkong hilera ng brand ay mukhang sira.
+  // Ang walang gastos AT walang aktibo ay hindi pa rin kasama — patay iyon.
   const brands = useMemo(() => {
     const m = new Map<string, { name: string; accountId: string; owner: string; spend: number; value: number; netValue: number; purchases: number; active: number; total: number; rts: number }>()
-    for (const x of withNet) {
-      const b = m.get(x.r.accountName) ?? { name: x.r.accountName, accountId: x.r.accountId, owner: x.r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, total: 0, rts: x.rts }
-      b.spend += x.r.spend; b.value += x.r.purchaseValue; b.netValue += x.r.purchaseValue * (1 - x.rts); b.purchases += x.r.purchases
+    for (const r of scoped) {
+      const rts = rtsOf(r)
+      const b = m.get(r.accountName) ?? { name: r.accountName, accountId: r.accountId, owner: r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, total: 0, rts }
+      b.spend += r.spend; b.value += r.purchaseValue; b.netValue += r.purchaseValue * (1 - rts); b.purchases += r.purchases
       b.total++
-      if (/active/i.test(x.r.status)) b.active++
+      if (/active/i.test(r.status)) b.active++
       m.set(b.name, b)
     }
-    return [...m.values()].sort((a, b) => b.spend - a.spend)
-  }, [withNet])
+    return [...m.values()].filter(b => b.spend > 0 || b.active > 0)
+      .sort((a, b) => b.spend - a.spend || b.active - a.active)
+  }, [scoped, rtsOf])
 
   // ── TOP MOVERS — 3 pinakamalaki ang tubo, 3 pinakamalaki ang lugi ──────────
   const qualified = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend), [withNet, rules])
@@ -707,8 +712,10 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
         <div className="bg-white rounded-2xl border border-slate-200 py-14 text-center text-slate-400 text-sm">
           <RefreshCw className="w-4 h-4 animate-spin inline mr-2" /> Pulling {rangeLabel}…
         </div>
-      ) : withNet.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 py-14 text-center text-slate-400 text-sm">No spend {rangeLabel}.</div>
+      ) : scoped.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 py-14 text-center text-slate-400 text-sm">
+          No campaigns to show{fOwner !== "All" ? ` for ${fOwner}` : ""}.
+        </div>
       ) : (
         <>
           {/* ── HERO — net muna, dahil net ang batayan ng bawat desisyon ──
@@ -720,8 +727,11 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
             {/* ⚠ Ang "gross" ay may VAT DIN — ang pagitan nila ay RTS lang.
                 Tinanong ng may-ari kung "wala bang VAT ang nasa baba" (Ago 24
                 2026), kaya tahasang sinasabi na ng sub kung ano ang pagkakaiba. */}
-            <Kpi label={`Net ROAS ${rangeLabel}`} value={dec(netAll) + "x"} sub={`${dec(grossAll)}x before RTS · both incl. VAT`}
-              accent={netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
+            <Kpi label={`Net ROAS ${rangeLabel}`}
+              value={agg.spend > 0 ? dec(netAll) + "x" : "—"}
+              sub={agg.spend > 0 ? `${dec(grossAll)}x before RTS · both incl. VAT` : "no spend yet"}
+              accent={agg.spend === 0 ? "from-slate-600 to-slate-700"
+                : netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
             {/* Ang budget ni Meta ay PRE-VAT, kaya ang pacing (% spent) ay
                 pre-VAT din ang paghahambing — mansanas sa mansanas. Ang budget
                 mismo ay NAKASAKTO NA SA PETSA mula sa server: kasama ang mga
@@ -797,9 +807,13 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                       {b.name}
                       <ExternalLink className="w-3 h-3 text-slate-300 group-hover:text-blue-500 shrink-0" />
                     </span>
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 ${netBadge(netOf(b.value, b.spend, b.rts))}`}>
-                      {dec(netOf(b.value, b.spend, b.rts))}x
-                    </span>
+                    {b.spend > 0 ? (
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 ${netBadge(netOf(b.value, b.spend, b.rts))}`}>
+                        {dec(netOf(b.value, b.spend, b.rts))}x
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 bg-slate-100 text-slate-500">—</span>
+                    )}
                   </div>
                   <p className="text-base sm:text-lg font-bold text-slate-900 tabular-nums">{peso(b.spend)}</p>
                   <p className="text-[11px] text-slate-500">
