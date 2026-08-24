@@ -1795,7 +1795,7 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
   // Walang "N pinned · clear" na chip — tinanggal ito ng may-ari (Ago 17 2026).
   // Ang pag-alis ng pin ay per-row pa rin sa pamamagitan ng pindutang pin mismo,
   // kaya walang nawawalang kakayahan; ang toolbar lang ang mas tahimik.
-  const { pins, toggle: togglePin, has: isPinned } = useAdsPins()
+  const { pins, order: pinOrderIds, toggle: togglePin, has: isPinned, byOf: pinnedBy } = useAdsPins()
 
   const [sort, setSort] = useState<SortState | null>({ key: "Amount Spent", dir: "desc" })
   const sortedRows = useMemo(() => sortRows(levelRows, sort, (r, k) =>
@@ -1813,8 +1813,8 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
   // sa spend o ROAS — ang naka-pin lang ang nauuna, at sa loob ng dalawang
   // pangkat ay nananatili ang piniling pagkakasunod mo.
   const displayRows = useMemo(
-    () => pinnedFirst(sortedRows, r => r.id, pins, pinOrder()),
-    [sortedRows, pins])
+    () => pinnedFirst(sortedRows, r => r.id, pins, pinOrderIds),
+    [sortedRows, pins, pinOrderIds])
   const mgrTotal = computeTotal(levelRows)
 
   // ── selection: toggle a row, clear a level (with cascade), quick-drill via name ──
@@ -2276,8 +2276,10 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
                                   sort. Lumalabas lang ang buton kapag naka-hover
                                   o naka-pin na, para hindi magkalat ng icon ang
                                   bawat hilera. */}
-                              <button onClick={() => togglePin(r.id)}
-                                title={isPinned(r.id) ? "Unpin — babalik sa normal na pagkakasunod" : "Pin to top"}
+                              <button onClick={() => togglePin(r.id, { level, name: r.name, accountId: r.accountId, accountName: r.accountName })}
+                                title={isPinned(r.id)
+                                  ? `Unpin${pinnedBy(r.id) ? ` — pinned by ${pinnedBy(r.id)}` : ""} · everyone sees this pin`
+                                  : "Pin to top — shared with the whole team"}
                                 className={`px-1.5 py-1 rounded-md ${isPinned(r.id)
                                   ? "text-amber-500 hover:text-amber-600"
                                   : "text-slate-300 hover:text-amber-500 opacity-0 group-hover/row:opacity-100 focus:opacity-100"}`}>
