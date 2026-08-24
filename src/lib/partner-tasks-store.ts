@@ -27,6 +27,7 @@ export interface PartnerTask {
   status: TaskStatus
   created_at: string
   created_by_name: string
+  created_by_email: string
   submitted_at: string
   done_at: string
   approved_by: string
@@ -99,10 +100,50 @@ const rowToTask = (r: any): PartnerTask => ({
   deadline: r.deadline || "", reward: r.reward || "",
   status: r.status === "done" ? "done" : r.status === "review" ? "review" : "open",
   created_at: r.created_at, created_by_name: r.created_by_name || "",
+  created_by_email: (r.created_by_email || "").toLowerCase(),
   submitted_at: r.submitted_at || "", done_at: r.done_at || "", approved_by: r.approved_by || "",
 })
 
 const HREF = "/business/ads/facebook"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SINO ANG MAY KARAPATAN SA BOARD (hatol ng may-ari, Ago 24 2026: "pwede mag
+// create dapat ng task sila Eugene, Eric, and marketings").
+//
+// PUROSAADYA ANG HATIAN:
+//   • GUMAWA — admin AT ang mga taga-ads (may hawak na ad account, o marketing/
+//     advertiser/partner ang posisyon). Magkakatalaga sila ng trabaho sa isa't
+//     isa nang hindi dumaraan sa may-ari.
+//   • BAGUHIN/BURAHIN — admin, o ang MISMONG GUMAWA ng task na iyon. Hindi
+//     kayang galawin ang task ng iba: ang pagbura ng utos ng ibang tao ay
+//     pagbura ng kasaysayan.
+//   • PREMYO — ADMIN LANG ang makakalagay. Kung kayang lagyan ng partner ng
+//     premyo ang sariling task, sariling-sertipika ang gantimpala — kaparehong
+//     dahilan kung bakit ang APRUBA ay may-ari pa rin ang huling salita.
+//   • APRUBA / IBALIK — admin lang, hindi nagbabago.
+// Ang RLS ng partner_tasks ay member-wide na (0029), kaya walang bagong
+// migration; ang UI ang dating nagkukulong, hindi ang database.
+// ─────────────────────────────────────────────────────────────────────────────
+export type TaskActor = { mother: boolean; email: string; name: string; position: string }
+const ADS_ROLE_RE = /marketing|advertis|partner/i
+
+/** Taga-ads ba ako? (may ad account ako O tugma ang posisyon ko) */
+export function isAdsPerson(me: TaskActor, adAccountOwners: string[]): boolean {
+  if (ADS_ROLE_RE.test(me.position || "")) return true
+  const n = (me.name || "").trim().toLowerCase()
+  return !!n && adAccountOwners.some(o => (o || "").trim().toLowerCase() === n)
+}
+export function canCreateTask(me: TaskActor, adAccountOwners: string[]): boolean {
+  return me.mother || isAdsPerson(me, adAccountOwners)
+}
+/** Ang gumawa ay kayang baguhin/burahin ang SARILING task; ang admin, lahat. */
+export function canEditTask(me: TaskActor, t: { created_by_email: string; created_by_name: string }): boolean {
+  if (me.mother) return true
+  const e = (me.email || "").toLowerCase()
+  if (e && (t.created_by_email || "").toLowerCase() === e) return true
+  const n = (me.name || "").trim().toLowerCase()
+  return !!n && (t.created_by_name || "").trim().toLowerCase() === n
+}
 
 export function usePartnerTasks() {
   const [tasks, setTasks] = useState<PartnerTask[]>([])

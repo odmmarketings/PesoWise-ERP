@@ -9,6 +9,7 @@ import { VAT, usePageRts } from "@/lib/scaling-signals"
 import { whoAmI, rosterEmailByName, type Me } from "@/lib/notify"
 import {
   usePartnerTasks, deadlineInfo, badgeCount, monthKey, todayStr,
+  canCreateTask, canEditTask,
   type PartnerTask, type TaskStatus, type TeamTarget,
 } from "@/lib/partner-tasks-store"
 import { Skeleton } from "@/components/ui/dash"
@@ -251,6 +252,12 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
     rosterEmailByName(t.owner) === me.email || t.owner.trim().toLowerCase() === me.name,
     [me])
 
+  // ⚠ HINDI ADMIN-LANG ANG PAGGAWA (hatol ng may-ari, Ago 24 2026). Ang mga
+  // taga-ads ay nagtatalaga na rin ng trabaho sa isa't isa; ang PREMYO at ang
+  // APRUBA lang ang natitirang eksklusibo sa may-ari.
+  const canCreate = useMemo(() => canCreateTask(me, partnerNames), [me, partnerNames])
+  const canEdit = useCallback((t: PartnerTask) => canEditTask(me, t), [me])
+
   // ── Mga salaan ─────────────────────────────────────────────────────────────
   const [fOwner, setFOwner] = useState("All")
   const filtered = useMemo(() =>
@@ -427,7 +434,7 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
           <option value="All">Everyone</option>
           {assignees.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
         </select>
-        {isAdmin && (
+        {canCreate && (
           <button onClick={() => setTaskModal({})}
             className="ml-auto flex items-center gap-1.5 h-8 px-3 rounded-lg bg-blue-600 text-white text-[12px] font-semibold hover:bg-blue-700 active:scale-95 transition">
             <Plus className="w-3.5 h-3.5" /> New task
@@ -467,7 +474,7 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
                         <span className={`block text-[13px] font-semibold leading-snug ${st === "done" ? "text-slate-500" : "text-slate-800"}`}>{t.title}</span>
                         {t.details && <span className="block text-[11px] text-slate-500 leading-snug mt-0.5 line-clamp-2">{t.details}</span>}
                       </span>
-                      {isAdmin && (
+                      {canEdit(t) && (
                         <span className="flex items-center gap-0.5 shrink-0">
                           <button onClick={() => setTaskModal({ edit: t })} title="Edit"
                             className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-slate-50"><Pencil className="w-3 h-3" /></button>
@@ -489,6 +496,9 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
                       )}
                       {st === "review" && (
                         <span className="text-[10px] text-slate-400">submitted {(t.submitted_at || "").slice(0, 10)}</span>
+                      )}
+                      {t.created_by_name && !mine(t) && (
+                        <span className="text-[10px] text-slate-400">from {t.created_by_name}</span>
                       )}
                     </div>
                     {/* Mga aksyon: partner → Mark as done; may-ari → Approve / Return. */}
@@ -542,6 +552,7 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
         <TaskModal
           edit={taskModal.edit}
           assignees={assignees}
+          canSetReward={isAdmin}
           busy={busy}
           onClose={() => setTaskModal(null)}
           onSave={async (v) => {
@@ -587,9 +598,11 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
 }
 
 // ── Modal ng task: bago (multi-partner) o pag-edit (isang partner) ───────────
-function TaskModal({ edit, assignees, busy, onClose, onSave }: {
+function TaskModal({ edit, assignees, canSetReward, busy, onClose, onSave }: {
   edit?: PartnerTask
   assignees: { name: string; email: string; role: string; partner: boolean }[]
+  /** Premyo = pera. Admin lang — kung hindi, sariling-sertipika ang gantimpala. */
+  canSetReward: boolean
   busy: boolean
   onClose: () => void
   onSave: (v: { title: string; details: string; owners: string[]; deadline: string; reward: string }) => void
@@ -679,8 +692,9 @@ function TaskModal({ edit, assignees, busy, onClose, onSave }: {
             </label>
             <label className="block">
               <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Reward <span className="normal-case font-normal">(optional)</span></span>
-              <input value={reward} onChange={e => setReward(e.target.value)} placeholder="e.g. ₱500 GCash"
-                className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3" />
+              <input value={reward} onChange={e => setReward(e.target.value)} placeholder={canSetReward ? "e.g. ₱500 GCash" : "The owner sets rewards"}
+                disabled={!canSetReward} title={canSetReward ? "" : "Only the owner can attach a reward."}
+                className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 disabled:bg-slate-50 disabled:text-slate-400" />
             </label>
           </div>
         </div>
