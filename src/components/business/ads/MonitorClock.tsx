@@ -26,7 +26,6 @@ const ADS_POSITION_RE = /marketing|advertis|partner/i
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ADS_PATH = "/business/ads/facebook"
-const peso0 = (n: number) => "₱" + Math.round(n).toLocaleString("en-PH")
 
 export function MonitorClock() {
   const rounds = useMonitorRounds()
@@ -164,12 +163,14 @@ export function MonitorClock() {
                 Walk your spending accounts one by one and mark each Monitored — biggest spend first.
               </p>
               <div className="max-h-52 overflow-y-auto divide-y divide-slate-100 rounded-xl border border-slate-200">
+                {/* ⚠ WALANG ₱ dito — ang spend-pick quiz ang magtatanong niyan;
+                    kapag nakasulat na rito, nasagot na bago pa tumingin
+                    (iniulat ng may-ari, Ago 24 2026). */}
                 {[...myChecks].sort((a, b) => b.spend_at_freeze - a.spend_at_freeze).map(c => (
                   <div key={c.id} className="px-3 py-2 flex items-center gap-2 text-sm">
                     <span className={`w-2 h-2 rounded-full ${c.checked_at ? "bg-emerald-500" : "bg-amber-400"}`} />
                     <span className="flex-1 truncate font-semibold text-slate-800">{c.account_name}</span>
-                    <span className="tabular-nums text-[11px] text-slate-400">{peso0(c.spend_at_freeze)}</span>
-                    {c.checked_at ? <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" /> : null}
+                    {c.checked_at ? <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" /> : <span className="text-[11px] text-slate-400">to check</span>}
                   </div>
                 ))}
               </div>
