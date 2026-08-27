@@ -5,7 +5,7 @@ import {
   AlertTriangle, RefreshCw, Trophy, CheckCircle2, Hourglass, ExternalLink,
 } from "lucide-react"
 import type { FBAccount } from "@/lib/fb-store"
-import { VAT, usePageRts } from "@/lib/scaling-signals"
+import { VAT } from "@/lib/scaling-signals"
 import { whoAmI, rosterEmailByName, type Me } from "@/lib/notify"
 import {
   usePartnerTasks, deadlineInfo, badgeCount, monthKey, todayStr,
@@ -183,7 +183,6 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
   const [mtdByAcct, setMtdByAcct] = useState<Record<string, MtdPart & { owner: string; pageName: string }>>({})
   const [mtdLoading, setMtdLoading] = useState(true)
   const liveKey = useMemo(() => live.map(a => a.id).sort().join(","), [live])
-  const rtsMap = usePageRts(live)
 
   useEffect(() => {
     if (live.length === 0) { setMtdLoading(false); return }
@@ -229,29 +228,29 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveKey, month])
 
-  // Kada owner: Σ spend, Σ value, at net ROAS na TIMBANG KADA ACCOUNT —
-  // value×(1−RTS ng page ng account na iyon), tapos ÷ (Σspend × VAT). Ito ang
+  // Kada owner: Σ spend, Σ value, at ROAS = Σvalue ÷ (Σspend × VAT). Ito ang
   // parehong house math ng Dashboard/Tracker, pinagsama lang sa antas ng owner.
+  //
+  // ⚠ WALA NANG RTS (hatol ng may-ari, Ago 25 2026) — ang purchase value ay
+  // kung ano ang iniuulat ni Meta, walang binabawas na balik-padala.
   const ownerAgg = useMemo(() => {
-    const m: Record<string, { spend: number; value: number; valueNet: number; purchases: number }> = {}
+    const m: Record<string, { spend: number; value: number; purchases: number }> = {}
     for (const part of Object.values(mtdByAcct)) {
       const o = part.owner || "—"
-      const rts = rtsMap.get(part.pageName) ?? 0
-      if (!m[o]) m[o] = { spend: 0, value: 0, valueNet: 0, purchases: 0 }
-      m[o].spend += part.spend; m[o].value += part.value
-      m[o].valueNet += part.value * (1 - rts); m[o].purchases += part.purchases
+      if (!m[o]) m[o] = { spend: 0, value: 0, purchases: 0 }
+      m[o].spend += part.spend; m[o].value += part.value; m[o].purchases += part.purchases
     }
     return m
-  }, [mtdByAcct, rtsMap])
+  }, [mtdByAcct])
 
   // Ang KABUUAN ng lahat — ito ang sinusukat ng team target. Pinagsasama ang
-  // gastos at ang net na halaga BAGO hatiin, kaya ang malaking account ay may
-  // katumbas na bigat: iisang net ROAS ng buong koponan, hindi average ng
-  // magkakahiwalay na ROAS (magkaibang numero iyon, at ang huli ay mali).
+  // gastos at ang halaga BAGO hatiin, kaya ang malaking account ay may katumbas
+  // na bigat: iisang ROAS ng buong koponan, hindi average ng magkakahiwalay na
+  // ROAS (magkaibang numero iyon, at ang huli ay mali).
   const teamAgg = useMemo(() => {
-    const t = { spend: 0, value: 0, valueNet: 0, purchases: 0 }
+    const t = { spend: 0, value: 0, purchases: 0 }
     for (const a of Object.values(ownerAgg)) {
-      t.spend += a.spend; t.value += a.value; t.valueNet += a.valueNet; t.purchases += a.purchases
+      t.spend += a.spend; t.value += a.value; t.purchases += a.purchases
     }
     return t
   }, [ownerAgg])
@@ -342,7 +341,7 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
           <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
             <Target className="w-4 h-4 text-blue-600" /> Monthly targets — {month}
           </p>
-          <span className="text-[11px] text-slate-400">actuals are live from Meta · sales = purchase value MTD · ROAS is net (after RTS, ÷1.12)</span>
+          <span className="text-[11px] text-slate-400">actuals are live from Meta · sales = purchase value MTD · ROAS = value ÷ (spend × 1.12 VAT)</span>
           {mtdLoading && <RefreshCw className="w-3 h-3 animate-spin text-slate-400" />}
         </div>
         {/* ── ANG TARGET NG KOPONAN ─────────────────────────────────────────
@@ -363,7 +362,7 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
             const tgt = targetOf(o)!
             const act = ownerAgg[o]
             const salesPct = tgt && tgt.target_sales > 0 && act ? Math.min(100, (act.value / tgt.target_sales) * 100) : 0
-            const netRoas = act && act.spend > 0 ? act.valueNet / (act.spend * VAT) : 0
+            const netRoas = act && act.spend > 0 ? act.value / (act.spend * VAT) : 0
             const roasOk = tgt && tgt.target_roas > 0 ? (netRoas >= tgt.target_roas ? "hit" : netRoas >= tgt.target_roas * 0.9 ? "near" : "off") : ""
             const salesHit = !!tgt && tgt.target_sales > 0 && !!act && act.value >= tgt.target_sales
             return (
@@ -415,7 +414,7 @@ export function PartnerTasks({ accounts, onSignals, rounds }: {
                     <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                       roasOk === "hit" ? "bg-emerald-100 text-emerald-800"
                         : roasOk === "near" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-700"}`}>
-                      Net ROAS {dec(netRoas)} / {dec(tgt.target_roas)}
+                      ROAS {dec(netRoas)} / {dec(tgt.target_roas)}
                     </span>
                   )}
                 </div>
@@ -740,19 +739,19 @@ function TaskModal({ edit, assignees, canSetReward, busy, onClose, onSave }: {
  * Ang target ng BUONG KOPONAN — nasa itaas ng mga indibidwal na card.
  *
  * ⚠ ANG PREMYO AY NARITO LANG. Isang layunin, isang gantimpala, pinaghahatian
- * (hatol ng may-ari, Ago 18 2026). Ang net ROAS ay sa PINAGSAMANG gastos at
+ * (hatol ng may-ari, Ago 18 2026). Ang ROAS ay sa PINAGSAMANG gastos at
  * halaga — hindi average ng magkakahiwalay na ROAS, na ibang numero at
  * nagbibigay ng maling bigat sa maliliit na account.
  */
 function TeamTargetCard({ team, agg, month, isAdmin, loading, onEdit }: {
   team: TeamTarget | null
-  agg: { spend: number; value: number; valueNet: number; purchases: number }
+  agg: { spend: number; value: number; purchases: number }
   month: string
   isAdmin: boolean
   loading: boolean
   onEdit: () => void
 }) {
-  const netRoas = agg.spend > 0 ? agg.valueNet / (agg.spend * VAT) : 0
+  const netRoas = agg.spend > 0 ? agg.value / (agg.spend * VAT) : 0
   const salesPct = team && team.target_sales > 0 ? Math.min(100, (agg.value / team.target_sales) * 100) : 0
   const salesHit = !!team && team.target_sales > 0 && agg.value >= team.target_sales
   const roasHit = !!team && team.target_roas > 0 && netRoas >= team.target_roas
@@ -807,7 +806,7 @@ function TeamTargetCard({ team, agg, month, isAdmin, loading, onEdit }: {
         <div className="relative">
           <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
             roasHit ? "bg-emerald-400/25 text-emerald-100" : "bg-white/12 text-white/85"}`}>
-            Combined net ROAS {dec(netRoas)} / {dec(team.target_roas)}
+            Combined ROAS {dec(netRoas)} / {dec(team.target_roas)}
           </span>
         </div>
       )}
@@ -856,12 +855,12 @@ function TargetModal({ owner, owners, onOwner, month, existing, busy, onClose, o
               className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
           </label>
           <label className="block">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Target net ROAS</span>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Target ROAS</span>
             <input type="number" min="0" step="0.1" value={roas} onChange={e => setRoas(e.target.value)} placeholder="e.g. 3.9"
               className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
           </label>
           <p className="text-[11px] text-slate-400 leading-snug">
-            Actuals are live from Meta for this partner&apos;s ad accounts — sales is month-to-date purchase value; ROAS is net (after the page&apos;s RTS rate, ÷ 1.12 VAT), the same math as Testing/Scaling.
+            Actuals are live from Meta for this partner&apos;s ad accounts — sales is month-to-date purchase value; ROAS is Meta&apos;s purchase value ÷ (spend × 1.12 VAT), the same math as Testing/Scaling.
             <b className="text-slate-500"> The reward lives on the team goal</b>, not here.
           </p>
         </div>
@@ -908,7 +907,7 @@ function TeamModal({ month, existing, busy, onClose, onSave }: {
               className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
           </label>
           <label className="block">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Combined target net ROAS</span>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Combined target ROAS</span>
             <input type="number" min="0" step="0.1" value={roas} onChange={e => setRoas(e.target.value)} placeholder="e.g. 3.5"
               className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3 tabular-nums" />
           </label>
@@ -918,7 +917,7 @@ function TeamModal({ month, existing, busy, onClose, onSave }: {
               className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-3" autoFocus />
           </label>
           <p className="text-[11px] text-slate-400 leading-snug">
-            One reward for everyone. Combined net ROAS is computed on the <b className="text-slate-500">pooled</b> spend and value —
+            One reward for everyone. Combined ROAS is computed on the <b className="text-slate-500">pooled</b> spend and value —
             not an average of each partner&apos;s ROAS, which would give a small account the same weight as a large one.
             Everyone with an account is notified when you save this.
           </p>

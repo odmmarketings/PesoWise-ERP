@@ -7,7 +7,6 @@ import {
 } from "lucide-react"
 import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
-import { cachedJson } from "@/lib/pancake-cache"
 import { useScalingRegistry, type Registration, type ScaleEvent } from "@/lib/scaling-registry-store"
 import { runAge } from "@/lib/scaling-signals"
 import { logAds, logAdsMany } from "@/lib/ads-activity-store"
@@ -18,11 +17,12 @@ import { playToggle, playError } from "@/lib/ui-feedback"
 //
 // MGA DESISYON NG MAY-ARI (Ago 14 2026):
 //   • Suggest-only ang default; may auto-pause na maaaring buksan kada rule.
-//   • NET ROAS ang batayan: value × (1 − RTS rate ng page) ÷ (spend × 1.12).
-//     Ang RTS rate ay kada PAGE sa parehong 31-araw na window (hindi kada ad
-//     set — walang per-adset RTS ang Pancake; hayagang sinasabi ito sa UI).
+//   • ROAS ang batayan: purchase value ÷ (spend × 1.12).
+//     ⚠ WALANG RTS (binago Ago 25 2026: "wala naman sa meta ads manager na
+//     less RTS eh... basta meta metrics tayo"). Ang purchase value ay kung ano
+//     ang iniuulat ni Meta; VAT lang ang idinaragdag natin sa gastos.
 //   • AD SET ang antas ng scale/kill; kada AD ang fatigue.
-//   • Ready to scale = net ROAS ≥ 3.9 sa 3+ magkakasunod na araw na may spend.
+//   • Ready to scale = ROAS ≥ 3.9 sa 3+ magkakasunod na araw na may spend.
 //
 // LIMITASYON NA SADYANG HAYAG: ang auto-pause ay tumatakbo lang kapag BUKAS ang
 // tab na ito (client-side). Ang naka-schedule na 9AM/11PM na bantay ay ang
@@ -80,7 +80,6 @@ type AdsetModel = {
   campaignBudgetKind: string
   createdTime: string       // ISO mula kay Meta — pinakabago ang una sa picker
   startTime: string         // tunay na simula ng takbo — dito nakasandal ang edad
-  rtsRate: number
   dailies: Map<string, Daily>
 }
 /** Saan itataas ang budget: sa ad set (ABO) o sa campaign (CBO)? */
@@ -92,7 +91,7 @@ function budgetTarget(m: AdsetModel): { level: "adset" | "campaign" | "none"; id
 // `w1` = NGAYONG ARAW. Nauna ito sa lahat: iyon ang unang tinitingnan kapag
 // binuksan mo ang tab, at dati ay nasa reason text lang — wala sa hanay ng
 // numero, kaya mukhang nagsisimula sa 3 araw ang kasaysayan.
-type Windows = Record<"w1" | "w3" | "w7" | "w15" | "w31", { spend: number; value: number; purchases: number; netRoas: number; grossRoas: number; cpp: number }>
+type Windows = Record<"w1" | "w3" | "w7" | "w15" | "w31", { spend: number; value: number; purchases: number; netRoas: number; cpp: number }>
 type Signal = {
   adset: AdsetModel; windows: Windows
   kind: "scale" | "kill" | "watch"
@@ -187,7 +186,9 @@ function AccountPicker({ value, onChange, items, totals }: {
 const peso = (n: number) => "₱" + Math.round(n).toLocaleString("en-PH")
 const dec = (n: number) => (isFinite(n) ? n : 0).toFixed(2)
 const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-const netOf = (value: number, spend: number, rts: number) => spend > 0 ? (value * (1 - rts)) / (spend * VAT) : 0
+// ⚠ IISANG PORMULA SA BUONG FACEBOOK ADS: purchase value ÷ (spend × VAT).
+// Walang RTS mula Ago 25 2026 — tingnan ang scaling-signals.ts para sa hatol.
+const netOf = (value: number, spend: number) => spend > 0 ? value / (spend * VAT) : 0
 
 // ── MODULE-LEVEL CACHE ───────────────────────────────────────────────────────
 // Ang bawat tab ay may sariling `key` (kailangan — hindi dapat maghalo ang state),
@@ -433,29 +434,17 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
   // Ang TUNAY na hila. Hiwalay para maibahagi ang IISANG promise sa lahat ng
   // mount na humihingi ng parehong cacheKey.
   const runLoad = useCallback(async (force: boolean) => {
-    const live = liveRef.current, allPages = pagesRef.current
+    const live = liveRef.current
     MODEL_PROGRESS.set(cacheKey, { done: 0, total: live.length })
     setProgress({ done: 0, total: live.length })
     const errs: string[] = []
     const ok: string[] = []
 
-    // 1. RTS rate kada page (returning+returned ÷ total sales, parehong window).
-    const rtsByPage = new Map<string, number>()
-    const pageNames = Array.from(new Set(live.map(a => a.page_name).filter(Boolean)))
-    await mapLimit(pageNames, 4, async name => {
-      const pg = allPages.find(p => p.name === name && p.api_key && (p.pancake_page_id || p.shop_id))
-      if (!pg) return   // walang Pancake creds → walang RTS data → gross ang gagamitin (rate 0, hayag sa UI)
-      try {
-        const j = await cachedJson(
-          `/api/pancake/orders?api_key=${encodeURIComponent(pg.api_key)}&page_id=${encodeURIComponent(pg.pancake_page_id || pg.shop_id)}`
-          + `&from=${from31}&to=${today}&phase=fast${force ? "&nocache=1" : ""}`)
-        const s = j.statusSales || {}
-        const total = Number(s.total || 0)
-        if (total > 0) rtsByPage.set(name, Math.min(0.9, (Number(s.returning || 0) + Number(s.returned || 0)) / total))
-      } catch (e: any) { errs.push(`${name}: RTS rate — ${String(e?.message).slice(0, 60)}`) }
-    })
+    // ⚠ WALA NANG HILA SA PANCAKE DITO. Dating kinukuha muna ang RTS rate kada
+    // page bago pa magsimula ang tunay na trabaho — tinanggal Ago 25 2026 nang
+    // maging Meta metrics ang lahat. Mas mabilis ding bumukas ang tab.
 
-    // 2. Daily series + adset meta kada account.
+    // Daily series + adset meta kada account.
     const models: AdsetModel[] = []
     await mapLimit(live, 3, async a => {
       try {
@@ -476,7 +465,6 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         const metaById = new Map<string, any>((meta.rows || []).map((r: any) => [r.id, r]))
         const campById = new Map<string, any>((camp.rows || []).map((r: any) => [r.id, r]))
         const byId = new Map<string, AdsetModel>()
-        const rts = rtsByPage.get(a.page_name) ?? 0
         const mk = (id: string, name: string, campaignId: string, campaignName: string): AdsetModel => {
           const mm = metaById.get(id) || {}
           const cm = campById.get(campaignId) || {}
@@ -500,7 +488,6 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             campaignBudgetKind: isCampaign ? (mm.budgetKind || "") : (cm.budgetKind || ""),
             createdTime: mm.createdTime || "",
             startTime: mm.startTime || "",
-            rtsRate: rts,
             dailies: new Map(),
           }
         }
@@ -680,7 +667,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       const win = (n: number) => {
         let spend = 0, value = 0, purchases = 0
         for (const dt of dates.slice(-n)) { const d = m.dailies.get(dt); if (d) { spend += d.spend; value += d.purchaseValue; purchases += d.purchases } }
-        return { spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate), grossRoas: spend > 0 ? value / (spend * VAT) : 0, cpp: purchases > 0 ? spend / purchases : 0 }
+        return { spend, value, purchases, netRoas: netOf(value, spend), cpp: purchases > 0 ? spend / purchases : 0 }
       }
       const windows: Windows = { w1: win(1), w3: win(3), w7: win(7), w15: win(15), w31: win(31) }
       // Ang inirehistro ay pinapakita KAHIT walang gastos pa — iyon ang sagot sa
@@ -698,7 +685,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           const d = m.dailies.get(dt)
           if (d) { spend += d.spend; value += d.purchaseValue; purchases += d.purchases }
         }
-        sinceReg = { days, spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate) }
+        sinceReg = { days, spend, value, purchases, netRoas: netOf(value, spend) }
       }
 
       // Buwanang kabuuan (mula unang araw ng buwan) — ito ang hinihinging
@@ -710,7 +697,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           if (dt < monthStart) continue
           spend += d.spend; value += d.purchaseValue; purchases += d.purchases
         }
-        mtd = { spend, value, purchases, netRoas: netOf(value, spend, m.rtsRate) }
+        mtd = { spend, value, purchases, netRoas: netOf(value, spend) }
       }
       // Sa Monitoring ang tanong ay "ano ang tumakbo NGAYONG BUWAN" — ang
       // gumastos lang noong nakaraang buwan ay ingay sa listahan ng buwan.
@@ -718,7 +705,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
 
       const tD = m.dailies.get(today)
       const todaySpend = tD?.spend || 0
-      const todayNet = tD ? netOf(tD.purchaseValue, tD.spend, m.rtsRate) : 0
+      const todayNet = tD ? netOf(tD.purchaseValue, tD.spend) : 0
 
       // streak: magkakasunod na araw (pinakabago pababa, laktaw ang today kung
       // maliit pa ang gastos nito — hindi pa tapos ang araw)
@@ -727,7 +714,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       for (let i = startIdx; i >= 0; i--) {
         const d = m.dailies.get(dates[i])
         if (!d || d.spend < rules.minDailySpend) break
-        if (netOf(d.purchaseValue, d.spend, m.rtsRate) < rules.scaleRoas) break
+        if (netOf(d.purchaseValue, d.spend) < rules.scaleRoas) break
         streak++
       }
 
@@ -747,7 +734,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       if (reg && hoursSinceScale < 48 && isActive
         && windows.w3.netRoas < rules.bleedRoas && windows.w3.spend >= rules.bleedSpend) {
         out.push({ ...base, kind: "kill", rule: "bleeding",
-          reason: `Bleeding INSIDE the 48h post-scale window: 3-day net ROAS ${dec(windows.w3.netRoas)} on ${peso(windows.w3.spend)} spent. `
+          reason: `Bleeding INSIDE the 48h post-scale window: 3-day ROAS ${dec(windows.w3.netRoas)} on ${peso(windows.w3.spend)} spent. `
             + `Relearning doesn't explain this much — kill it, don't wait out the cooldown.` })
         continue
       }
@@ -762,7 +749,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         const bt = budgetTarget(m)
         const n = (reg?.scales.length || 0) + 1
         out.push({ ...base, kind: "scale", rule: "ready_to_scale",
-          reason: `Net ROAS ≥ ${rules.scaleRoas} for ${streak} straight days (7d: ${dec(windows.w7.netRoas)}).`
+          reason: `ROAS ≥ ${rules.scaleRoas} for ${streak} straight days (7d: ${dec(windows.w7.netRoas)}).`
             + (reg ? ` This would be scale #${n}.` : "")
             + (isMonitoring
               // Walang Scale na buton dito — huwag mangako ng aksyong wala rito.
@@ -801,16 +788,16 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                 + `Turn the parent back on in Ads Manager, or unregister this.`
               : `Paused — you turned this ${unitLabel} off, so it is not being judged. `
                 + `It stays here because you registered it; unregister to remove it.`
-                + (sinceReg && sinceReg.spend > 0 ? ` Last known: net ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)} since ${reg.registered_at}.` : ``))
+                + (sinceReg && sinceReg.spend > 0 ? ` Last known: ROAS ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)} since ${reg.registered_at}.` : ``))
             // Monitoring: ang bilang ng buwan ang buong punto — hindi ang hatol.
-            : `Stopped, but it spent this month: net ${dec(mtd!.netRoas)} on ${peso(mtd!.spend)} across ${mtd!.purchases} purchases. `
+            : `Stopped, but it spent this month: ROAS ${dec(mtd!.netRoas)} on ${peso(mtd!.spend)} across ${mtd!.purchases} purchases. `
               + (parentOff ? `Its ${whoOff} is paused; the ${unitLabel} itself is still on.` : `It is paused now, so nothing more will be added.`) })
         continue
       }
 
       if (windows.w3.netRoas < rules.bleedRoas && windows.w3.spend >= rules.bleedSpend) {
         out.push({ ...base, kind: "kill", rule: "bleeding",
-          reason: `Bleeding: 3-day net ROAS ${dec(windows.w3.netRoas)} on ${peso(windows.w3.spend)} spent. Kill now.` })
+          reason: `Bleeding: 3-day ROAS ${dec(windows.w3.netRoas)} on ${peso(windows.w3.spend)} spent. Kill now.` })
         continue
       }
       if (hour >= rules.noSalesHour && todaySpend >= rules.evalMinSpend && (tD?.purchases || 0) === 0) {
@@ -820,7 +807,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       }
       if (todaySpend >= rules.evalMinSpend && todayNet < rules.killRoas) {
         out.push({ ...base, kind: "kill", rule: "lowRoas",
-          reason: `Today's net ROAS ${dec(todayNet)} < ${rules.killRoas} on ${peso(todaySpend)}. Kill before midnight if it doesn't recover.` })
+          reason: `Today's ROAS ${dec(todayNet)} < ${rules.killRoas} on ${peso(todaySpend)}. Kill before midnight if it doesn't recover.` })
         continue
       }
       if (windows.w3.purchases > 0 && windows.w3.cpp > rules.cppMax) {
@@ -834,7 +821,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         out.push({ ...base, kind: "watch", rule: "near",
           reason: streak >= 1
             ? `${streak}/${rules.scaleDays} days toward scale (needs ${rules.scaleDays - streak} more ≥ ${rules.scaleRoas}).`
-            : `Today's net ${dec(todayNet)} is within 10% of the ${rules.killRoas} kill line.` })
+            : `Today's ROAS ${dec(todayNet)} is within 10% of the ${rules.killRoas} kill line.` })
         continue
       }
       // Ang inirehistro ay LAGING may row kahit walang signal — kung hindi,
@@ -843,13 +830,13 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       if (reg) {
         out.push({ ...base, kind: "watch", rule: "monitoring",
           reason: sinceReg && sinceReg.spend > 0
-            ? `Day ${sinceReg.days} since registered · net ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)}. `
+            ? `Day ${sinceReg.days} since registered · ROAS ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)}. `
               + `Needs ${rules.scaleRoas}+ for ${rules.scaleDays} straight days to qualify (currently ${streak}).`
             : `Registered ${reg.registered_at} — no spend recorded yet.` })
       } else if (isMonitoring) {
         out.push({ ...base, kind: "watch", rule: "monitoring",
           reason: mtd && mtd.spend > 0
-            ? `Month to date: net ${dec(mtd.netRoas)} on ${peso(mtd.spend)} across ${mtd.purchases} purchases. Nothing hits a rule right now.`
+            ? `Month to date: ROAS ${dec(mtd.netRoas)} on ${peso(mtd.spend)} across ${mtd.purchases} purchases. Nothing hits a rule right now.`
             : `No spend this month yet.` })
       }
     }
@@ -882,7 +869,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
     (t, i) => ({ scale: t.scale + i.scale, kill: t.kill + i.kill, watch: t.watch + i.watch }),
     { scale: 0, kill: 0, watch: 0 }), [accountItems])
 
-  // Filter + sort ayon sa 7-day net ROAS (ang default na 31-araw na sukat).
+  // Filter + sort ayon sa 7-day ROAS (ang default na 31-araw na sukat).
   const view = useMemo(() => {
     const f = fAccount === "ALL" ? ownerScoped : ownerScoped.filter(s => s.adset.account.name === fAccount)
     return [...f].sort((a, b) => sortDir === "desc"
@@ -1196,7 +1183,6 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         + `&token=${encodeURIComponent(s.adset.account.token)}&account_id=${encodeURIComponent(actId(s.adset.account.ad_account_id))}`
         + `&from=${from31}&to=${today}`).then(r => r.json())
       if (!j.success) { setErrors(p => [...p, `${s.adset.name}: ${lvl}s — ${String(j.error).slice(0, 80)}`]); setAdsBusy(""); return }
-      const rts = s.adset.rtsRate
       // Sapat na hugis para sa table na ito — hindi buong RawCampaign.
       type MetaAd = {
         id: string; name?: string; thumbnail?: string; status?: string
@@ -1208,7 +1194,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         return {
           id: r.id, name: r.name || "", thumbnail: r.thumbnail || "", status: r.status || "—",
           spend, purchases, purchaseValue: r.purchaseValue || 0,
-          netRoas: netOf(r.purchaseValue || 0, spend, rts),
+          netRoas: netOf(r.purchaseValue || 0, spend),
           cpp: purchases > 0 ? spend / purchases : 0,
           ctr: r.linkCtr || 0, frequency: r.frequency || 0, impressions: r.impressions || 0,
         }
@@ -1525,7 +1511,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             )
           })
         })()}
-        <span className="text-slate-400">gross 7d: {dec(s.windows.w7.grossRoas)} · RTS rate {(s.adset.rtsRate * 100).toFixed(1)}%</span>
+        <span className="text-slate-400">Meta purchase ROAS · spend incl. 12% VAT</span>
       </div>
       {/* Buwanang kabuuan — ito ang tinitingnan sa Monitoring, hindi ang gulong. */}
       {s.mtd && (
@@ -1533,7 +1519,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           <b className="text-slate-600">This month ({monthStart.slice(5)} → {today.slice(5)})</b>
           {" · "}spend {peso(s.mtd.spend)}
           {" · "}value {peso(s.mtd.value)}
-          {" · "}net <b className={s.mtd.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.mtd.netRoas < rules.killRoas ? "text-rose-600" : "text-slate-700"}>{dec(s.mtd.netRoas)}</b>
+          {" · "}ROAS <b className={s.mtd.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.mtd.netRoas < rules.killRoas ? "text-rose-600" : "text-slate-700"}>{dec(s.mtd.netRoas)}</b>
           {" · "}{s.mtd.purchases} purchases
           {s.mtd.purchases > 0 && <> · CPP {peso(s.mtd.spend / s.mtd.purchases)}</>}
         </p>
@@ -1543,7 +1529,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         <div className="text-[11px] text-slate-500 bg-slate-50 rounded-md px-2 py-1.5 space-y-0.5">
           <p>
             <b>Registered {s.reg.registered_at}</b>
-            {s.sinceReg && <> · day {s.sinceReg.days} · {peso(s.sinceReg.spend)} spent · net <b className={s.sinceReg.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.sinceReg.netRoas < rules.killRoas ? "text-rose-600" : ""}>{dec(s.sinceReg.netRoas)}</b> · {s.sinceReg.purchases} purchases</>}
+            {s.sinceReg && <> · day {s.sinceReg.days} · {peso(s.sinceReg.spend)} spent · ROAS <b className={s.sinceReg.netRoas >= rules.scaleRoas ? "text-emerald-600" : s.sinceReg.netRoas < rules.killRoas ? "text-rose-600" : ""}>{dec(s.sinceReg.netRoas)}</b> · {s.sinceReg.purchases} purchases</>}
           </p>
           {s.reg.scales.map((sc, i) => {
           const isLast = i === s.reg!.scales.length - 1
@@ -1687,7 +1673,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
                 ? <>Registered <b>campaigns</b> · scale 10% / 20% on the campaign budget · open <b>View ads</b> for per-creative results</>
                 : <>Registered <b>ad sets</b> · tracked from the day you register at 3 / 7 / 15 / 31 days</>}
           </p>
-          <p className="text-[11px] text-slate-400">Net ROAS = value × (1 − page RTS rate) ÷ (spend × 1.12) · {unitLabel} level</p>
+          <p className="text-[11px] text-slate-400">ROAS = Meta purchase value ÷ (spend × 1.12 VAT) · {unitLabel} level</p>
           {/* Legend — ang tatlong bilang sa account picker ay nasa ganitong pagkakasunod */}
           <p className="text-[11px] text-slate-400 flex items-center gap-2.5">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> scale</span>
@@ -1703,7 +1689,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           </select>
           <AccountPicker value={fAccount} onChange={setFAccount} items={accountItems} totals={accountTotals} />
           <button onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}
-            title={sortDir === "desc" ? "Highest net ROAS first" : "Lowest net ROAS first"}
+            title={sortDir === "desc" ? "Highest ROAS first" : "Lowest ROAS first"}
             className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 flex items-center gap-1.5 hover:bg-slate-50 whitespace-nowrap">
             ROAS {sortDir === "desc" ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />}
           </button>
@@ -1789,13 +1775,13 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 text-sm">
           <p className="font-bold text-slate-800">Rules — saved on this browser</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2 text-slate-600">
-            <label className="flex items-center justify-between gap-2">Scale: net ROAS ≥ {num(rules.scaleRoas, n => saveRules({ ...rules, scaleRoas: n }))}</label>
+            <label className="flex items-center justify-between gap-2">Scale: ROAS ≥ {num(rules.scaleRoas, n => saveRules({ ...rules, scaleRoas: n }))}</label>
             <label className="flex items-center justify-between gap-2">…for days {num(rules.scaleDays, n => saveRules({ ...rules, scaleDays: n }))}</label>
             <label className="flex items-center justify-between gap-2">Min daily spend {num(rules.minDailySpend, n => saveRules({ ...rules, minDailySpend: n }))}</label>
-            <label className="flex items-center justify-between gap-2">Kill: day net ROAS &lt; {num(rules.killRoas, n => saveRules({ ...rules, killRoas: n }))}</label>
+            <label className="flex items-center justify-between gap-2">Kill: day ROAS &lt; {num(rules.killRoas, n => saveRules({ ...rules, killRoas: n }))}</label>
             <label className="flex items-center justify-between gap-2">No-sales check hour {num(rules.noSalesHour, n => saveRules({ ...rules, noSalesHour: n }))}</label>
             <label className="flex items-center justify-between gap-2">Eval min spend {num(rules.evalMinSpend, n => saveRules({ ...rules, evalMinSpend: n }))}</label>
-            <label className="flex items-center justify-between gap-2">Bleeding: 3d net &lt; {num(rules.bleedRoas, n => saveRules({ ...rules, bleedRoas: n }))}</label>
+            <label className="flex items-center justify-between gap-2">Bleeding: 3d ROAS &lt; {num(rules.bleedRoas, n => saveRules({ ...rules, bleedRoas: n }))}</label>
             <label className="flex items-center justify-between gap-2">…at 3d spend ≥ {num(rules.bleedSpend, n => saveRules({ ...rules, bleedSpend: n }))}</label>
             <label className="flex items-center justify-between gap-2">CPP ceiling (3d) {num(rules.cppMax, n => saveRules({ ...rules, cppMax: n }))}</label>
           </div>
@@ -2051,7 +2037,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           {/* Sa Monitoring ay walang Scale na buton, kaya "Winning" ang tawag —
               hindi "Ready to Scale", na nangangako ng aksyong wala rito. */}
           {Section({ title: isMonitoring ? "Winning" : "Ready to Scale", icon: TrendingUp, color: "text-emerald-600", accent: "border-emerald-500", rows: scaleRows,
-            empty: `None yet — needs net ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.` })}
+            empty: `None yet — needs ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.` })}
           {Section({ title: "Kill Suggestions", icon: Skull, color: "text-rose-600", accent: "border-rose-500", rows: killRows,
             empty: "Nothing hits the kill rules right now." })}
           {Section({ title: isMonitoring ? "Everything else" : "Monitoring / Watch", icon: Eye, color: "text-amber-600", accent: "border-amber-400", rows: watchRows,

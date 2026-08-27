@@ -52,44 +52,15 @@ function parsed(actions = [], values = []) {
   }
 }
 
-// RTS rate kada page (returning+returned ÷ total) — kapareho ng tracker
-async function rtsRates(pages) {
-  const out = new Map()
-  const fromTs = Math.floor(Date.parse(`${from31}T00:00:00+08:00`) / 1000)
-  const toTs = Math.floor(Date.now() / 1000)
-  for (const pg of pages) {
-    const SHOP = pg.pancake_page_id || pg.shop_id
-    if (!pg.api_key || !SHOP) continue
-    try {
-      // fast aggregates: total + returning(4) + returned(5)
-      const agg = async (statuses) => {
-        const u = new URL(`https://pos.pages.fm/api/v1/shops/${SHOP}/orders`)
-        u.searchParams.set("api_key", pg.api_key)
-        u.searchParams.set("page_size", "1")
-        u.searchParams.set("startDateTime", String(fromTs))
-        u.searchParams.set("endDateTime", String(toTs))
-        u.searchParams.set("updateStatus", "inserted_at")
-        for (const s of statuses) u.searchParams.append("filter_status[]", String(s))
-        const j = await jf(await fetch(u.toString(), { signal: AbortSignal.timeout(12000) }))
-        return Number(j?.aggs?.cod?.value ?? 0)
-      }
-      const [total, returning, returned] = await Promise.all([agg([]), agg([4]), agg([5])])
-      if (total > 0) out.set(pg.name, Math.min(0.9, (returning + returned) / total))
-    } catch {}
-  }
-  return out
-}
 
 const accounts = (await sbGet("fb_accounts?select=name,ad_account_id,token,page_name,archived"))
   .filter(a => !a.archived && a.token && a.ad_account_id)
-const pages = await sbGet("store_pages?select=name,api_key,pancake_page_id,shop_id&archived_at=is.null")
-const rts = await rtsRates(pages.filter(p => accounts.some(a => a.page_name === p.name)))
 
 const scale = [], noSales = [], lowRoas = [], bleeding = []
 for (const a of accounts) {
   const acct = actId(a.ad_account_id)
-  const rate = rts.get(a.page_name) ?? 0
-  const net = (v, s) => s > 0 ? (v * (1 - rate)) / (s * VAT) : 0
+  // ⚠ Meta metrics — walang RTS (hatol ng may-ari, Ago 25 2026).
+  const net = (v, s) => s > 0 ? v / (s * VAT) : 0
   const tr = encodeURIComponent(JSON.stringify({ since: from31, until: today }))
   let url = `https://graph.facebook.com/v21.0/${acct}/insights?level=adset&fields=adset_id,adset_name,spend,actions,action_values&time_range=${tr}&time_increment=1&limit=500&access_token=${encodeURIComponent(a.token)}`
   const byId = new Map()
@@ -135,6 +106,6 @@ const body = sec("READY TO SCALE", scale, "🚀") + sec("BLEEDING — kill now",
 if (!body) { console.log("walang signal — walang ipapadala (hindi nag-i-spam)"); process.exit(0) }
 await fetch(WEBHOOK, {
   method: "POST", headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ content: `**📊 Scaling Tracker — ${today} ${String(phHour).padStart(2, "0")}:00 PHT**${body}\n_Net ROAS (RTS-adjusted, +12% VAT). Open PesoWise → Facebook Ads → Scaling to act._` }),
+  body: JSON.stringify({ content: `**📊 Scaling Tracker — ${today} ${String(phHour).padStart(2, "0")}:00 PHT**${body}\n_ROAS (Meta purchase value ÷ spend +12% VAT). Open PesoWise → Facebook Ads → Scaling to act._` }),
 })
 console.log(`sent: scale=${scale.length} bleeding=${bleeding.length} noSales=${noSales.length} lowRoas=${lowRoas.length}`)

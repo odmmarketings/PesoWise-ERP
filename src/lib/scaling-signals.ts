@@ -1,8 +1,4 @@
 "use client"
-import { useEffect, useState } from "react"
-import { cachedJson } from "@/lib/pancake-cache"
-import { useActivePages } from "@/lib/pages-store"
-import type { FBAccount } from "@/lib/fb-store"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HOUSE MATH ng Facebook Ads — hinugot mula sa ScalingTracker para magamit din
@@ -11,9 +7,19 @@ import type { FBAccount } from "@/lib/fb-store"
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const VAT = 1.12
-/** Net ROAS = value × (1 − RTS ng page) ÷ (spend × 1.12). Ito ang batayan ng kill/scale. */
-export const netOf = (value: number, spend: number, rts: number) =>
-  spend > 0 ? (value * (1 - rts)) / (spend * VAT) : 0
+/**
+ * ROAS = purchase value ÷ (spend × 1.12). Ito ang batayan ng kill/scale.
+ *
+ * ⚠ WALANG RTS DITO (hatol ng may-ari, Ago 25 2026: "wala naman sa meta ads
+ * manager na less RTS eh, basta i tulad mo sa meta ads manager na tunay...
+ * basta meta metrics tayo"). Ang purchase value ay KUNG ANO ANG IUULAT NI
+ * META — walang binabawas na balik-padala. Ang natitirang pagkakaiba sa Ads
+ * Manager ay ang VAT lang: idinaragdag natin ang 12% sa gastos dahil iyon ang
+ * tunay na sinisingil sa card (hatol Ago 24 2026), samantalang ang "Amount
+ * spent" ni Meta ay bago pa ang buwis.
+ */
+export const roasOf = (value: number, spend: number) =>
+  spend > 0 ? value / (spend * VAT) : 0
 
 // Parehong localStorage key at defaults ng Rules panel sa tracker — ang
 // binago ng user doon ay dapat makita rin ng Dashboard.
@@ -33,52 +39,11 @@ export function loadHouseRules(): HouseRules {
   catch { return DEFAULT_HOUSE }
 }
 
-const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-
-async function mapLimit<T>(items: T[], limit: number, fn: (i: T) => Promise<void>) {
-  let i = 0
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]) }))
-}
-
-/**
- * RTS rate kada PAGE (returning+returned ÷ total, huling 31 araw) — ang input
- * ng net ROAS. ⚠ SADYANG KAPAREHO ang URL ng hila sa ScalingTracker, para ang
- * `cachedJson` ay IISANG cache entry lang: ang pagbukas ng Dashboard ay hindi
- * na humihila kung nadaanan na ang Testing/Scaling (at vice versa).
- */
-export function usePageRts(accounts: FBAccount[]) {
-  const allPages = useActivePages()
-  const [map, setMap] = useState<Map<string, number>>(new Map())
-  const namesKey = Array.from(new Set(accounts.map(a => a.page_name).filter(Boolean))).sort().join(",")
-
-  useEffect(() => {
-    if (!namesKey) return
-    let alive = true
-    ;(async () => {
-      const today = dstr(new Date())
-      const d = new Date(); d.setDate(d.getDate() - 30)
-      const from31 = dstr(d)
-      const out = new Map<string, number>()
-      await mapLimit(namesKey.split(","), 4, async name => {
-        const pg = allPages.find(p => p.name === name && p.api_key && (p.pancake_page_id || p.shop_id))
-        if (!pg) return   // walang Pancake creds → gross ang gagamitin (rate 0)
-        try {
-          const j = await cachedJson(
-            `/api/pancake/orders?api_key=${encodeURIComponent(pg.api_key)}&page_id=${encodeURIComponent(pg.pancake_page_id || pg.shop_id)}`
-            + `&from=${from31}&to=${today}&phase=fast`)
-          const s = j.statusSales || {}
-          const total = Number(s.total || 0)
-          if (total > 0) out.set(name, Math.min(0.9, (Number(s.returning || 0) + Number(s.returned || 0)) / total))
-        } catch { /* walang RTS → 0; hayag sa UI na gross ang fallback */ }
-      })
-      if (alive) setMap(out)
-    })()
-    return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [namesKey, allPages.length])
-
-  return map
-}
+/* ⚠ TINANGGAL ang `usePageRts` (Ago 25 2026). Hinihila nito ang 31-araw na
+   RTS rate kada page mula sa Pancake para bawasan ang purchase value — hindi na
+   iyon ginagamit kahit saan sa Facebook Ads: Meta metrics na tayo. Bukod sa
+   maling numero, isa rin iyong hila sa Pancake kada pagbukas ng Dashboard at ng
+   tracker na wala nang binibili. */
 
 /**
  * ILANG ARAW NANG TUMATAKBO — hindi kailan nilikha.

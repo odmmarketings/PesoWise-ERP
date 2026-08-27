@@ -32,7 +32,7 @@ import {
 } from "@/lib/ads-cache"
 import { logAds, logAdsMany, useRuleEditors, useAdsActivity, ACTION_LABEL } from "@/lib/ads-activity-store"
 import { playToggle, playError, sfxOn, setSfxOn } from "@/lib/ui-feedback"
-import { loadHouseRules, netOf, usePageRts, runAge } from "@/lib/scaling-signals"
+import { loadHouseRules, roasOf, runAge } from "@/lib/scaling-signals"
 import { useScalingRegistry } from "@/lib/scaling-registry-store"
 
 const VAT = 1.12
@@ -579,40 +579,34 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
 }) {
   const [fOwner, setFOwner] = useState("All")
   const rules = useMemo(() => loadHouseRules(), [])
-  const rtsMap = usePageRts(fbAccounts)
   const registry = useScalingRegistry()
   const activity = useAdsActivity(30)
 
   const owners = useMemo(() => Array.from(new Set(
     fbAccounts.filter(a => !a.archived).map(a => a.owner).filter(Boolean))).sort(), [fbAccounts])
   const accById = useMemo(() => new Map(fbAccounts.map(a => [a.id, a])), [fbAccounts])
-  const rtsOf = useCallback((r: Row) => rtsMap.get(accById.get(r.accountId)?.page_name || "") ?? 0,
-    [rtsMap, accById])
 
   const todayStr = useMemo(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` }, [])
   const isToday = from === to && to === todayStr
   const rangeLabel = isToday ? "today" : from === to ? from : `${from.slice(5)} → ${to.slice(5)}`
 
-  // Kada campaign na may gastos: net ROAS at tubo-proxy. Ang `profit` ay
-  // value×(1−RTS) − spend×VAT — ang perang epekto, hindi lang ratio; ito ang
-  // batayan ng Top/Worst 3 para ang ₱10k @ 2.5 ay hindi matalo ng ₱200 @ 8.0.
+  // Kada campaign na may gastos: ROAS at tubo-proxy. Ang `profit` ay
+  // value − spend×VAT — ang perang epekto, hindi lang ratio; ito ang batayan ng
+  // Top/Worst 3 para ang ₱10k @ 2.5 ay hindi matalo ng ₱200 @ 8.0.
+  //
+  // ⚠ WALA NANG RTS (hatol ng may-ari, Ago 25 2026). Ang purchase value ay kung
+  // ano ang iniuulat ni Meta — ang balik-padala ay hindi na ibinabawas dito.
   const scoped = useMemo(() => rows.filter(r => fOwner === "All" || r.accountOwner === fOwner), [rows, fOwner])
-  const withNet = useMemo(() => scoped.filter(r => r.spend > 0).map(r => {
-    const rts = rtsOf(r)
-    return { r, rts, net: netOf(r.purchaseValue, r.spend, rts), profit: r.purchaseValue * (1 - rts) - r.spend * VAT }
-  }), [scoped, rtsOf])
+  const withNet = useMemo(() => scoped.filter(r => r.spend > 0).map(r => (
+    { r, net: roasOf(r.purchaseValue, r.spend), profit: r.purchaseValue - r.spend * VAT }
+  )), [scoped])
 
   const agg = useMemo(() => withNet.reduce((s, x) => ({
     spend: s.spend + x.r.spend, purchases: s.purchases + x.r.purchases,
-    netValue: s.netValue + x.r.purchaseValue * (1 - x.rts),
-  }), { spend: 0, purchases: 0, netValue: 0 }), [withNet])
-  const netAll = agg.spend > 0 ? agg.netValue / (agg.spend * VAT) : 0
-  // ⚠ PAREHONG may VAT ang net at gross (hatol ng may-ari, Ago 24 2026: "yung
-  // roas talaga is yung kasama na vat"). Dati, ang gross ay hinahati sa spend
-  // NA WALANG VAT — kaya ang agwat ng net at gross ay pinaghalong RTS at VAT,
-  // at walang makapagsabi kung alin ang kumain. Ngayon: RTS LANG ang pagitan.
-  const grossAll = agg.spend > 0 ? withNet.reduce((s, x) => s + x.r.purchaseValue, 0) / (agg.spend * VAT) : 0
-  const totalValue = withNet.reduce((s, x) => s + x.r.purchaseValue, 0)
+    value: s.value + x.r.purchaseValue,
+  }), { spend: 0, purchases: 0, value: 0 }), [withNet])
+  const netAll = roasOf(agg.value, agg.spend)
+  const totalValue = agg.value
   const cpp = agg.purchases > 0 ? agg.spend / agg.purchases : 0
   const budgetInPlay = useMemo(() => scoped.filter(r => /active/i.test(r.status)).reduce((s, r) => s + r.budget, 0), [scoped])
   const activeCount = scoped.filter(r => /active/i.test(r.status)).length
@@ -631,18 +625,17 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
   // araw ay ₱0 pa ang lahat, at ang blangkong hilera ng brand ay mukhang sira.
   // Ang walang gastos AT walang aktibo ay hindi pa rin kasama — patay iyon.
   const brands = useMemo(() => {
-    const m = new Map<string, { name: string; accountId: string; owner: string; spend: number; value: number; netValue: number; purchases: number; active: number; total: number; rts: number }>()
+    const m = new Map<string, { name: string; accountId: string; owner: string; spend: number; value: number; purchases: number; active: number; total: number }>()
     for (const r of scoped) {
-      const rts = rtsOf(r)
-      const b = m.get(r.accountName) ?? { name: r.accountName, accountId: r.accountId, owner: r.accountOwner, spend: 0, value: 0, netValue: 0, purchases: 0, active: 0, total: 0, rts }
-      b.spend += r.spend; b.value += r.purchaseValue; b.netValue += r.purchaseValue * (1 - rts); b.purchases += r.purchases
+      const b = m.get(r.accountName) ?? { name: r.accountName, accountId: r.accountId, owner: r.accountOwner, spend: 0, value: 0, purchases: 0, active: 0, total: 0 }
+      b.spend += r.spend; b.value += r.purchaseValue; b.purchases += r.purchases
       b.total++
       if (/active/i.test(r.status)) b.active++
       m.set(b.name, b)
     }
     return [...m.values()].filter(b => b.spend > 0 || b.active > 0)
       .sort((a, b) => b.spend - a.spend || b.active - a.active)
-  }, [scoped, rtsOf])
+  }, [scoped])
 
   // ── TOP MOVERS — 3 pinakamalaki ang tubo, 3 pinakamalaki ang lugi ──────────
   const qualified = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend), [withNet, rules])
@@ -655,13 +648,12 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
     // BUDGET ay dapat mabilang kahit hindi pa gumagastos ngayong araw — kaya
     // hiwalay ang pass sa ibaba. Kung hindi, ang bagong buksan na campaign na
     // wala pang gastos ay parang walang budget.
-    const m = new Map<string, { owner: string; spend: number; netValue: number; value: number; purchases: number; budget: number; brands: Set<string>; win: number; lose: number }>()
+    const m = new Map<string, { owner: string; spend: number; value: number; purchases: number; budget: number; brands: Set<string>; win: number; lose: number }>()
     for (const r of rows.filter(r => r.spend > 0)) {
       const o = r.accountOwner || "—"
-      const rts = rtsOf(r)
-      const e = m.get(o) ?? { owner: o, spend: 0, netValue: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
-      const net = netOf(r.purchaseValue, r.spend, rts)
-      e.spend += r.spend; e.netValue += r.purchaseValue * (1 - rts); e.value += r.purchaseValue; e.purchases += r.purchases
+      const e = m.get(o) ?? { owner: o, spend: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
+      const net = roasOf(r.purchaseValue, r.spend)
+      e.spend += r.spend; e.value += r.purchaseValue; e.purchases += r.purchases
       if (/active/i.test(r.status)) e.budget += r.budget
       e.brands.add(r.accountName)
       if (r.spend >= rules.evalMinSpend && net >= rules.scaleRoas) e.win++
@@ -672,12 +664,12 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
     for (const r of rows) {
       if (!/active/i.test(r.status) || r.spend > 0) continue
       const o = r.accountOwner || "—"
-      const e = m.get(o) ?? { owner: o, spend: 0, netValue: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
+      const e = m.get(o) ?? { owner: o, spend: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
       e.budget += r.budget; e.brands.add(r.accountName)
       m.set(o, e)
     }
     return [...m.values()].sort((a, b) => b.spend - a.spend)
-  }, [rows, rtsOf, rules])
+  }, [rows, rules])
 
   // ── FUNNEL — Testing → Moved → Scaling (galing sa registry, all-time) ──────
   const funnel = useMemo(() => ({
@@ -686,7 +678,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
     scaling: registry.regs.filter(r => r.level === "campaign" && r.active).length,
   }), [registry.regs])
 
-  // Trend (gross — walang kada-araw na RTS breakdown, kaya tapat ang label)
+  // Trend — parehong pormula ng KPI: value ÷ (spend × VAT)
   const trendData = trend.map(d => ({ date: d.date.slice(5), roas: d.spend > 0 ? +(d.sales / (d.spend * VAT)).toFixed(2) : 0, spend: +d.spend.toFixed(0), sales: +d.sales.toFixed(0) }))
 
   const netBadge = (net: number) =>
@@ -705,8 +697,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
           </button>
         ))}
         <span className="ml-auto text-[12px] text-slate-400">
-          {rangeLabel} · {activeCount} active campaigns
-          {rtsMap.size === 0 && <> · <span className="text-amber-600">RTS loading — gross muna ang net</span></>}
+          {rangeLabel} · {activeCount} active campaigns · Meta metrics
         </span>
       </div>
 
@@ -720,18 +711,19 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
         </div>
       ) : (
         <>
-          {/* ── HERO — net muna, dahil net ang batayan ng bawat desisyon ──
+          {/* ── HERO — ROAS muna, ito ang batayan ng bawat desisyon ──
               Ang AD BUDGET ay ang naka-set na daily budget ng mga AKTIBO ngayon:
               ang itatakbo bukas kung walang gagalawin — magkaibang tanong sa
               "magkano ang nagastos". Ang pares na Budget/Spend ang nagsasabi
               kung gaano kabilis ubusin ng araw ang nakalaan (pacing). */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-            {/* ⚠ Ang "gross" ay may VAT DIN — ang pagitan nila ay RTS lang.
-                Tinanong ng may-ari kung "wala bang VAT ang nasa baba" (Ago 24
-                2026), kaya tahasang sinasabi na ng sub kung ano ang pagkakaiba. */}
-            <Kpi label={`Net ROAS ${rangeLabel}`}
+            {/* ⚠ ISANG NUMERO LANG NGAYON. Dati ay may pangalawang "before
+                RTS" na numero; itinanong ng may-ari kung ano ang ibig sabihin
+                niyon at iniutos na tanggalin — walang ganoon sa Ads Manager
+                (Ago 25 2026). Ang natitirang pagkakaiba sa Meta ay VAT lang. */}
+            <Kpi label={`ROAS ${rangeLabel}`}
               value={agg.spend > 0 ? dec(netAll) + "x" : "—"}
-              sub={agg.spend > 0 ? `${dec(grossAll)}x before RTS · both incl. VAT` : "no spend yet"}
+              sub={agg.spend > 0 ? "purchase ROAS · spend incl. 12% VAT" : "no spend yet"}
               accent={agg.spend === 0 ? "from-slate-600 to-slate-700"
                 : netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
             {/* Ang budget ni Meta ay PRE-VAT, kaya ang pacing (% spent) ay
@@ -747,13 +739,13 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
             {/* Ang headline ay ang spend na GINAGAMIT NG ROAS (may VAT) — ito
                 ang tunay na lumalabas na pera; ang bago-mag-VAT ay ang sub. */}
             <Kpi label="Ad Spend" value={peso(agg.spend * VAT)} sub={`before VAT ${peso(agg.spend)}`} accent="from-blue-600 to-blue-700" />
-            <Kpi label="Sales" value={peso(totalValue)} sub={`net ${peso(agg.netValue)} after RTS`} accent="from-violet-500 to-violet-600" />
+            <Kpi label="Sales" value={peso(totalValue)} sub="purchase value from Meta" accent="from-violet-500 to-violet-600" />
             <Kpi label="Total Purchases" value={num(agg.purchases)}
               sub={agg.purchases > 0 ? `avg value ${peso(totalValue / agg.purchases)}` : undefined} accent="from-fuchsia-500 to-pink-600" />
             <Kpi label="Cost / Purchase" value={peso(cpp)} sub={`ceiling ${peso(rules.cppMax)}`}
               accent={cpp > 0 && cpp > rules.cppMax ? "from-rose-500 to-rose-600" : "from-cyan-500 to-cyan-600"} />
-            <Kpi label="🔥 Burning" value={peso(sumSpend(losers))} sub={`${losers.length} below ${rules.killRoas} net`} accent="from-rose-500 to-rose-600" />
-            <Kpi label="🏆 Winning" value={peso(sumSpend(winners))} sub={`${winners.length} at ${rules.scaleRoas}+ net`} accent="from-emerald-500 to-emerald-600" />
+            <Kpi label="🔥 Burning" value={peso(sumSpend(losers))} sub={`${losers.length} below ${rules.killRoas} ROAS`} accent="from-rose-500 to-rose-600" />
+            <Kpi label="🏆 Winning" value={peso(sumSpend(winners))} sub={`${winners.length} at ${rules.scaleRoas}+ ROAS`} accent="from-emerald-500 to-emerald-600" />
           </div>
 
           {/* ── ACTION QUEUE — listahan ng desisyon, hindi ng campaigns ── */}
@@ -769,7 +761,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                   <button onClick={() => goTab("monitoring")}
                     className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1 sm:gap-2 text-left px-3 py-2.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100">
                     <Skull className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span className="text-[13px] text-rose-800"><b>{losers.length}</b> below the kill line (net &lt; {rules.killRoas}) — <b>{peso(sumSpend(losers))}</b> spent {rangeLabel}</span>
+                    <span className="text-[13px] text-rose-800"><b>{losers.length}</b> below the kill line (ROAS &lt; {rules.killRoas}) — <b>{peso(sumSpend(losers))}</b> spent {rangeLabel}</span>
                     <span className="sm:ml-auto text-[12px] font-semibold text-rose-600 whitespace-nowrap">Review in Monitoring →</span>
                   </button>
                 )}
@@ -785,7 +777,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                   <button onClick={() => goTab("scaling")}
                     className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1 sm:gap-2 text-left px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 hover:bg-emerald-100">
                     <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span className="text-[13px] text-emerald-800"><b>{winners.length}</b> at scale threshold (net ≥ {rules.scaleRoas}) on {peso(sumSpend(winners))}</span>
+                    <span className="text-[13px] text-emerald-800"><b>{winners.length}</b> at scale threshold (ROAS ≥ {rules.scaleRoas}) on {peso(sumSpend(winners))}</span>
                     <span className="sm:ml-auto text-[12px] font-semibold text-emerald-600 whitespace-nowrap">Open Scaling →</span>
                   </button>
                 )}
@@ -810,8 +802,8 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                       <ExternalLink className="w-3 h-3 text-slate-300 group-hover:text-blue-500 shrink-0" />
                     </span>
                     {b.spend > 0 ? (
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 ${netBadge(netOf(b.value, b.spend, b.rts))}`}>
-                        {dec(netOf(b.value, b.spend, b.rts))}x
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 ${netBadge(roasOf(b.value, b.spend))}`}>
+                        {dec(roasOf(b.value, b.spend))}x
                       </span>
                     ) : (
                       <span className="text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 bg-slate-100 text-slate-500">—</span>
@@ -831,7 +823,6 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                       {b.active} active
                     </span>
                     {b.total > b.active && <span className="text-slate-400"> · {b.total - b.active} off</span>}
-                    {" "}· RTS {(b.rts * 100).toFixed(1)}%
                   </p>
                 </button>
               ))}
@@ -870,7 +861,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
               <div className="overflow-x-auto scrollbar-dark">
                 <table className="w-full text-sm">
                   <thead><tr className="bg-slate-50 border-b border-slate-200 text-left text-[11px] text-slate-500">
-                    {["Buyer", "Brands", "Budget / day", "Spend", "Purchases", "CPP", "Net ROAS", "Win", "Lose"].map(h => <th key={h} className="px-4 py-2 font-semibold whitespace-nowrap">{h}</th>)}
+                    {["Buyer", "Brands", "Budget / day", "Spend", "Purchases", "CPP", "ROAS", "Win", "Lose"].map(h => <th key={h} className="px-4 py-2 font-semibold whitespace-nowrap">{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {scoreboard.map(s => (
@@ -885,8 +876,8 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                         <td className="px-4 py-2.5 tabular-nums text-slate-700">{num(s.purchases)}</td>
                         <td className="px-4 py-2.5 tabular-nums text-slate-700">{s.purchases > 0 ? peso(s.spend / s.purchases) : "—"}</td>
                         <td className="px-4 py-2.5">
-                          <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${netBadge(s.spend > 0 ? s.netValue / (s.spend * VAT) : 0)}`}>
-                            {dec(s.spend > 0 ? s.netValue / (s.spend * VAT) : 0)}x
+                          <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${netBadge(roasOf(s.value, s.spend))}`}>
+                            {dec(roasOf(s.value, s.spend))}x
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-emerald-600 font-semibold">{s.win}</td>
@@ -894,7 +885,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                       </tr>
                     ))}
                     {scoreboard.length > 1 && (() => {
-                      const t = scoreboard.reduce((a, s) => ({ budget: a.budget + s.budget, spend: a.spend + s.spend, purchases: a.purchases + s.purchases, netValue: a.netValue + s.netValue, win: a.win + s.win, lose: a.lose + s.lose }), { budget: 0, spend: 0, purchases: 0, netValue: 0, win: 0, lose: 0 })
+                      const t = scoreboard.reduce((a, s) => ({ budget: a.budget + s.budget, spend: a.spend + s.spend, purchases: a.purchases + s.purchases, value: a.value + s.value, win: a.win + s.win, lose: a.lose + s.lose }), { budget: 0, spend: 0, purchases: 0, value: 0, win: 0, lose: 0 })
                       return (
                         <tr className="bg-slate-50 font-bold text-slate-800">
                           <td className="px-4 py-2.5">ALL</td>
@@ -904,8 +895,8 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                           <td className="px-4 py-2.5 tabular-nums">{num(t.purchases)}</td>
                           <td className="px-4 py-2.5 tabular-nums">{t.purchases > 0 ? peso(t.spend / t.purchases) : "—"}</td>
                           <td className="px-4 py-2.5">
-                            <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${netBadge(t.spend > 0 ? t.netValue / (t.spend * VAT) : 0)}`}>
-                              {dec(t.spend > 0 ? t.netValue / (t.spend * VAT) : 0)}x
+                            <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${netBadge(roasOf(t.value, t.spend))}`}>
+                              {dec(roasOf(t.value, t.spend))}x
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-emerald-600">{t.win}</td>
