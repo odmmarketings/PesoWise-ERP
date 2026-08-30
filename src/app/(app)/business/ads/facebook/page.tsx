@@ -2561,6 +2561,10 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
   const { byRule: ruleEditors, refresh: refreshRuleEditors } = useRuleEditors()
   // ── Scope panel: alin ang nakatakda sa rule na ito (tulad ng Ads Manager) ──
   const [scopeOpen, setScopeOpen] = useState("")            // rule id na bukas
+  // Tingin muna, hindi agad edit: ang tanong ng may-ari ay "ANO ang naka-set?"
+  // — ang sagot ay ang maikling listahan ng naka-rehistro, hindi ang buong
+  // account na may checkbox (hatol Ago 30 2026: "isa lang dapat kita").
+  const [scopeEdit, setScopeEdit] = useState(false)
   const [scopeRows, setScopeRows] = useState<ScopeObj[]>([])
   const [scopeSel, setScopeSel] = useState<Set<string>>(new Set())
   const [scopeQ, setScopeQ] = useState("")
@@ -2805,7 +2809,7 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
     const ent = entityOfRule(r) || "CAMPAIGN"
     const lvl = ent === "ADSET" ? "adset" : ent === "AD" ? "ad" : "campaign"
     const a = accounts.find(x => x.id === r.__accId)
-    setScopeOpen(r.id); setScopeQ(""); setScopeErr("")
+    setScopeOpen(r.id); setScopeQ(""); setScopeErr(""); setScopeEdit(false)
     setScopeSel(new Set(scopedIdsOf(r)))
     if (!a) { setScopeRows([]); setScopeErr("This rule's ad account isn't connected here."); return }
 
@@ -3313,12 +3317,29 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                                       ? <>{scoped.length} {entW[scoped.length === 1 ? 0 : 1]} checked</>
                                       : <>nothing specific — it runs on <b>all active {entW[1]}</b> in {r.__accName}</>}
                                   </span>
-                                  <input value={scopeQ} onChange={e => setScopeQ(e.target.value)} placeholder={`Search ${entW[1]}…`}
-                                    className="ml-auto h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] min-w-[180px]" />
+                                  {scopeEdit && (
+                                    <input value={scopeQ} onChange={e => setScopeQ(e.target.value)} placeholder={`Search ${entW[1]}…`}
+                                      className="ml-auto h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-[13px] min-w-[180px]" />
+                                  )}
                                 </div>
 
                                 {scopeBusy ? (
                                   <p className="text-[12px] text-slate-400 py-3 flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading {entW[1]}…</p>
+                                ) : !scopeEdit ? (
+                                  // ── TINGIN-LANG: ang naka-rehistro LANG ang kita ──
+                                  <div className="max-h-56 overflow-y-auto scrollbar-dark rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                                    {missing.map(id => (
+                                      <p key={id} className="px-3 py-1.5 text-[13px] text-amber-700">{id} — not in this account any more</p>
+                                    ))}
+                                    {scoped.length === 0 && missing.length === 0 ? (
+                                      <p className="px-3 py-3 text-[12px] text-slate-400 italic">No specific list — this rule runs on <b>all active {entW[1]}</b> in {r.__accName}.</p>
+                                    ) : scopeRows.filter(o => scopeSel.has(o.id)).map(o => (
+                                      <p key={o.id} className="flex items-center gap-2 px-3 py-1.5 text-[13px]">
+                                        <span className="truncate text-slate-700">{o.name}</span>
+                                        <span className={`ml-auto text-[11px] px-1.5 py-0.5 rounded-full shrink-0 ${statusColor(o.status)}`}>{statusLabel(o.status)}</span>
+                                      </p>
+                                    ))}
+                                  </div>
                                 ) : (
                                   <div className="max-h-56 overflow-y-auto scrollbar-dark rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
                                     {missing.map(id => (
@@ -3343,6 +3364,17 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                                 )}
 
                                 {scopeErr && <p className="text-[12px] text-rose-600">⚠ {scopeErr}</p>}
+                                {!scopeEdit ? (
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <button onClick={() => setScopeEdit(true)}
+                                      className="text-[12px] px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-white flex items-center gap-1.5">
+                                      <Pencil className="w-3 h-3" /> Edit selection
+                                    </button>
+                                    <span className="ml-auto">
+                                      <button onClick={() => setScopeOpen("")} className="text-[12px] px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-white">Close</button>
+                                    </span>
+                                  </div>
+                                ) : (
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-[12px] text-slate-500">{scopeSel.size} checked</span>
                                   {shown.length > 0 && (
@@ -3368,6 +3400,7 @@ function AutomatedRules({ accounts, currentAccountId, level, selectedRows, view,
                                     </button>
                                   </span>
                                 </div>
+                                )}
                               </div>
                             </td>
                           </tr>
