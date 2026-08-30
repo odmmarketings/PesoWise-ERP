@@ -9,6 +9,7 @@ import { useActivePages } from "@/lib/pages-store"
 import { actId, type FBAccount } from "@/lib/fb-store"
 import { useScalingRegistry, type Registration, type ScaleEvent } from "@/lib/scaling-registry-store"
 import { runAge } from "@/lib/scaling-signals"
+import { deliveryOf } from "@/lib/fb-delivery"
 import { logAds, logAdsMany } from "@/lib/ads-activity-store"
 import { playToggle, playError } from "@/lib/ui-feedback"
 
@@ -82,6 +83,16 @@ type AdsetModel = {
   campaignBudgetKind: string
   createdTime: string       // ISO mula kay Meta — pinakabago ang una sa picker
   startTime: string         // tunay na simula ng takbo — dito nakasandal ang edad
+  stopTime: string          // katapusan (end_time ng ad set / stop_time ng campaign)
+  // Bilang ng mga anak — ang batayan ng deliveryOf: "Active" lang kapag may
+  // TUNAY na naghahatid (parehong hatol ng Dashboard/Ads Manager, Ago 31 2026).
+  kidsOn: number
+  kidsTotal: number
+  kidsLive: number
+  kidsStart: string
+  // Sa campaign level: ang date-gated na KABUUAN ng budget (sariling CBO o sum
+  // ng mga ABO ad set) — pinagbabatayan ng "ABO — nasa ad sets ang budget".
+  aggBudget: number
   dailies: Map<string, Daily>
 }
 /** Saan itataas ang budget: sa ad set (ABO) o sa campaign (CBO)? */
@@ -97,7 +108,7 @@ type Windows = Record<"w1" | "w3" | "w7" | "w15" | "w31", { spend: number; value
 type Signal = {
   adset: AdsetModel; windows: Windows
   kind: "scale" | "kill" | "watch"
-  rule: string; reason: string; streak: number
+  rule: string; reason: string
   todaySpend: number; todayNet: number
   // Naka-set lang sa mga inirehistro (Scaling tab): ang resulta MULA sa petsa ng
   // rehistro, at ang kasaysayan ng pag-scale.
@@ -464,6 +475,11 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             : fetch(`/api/fb/insights?rich=1&level=campaign&parent=${acct}&token=${encodeURIComponent(a.token)}&account_id=${acct}&from=${from31}&to=${today}${force ? "&nocache=1" : ""}`).then(r => r.json()),
         ])
         if (!series.success) { errs.push(`${a.name}: ${String(series.error || "series failed").slice(0, 80)}`); return }
+        // ⚠ Pumalyang META pull = laktawan ang account nang may HAYAG na error.
+        // Ang pagpapatuloy ay gumagawa ng mga row na "—" ang status at 0 ang
+        // budget — mukhang pinatay o inalis, at ang orphan banner ay nag-aalok
+        // pa ng mapanirang aksyon sa datos na sira (review, Ago 31 2026).
+        if (!meta.success) { errs.push(`${a.name}: meta pull failed — statuses unknown, skipped`); return }
         const metaById = new Map<string, any>((meta.rows || []).map((r: any) => [r.id, r]))
         const campById = new Map<string, any>((camp.rows || []).map((r: any) => [r.id, r]))
         const byId = new Map<string, AdsetModel>()
@@ -490,6 +506,12 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             campaignBudgetKind: isCampaign ? (mm.budgetKind || "") : (cm.budgetKind || ""),
             createdTime: mm.createdTime || "",
             startTime: mm.startTime || "",
+            stopTime: mm.stopTime || "",
+            kidsOn: mm.kidsOn ?? -1,
+            kidsTotal: mm.kidsTotal ?? -1,
+            kidsLive: mm.kidsLive ?? -1,
+            kidsStart: mm.kidsStart || "",
+            aggBudget: isCampaign ? (mm.budget || 0) : 0,
             dailies: new Map(),
           }
         }
@@ -709,25 +731,27 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       const todaySpend = tD?.spend || 0
       const todayNet = tD ? netOf(tD.purchaseValue, tD.spend) : 0
 
-      // streak: magkakasunod na araw (pinakabago pababa, laktaw ang today kung
-      // maliit pa ang gastos nito — hindi pa tapos ang araw)
-      let streak = 0
-      const startIdx = todaySpend >= rules.minDailySpend ? dates.length - 1 : dates.length - 2
-      for (let i = startIdx; i >= 0; i--) {
-        const d = m.dailies.get(dates[i])
-        if (!d || d.spend < rules.minDailySpend) break
-        if (netOf(d.purchaseValue, d.spend) < rules.scaleRoas) break
-        streak++
-      }
-
-      const isActive = /active/i.test(m.status)
-      const base = { adset: m, windows, streak, todaySpend, todayNet, reg, sinceReg, mtd }
+      // ⚠ IISANG HATOL SA BUONG APP (Ago 31 2026): ang effective_status ay
+      // nananatiling ACTIVE kahit patay lahat ng anak — ang deliveryOf ang
+      // nagpapasya, kapareho ng Dashboard, brand cards, at Monitoring quiz.
+      const dLabel = deliveryOf({
+        status: m.status, configuredStatus: m.ownStatus || m.status,
+        kidsOn: m.kidsOn, kidsTotal: m.kidsTotal, kidsLive: m.kidsLive, kidsStart: m.kidsStart,
+        startTime: m.startTime, stopTime: m.stopTime, learning: null,
+      }, isCampaign ? "campaign" : "adset").label
+      const isActive = dLabel === "Active"
+      const base = { adset: m, windows, todaySpend, todayNet, reg, sinceReg, mtd }
 
       // Pagkatapos mag-scale, may 48h na palugit: hindi pa dapat husgahan agad —
       // nagre-relearn ang delivery. Tanda lang ito, hindi kill/scale.
-      const lastScale = reg?.scales[reg.scales.length - 1]
+      // ⚠ Ang huling TUNAY na scale lang (applied) ang nagsisimula ng
+      // cooldown — ang pumalyang tangka ay walang binago sa delivery, kaya
+      // walang dapat i-relearn (review, Ago 31 2026). Ang mga lumang tala na
+      // walang `applied` ay itinuturing na totoo. Ang sandigan ay ang ORAS ng
+      // scale (`at`); ang lumang tala na petsa lang ay hatinggabi ang alam.
+      const lastScale = [...(reg?.scales || [])].reverse().find(sc => sc.applied !== false)
       const hoursSinceScale = lastScale
-        ? (Date.now() - new Date(`${lastScale.date}T00:00:00`).getTime()) / 3600_000 : Infinity
+        ? (Date.now() - (lastScale.at ? Date.parse(lastScale.at) : new Date(`${lastScale.date}T00:00:00`).getTime())) / 3600_000 : Infinity
       // ⚠ ANG PAGDURUGO AY HINDI RELEARNING. Dating sinasakop ng 48h na cooldown
       // ang LAHAT — kaya ang campaign na sinaktan ng scale ay nakatago sa Watch
       // nang dalawang araw habang nasusunog ang pera, at hindi ito lumalabas sa
@@ -740,7 +764,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
             + `Relearning doesn't explain this much — kill it, don't wait out the cooldown.` })
         continue
       }
-      if (reg && hoursSinceScale < 48) {
+      if (reg && hoursSinceScale < 48 && isActive) {
         out.push({ ...base, kind: "watch", rule: "cooldown",
           reason: `Scaled ${lastScale!.pct}% on ${lastScale!.date} (${peso(lastScale!.from)} → ${peso(lastScale!.to)}). `
             + `Hold ${Math.max(1, Math.round(48 - hoursSinceScale))}h more before judging — delivery is relearning.` })
@@ -786,7 +810,9 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
               ? ` Register it in the Scaling tab if you want to raise its budget from here.`
               : bt.level !== "none"
                 ? ` Raise 20% → ${peso(bt.amount * 1.2)}, or 10% → ${peso(bt.amount * 1.1)}${bt.level === "campaign" ? " (campaign budget — CBO)" : ""}.`
-                : ` No budget found on the ad set or campaign — raise it in Ads Manager.`) })
+                : m.aggBudget > 0
+                  ? ` ABO — the budget sits on its ad sets (${peso(m.aggBudget)}/day today). Raise them in Ads Manager, or scale per ad set from Testing.`
+                  : ` No budget found on the ad set or campaign — raise it in Ads Manager.`) })
         continue
       }
       // ── HINDI AKTIBO ───────────────────────────────────────────────────────
@@ -809,6 +835,17 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
       // bawat Monitoring row na narito ay may tunay na gastos ngayong buwan.)
       if (!isActive) {
         if (!reg && !isMonitoring) continue   // patay, hindi rehistrado, wala sa buwan
+        // Ang deliveryOf ang nakakaalam ng TUNAY na dahilan — sabihin ito
+        // nang tapat sa halip na "pinatay mo" sa bagay na hindi naman pinatay.
+        if (dLabel === "Scheduled" || dLabel === "Ad set off" || dLabel === "Ads off" || dLabel === "Completed") {
+          out.push({ ...base, kind: "watch", rule: "notDelivering",
+            reason: dLabel === "Scheduled"
+              ? `Scheduled — it hasn't started running yet, so there is nothing to judge.`
+              : dLabel === "Completed"
+                ? `Completed — its schedule ended; nothing more will spend.`
+                : `Switched on, but ${dLabel === "Ad set off" ? "every ad set under it is off" : "no ad set has a single ad on"} — nothing delivers. Turn them on in Ads Manager.` })
+          continue
+        }
         const parentOff = /CAMPAIGN_PAUSED|ADSET_PAUSED/i.test(m.status) && /active/i.test(m.ownStatus)
         const whoOff = /CAMPAIGN_PAUSED/i.test(m.status) ? "campaign" : "ad set"
         out.push({ ...base, kind: "watch", rule: parentOff ? "parentOff" : "paused",
@@ -1152,7 +1189,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         } catch (e: any) { setErrors(p => [...p, `${s.adset.name}: ${String(e?.message).slice(0, 80)}`]) }
       }
 
-      const ev: ScaleEvent = { date: today, pct, from, to: applied ? to : from, applied }
+      const ev: ScaleEvent = { date: today, at: new Date().toISOString(), pct, from, to: applied ? to : from, applied }
       if (s.reg) await registry.addScale(s.reg.adset_id, ev)
       logAds({ action: "scale", level, objectId: s.adset.id, objectName: s.adset.name,
         accountName: s.adset.account.name, surface: mode,

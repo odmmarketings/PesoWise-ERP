@@ -29,7 +29,7 @@ import { whoAmI, type Me } from "@/lib/notify"
 import { useAdsPins, pinnedFirst, pinOrder } from "@/lib/ads-pins"
 import {
   MGR_CACHE, MGR_INFLIGHT, MGR_TTL, DASH_CACHE, DASH_INFLIGHT, DASH_TTL,
-  LVL_CACHE, LVL_INFLIGHT, type DashPart,
+  LVL_CACHE, LVL_INFLIGHT, ACCT_HEALTH, noteAcctHealth, type DashPart,
 } from "@/lib/ads-cache"
 import { logAds, logAdsMany, useRuleEditors, useAdsActivity, ACTION_LABEL } from "@/lib/ads-activity-store"
 import { playToggle, playError, sfxOn, setSfxOn } from "@/lib/ui-feedback"
@@ -281,6 +281,9 @@ export default function FacebookAdsPage() {
   const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>(dashBoot.trend)
   // account_status kada ad account (3 = payment error) — para sa brand cards.
   const [acctStatus, setAcctStatus] = useState<Record<string, number>>({})
+  // Natitirang pondo ng PREPAID kada account — ang tunay na "payment error"
+  // ng prepaid ay ₱0.00 na pondo, hindi ang status (nasukat kay Auripet).
+  const [acctFunds, setAcctFunds] = useState<Record<string, number | null>>({})
   const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>(dashBoot.daily)
   const [loading, setLoading] = useState(false)
   // ⚠ Hiwalay sa `loading`: ang Refresh ay sinadyang WALANG skeleton (nakatayo
@@ -299,20 +302,29 @@ export default function FacebookAdsPage() {
   const applyDash = useCallback((accts: FBAccount[]) => {
     const allRows: Row[] = [], trendByDate: Record<string, { spend: number; sales: number }> = {}, dailyRows: DashPart["daily"] = []
     const st: Record<string, number> = {}
+    const fd: Record<string, number | null> = {}
     for (const a of accts) {
       const part = DASH_CACHE.get(`${a.id}|${from}|${to}`)?.part
+      // Kalusugan mula sa buhay na mapa (hindi kada range) — ang lumang range
+      // ay hindi na bumubuhay ng lumang "Payment error" (review, Ago 31 2026).
+      const h = ACCT_HEALTH.get(a.id)
+      if (h) { st[a.id] = h.status; fd[a.id] = h.funds }
       if (!part) continue
-      allRows.push(...part.rows)
+      // ⚠ SARIWANG pangalan at may-ari mula sa registry: ang na-rename na
+      // owner ay dating nakakulong sa 30-min cache — "No campaigns" ang chip
+      // ng bagong pangalan (review, Ago 31 2026).
+      allRows.push(...part.rows.map(r => ({ ...r, accountName: a.name, accountOwner: a.owner })))
       for (const d of part.trend) { trendByDate[d.date] = trendByDate[d.date] || { spend: 0, sales: 0 }; trendByDate[d.date].spend += d.spend; trendByDate[d.date].sales += d.sales }
-      dailyRows.push(...part.daily)
-      st[a.id] = part.accountStatus ?? -1
+      dailyRows.push(...part.daily.map(d => ({ ...d, accountId: a.id, accountName: a.name, owner: a.owner, status: a.status })))
     }
-    // ⚠ Ang -1 ay "hindi alam", HINDI "gumaling na": ang isang pumalyang
-    // status fetch ay hindi dapat magbura ng alam nang problema (30 minutong
-    // nawawala ang badge kung hindi — nahuli ng review, Ago 25 2026).
     setAcctStatus(prev => {
       const merged = { ...prev }
       for (const [k, v] of Object.entries(st)) if (v !== -1 || merged[k] == null) merged[k] = v
+      return merged
+    })
+    setAcctFunds(prev => {
+      const merged = { ...prev }
+      for (const [k, v] of Object.entries(fd)) if (v != null || merged[k] == null) merged[k] = v
       return merged
     })
     setRows(allRows)
@@ -320,7 +332,14 @@ export default function FacebookAdsPage() {
     setDaily(dailyRows.sort((a, b) => a.date.localeCompare(b.date) || a.accountName.localeCompare(b.accountName)))
   }, [from, to])
 
+  // Bawat tawag ng load ay may numero; ang lumang tawag (mula sa dating
+  // range) ay tumitigil sa pagsusulat sa sandaling may mas bago (review,
+  // Ago 31 2026 — ang huling-dumating na LUMANG applyDash ay pumapalit sa
+  // bagong range ng datos ng luma).
+  const loadGen = useRef(0)
   const load = useCallback(async (fresh = false) => {
+    const gen = ++loadGen.current
+    const alive = () => gen === loadGen.current
     if (dataAccounts.length === 0) { setRows([]); setTrend([]); setDaily([]); return }
     const now = Date.now()
     const key = (a: FBAccount) => `${a.id}|${from}|${to}`
@@ -330,16 +349,16 @@ export default function FacebookAdsPage() {
 
     applyDash(dataAccounts)      // ipakita agad ang alam na natin
     if (toPull.length === 0) { setLoading(false); return }
+    void 0
     // ⚠ SPINNER PARA LANG SA WALANG MAIPAPAKITA — ang luma ay tahimik na
     // pinapalitan. Ang Refresh ay hindi nagpapakita ng skeleton: nakatayo ang
     // dashboard habang pumapasok ang bagong numero.
     if (absent.length > 0 && !fresh) setLoading(true)
-    const sums: Record<string, Record<string, number>> = {}
     await mapLimit(toPull, 4, async (a: FBAccount) => {
       const k = key(a)
       if (!fresh) {
         const running = DASH_INFLIGHT.get(k)
-        if (running) { await running.catch(() => null); applyDash(dataAccounts); return }
+        if (running) { await running.catch(() => null); if (alive()) applyDash(dataAccounts); return }
       }
       const run = (async (): Promise<DashPart> => {
         const q = `token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(actId(a.ad_account_id))}&from=${from}&to=${to}`
@@ -349,28 +368,37 @@ export default function FacebookAdsPage() {
           fetch(`/api/fb/insights?${q}${fresh ? "&nocache=1" : ""}`).then(r => r.json()),
         ])
         const acctBudget = (rc.campaigns || []).filter((c: any) => /active/i.test(c.status)).reduce((s: number, c: any) => s + (c.budget || 0), 0)
-        const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {}, accountStatus: Number(rc.accountStatus ?? -1) }
+        const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {} }
+        noteAcctHealth(a.id, Number(rc.accountStatus ?? -1), rc.accountFunds ?? null)
         if (rc.success) for (const c of rc.campaigns) part.rows.push(toRow(c, a.id, a.name, a.owner))
         if (tr.success) for (const d of tr.trend) part.trend.push({ date: d.date, spend: d.spend, sales: d.sales })
         if (db.success) for (const [d, amt] of Object.entries(db.byDate || {})) {
-          part.daily.push({ date: d, accountName: a.name, owner: a.owner, status: a.status, budget: acctBudget, spend: amt as number })
+          part.daily.push({ date: d, accountId: a.id, accountName: a.name, owner: a.owner, status: a.status, budget: acctBudget, spend: amt as number })
           part.spendByDate[d] = amt as number
         }
-        DASH_CACHE.set(k, { ts: Date.now(), part })
+        // Palya ang pangunahing hila = HUWAG i-cache: ang 30 minutong
+        // sariwang-blangko ay nagpapalaho ng account (review, Ago 31 2026).
+        if (rc.success) DASH_CACHE.set(k, { ts: Date.now(), part })
         return part
       })()
       DASH_INFLIGHT.set(k, run)
-      try {
-        const part = await run
-        // Ang adspent sync ay para lang sa BAGONG hinilang account — ang muling
-        // pagsusulat ng parehong halaga kada pagbukas ng pahina ay basura.
-        const pid = pageIdByName[a.page_name]
-        if (pid) for (const [d, amt] of Object.entries(part.spendByDate)) { sums[pid] = sums[pid] || {}; sums[pid][d] = (sums[pid][d] || 0) + amt }
-      } catch { /* laktawan ang account na bumigo */ }
-      finally { DASH_INFLIGHT.delete(k); applyDash(dataAccounts) }
+      try { await run } catch { /* laktawan ang account na bumigo */ }
+      finally { DASH_INFLIGHT.delete(k); if (alive()) applyDash(dataAccounts) }
     })
+    if (!alive()) return
     applyDash(dataAccounts)
-    // Auto-sync adspent (summed per page) → ROAS / Income Statement
+    // ⚠ Auto-sync adspent mula sa BUONG cache, hindi lang sa kaka-pull: ang
+    // dalawang account na iisang page ay dating nagpapatong ng PARTIAL na sum
+    // (isa lang ang re-pull → nabura ang ambag ng isa), at ang prefetch na
+    // nakapuno na ng cache ay dating nakakaligtaan ang sync (review, Ago 31).
+    const sums: Record<string, Record<string, number>> = {}
+    for (const a of dataAccounts) {
+      const pid = pageIdByName[a.page_name]
+      if (!pid) continue
+      const part = DASH_CACHE.get(key(a))?.part
+      if (!part) continue
+      for (const [d, amt] of Object.entries(part.spendByDate)) { sums[pid] = sums[pid] || {}; sums[pid][d] = (sums[pid][d] || 0) + amt }
+    }
     const entries: { pageId: string; date: string; value: number }[] = []
     for (const [pid, byDate] of Object.entries(sums)) for (const [d, val] of Object.entries(byDate)) entries.push({ pageId: pid, date: d, value: val })
     if (entries.length > 0) adspentStore.setMany(entries)
@@ -437,8 +465,8 @@ export default function FacebookAdsPage() {
           <Link2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
           <p className="text-slate-500 text-sm">No connected ad accounts. Register them in <strong>Ad Accounts</strong> first.</p>
         </div>
-      ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} onOpen={openInManager} goTab={setTab} acctStatus={acctStatus} />
-        : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
+      ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} onOpen={openInManager} goTab={setTab} acctStatus={acctStatus} acctFunds={acctFunds} />
+        : tab === "daily" ? <DailySpend daily={daily} loading={loading} acctStatus={acctStatus} acctFunds={acctFunds} />
           : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} focus={trackerFocus} />
             : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} focus={trackerFocus} />
               : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} onOpenInManager={openInManager} focus={trackerFocus} />
@@ -485,11 +513,12 @@ const ACCT_ISSUE: Record<number, string> = {
   8: "Pending settlement", 9: "Payment grace period", 100: "Closing", 101: "Closed",
 }
 
-function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpen, goTab, acctStatus }: {
+function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpen, goTab, acctStatus, acctFunds }: {
   rows: Row[]; trend: { date: string; spend: number; sales: number }[]; loading: boolean
   accounts: FBAccount[]; from: string; to: string
   onOpen: (f: MgrFocus) => void; goTab: (t: Tab) => void
   acctStatus: Record<string, number>
+  acctFunds: Record<string, number | null>
 }) {
   const [fOwner, setFOwner] = useState("All")
   const rules = useMemo(() => loadHouseRules(), [])
@@ -554,10 +583,21 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
   // araw ay ₱0 pa ang lahat, at ang blangkong hilera ng brand ay mukhang sira.
   // Ang walang gastos AT walang aktibo ay hindi pa rin kasama — patay iyon.
   const brands = useMemo(() => {
-    type Brand = { name: string; accountId: string; owner: string; spend: number; value: number; purchases: number; active: number; sched: number; total: number; issue: string }
+    type Brand = { name: string; accountId: string; owner: string; ids: Set<string>; spend: number; value: number; purchases: number; active: number; sched: number; total: number; issue: string; low: number | null }
+    // Status muna; kapag ACTIVE naman ang status, ang pondo ng prepaid ang
+    // sinusuri — ₱0 = ang mismong "payment error" na nakikita sa Ads Manager.
+    const issueOf = (accountId: string): { issue: string; low: number | null } => {
+      const byStatus = ACCT_ISSUE[acctStatus[accountId] ?? -1]
+      if (byStatus) return { issue: byStatus, low: null }
+      const funds = acctFunds[accountId]
+      if (funds != null && funds <= 0) return { issue: "Out of funds — top up", low: null }
+      if (funds != null && funds < 500) return { issue: "", low: funds }
+      return { issue: "", low: null }
+    }
     const m = new Map<string, Brand>()
     for (const r of scoped) {
-      const b = m.get(r.accountName) ?? { name: r.accountName, accountId: r.accountId, owner: r.accountOwner, spend: 0, value: 0, purchases: 0, active: 0, sched: 0, total: 0, issue: "" }
+      const b = m.get(r.accountName) ?? { name: r.accountName, accountId: r.accountId, owner: r.accountOwner, ids: new Set<string>(), spend: 0, value: 0, purchases: 0, active: 0, sched: 0, total: 0, issue: "", low: null }
+      b.ids.add(r.accountId)
       b.spend += r.spend; b.value += r.purchaseValue; b.purchases += r.purchases
       b.total++
       const d = deliverLabel(r)
@@ -566,8 +606,9 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
       // Problema ng account — mula sa SARILING account ng row na ito, hindi sa
       // unang row ng card: dalawang account na magkapangalan ay hindi dapat
       // maghawa ng badge (nahuli ng review, Ago 25 2026).
-      const iss = ACCT_ISSUE[acctStatus[r.accountId] ?? -1]
-      if (iss && !b.issue) b.issue = iss
+      const h = issueOf(r.accountId)
+      if (h.issue && !b.issue) b.issue = h.issue
+      if (h.low != null && b.low == null) b.low = h.low
       m.set(b.name, b)
     }
     // Ang account na may problema pero WALANG campaign row (bagong disable,
@@ -575,17 +616,19 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
     // maliban sa badge. Kung hindi, ang pinakamalalang kalagayan ang
     // pinakatahimik.
     for (const a of fbAccounts) {
-      const iss = ACCT_ISSUE[acctStatus[a.id] ?? -1]
-      if (!iss) continue
+      const h = issueOf(a.id)
+      if (!h.issue) continue
       if (fOwner !== "All" && a.owner !== fOwner) continue
-      if ([...m.values()].some(b => b.accountId === a.id)) continue
-      m.set(`__acct:${a.id}`, { name: a.name, accountId: a.id, owner: a.owner || "", spend: 0, value: 0, purchases: 0, active: 0, sched: 0, total: 0, issue: iss })
+      // Sa LAHAT ng id ng bawat card ang tsek — ang account na pinagsama sa
+      // ibang card (magkapangalan) ay dating nadodoble bilang multong card.
+      if ([...m.values()].some(b => b.ids?.has(a.id) || b.accountId === a.id)) continue
+      m.set(`__acct:${a.id}`, { name: a.name, accountId: a.id, owner: a.owner || "", ids: new Set([a.id]), spend: 0, value: 0, purchases: 0, active: 0, sched: 0, total: 0, issue: h.issue, low: null })
     }
     // Ang account na may PROBLEMA (payment error atbp.) ay hindi nawawala
     // kahit walang gastos o walang aktibo — iyon mismo ang dapat makita.
     return [...m.values()].filter(b => b.spend > 0 || b.active > 0 || b.sched > 0 || !!b.issue)
       .sort((a, b) => b.spend - a.spend || b.active - a.active)
-  }, [scoped, deliverLabel, acctStatus, fbAccounts, fOwner])
+  }, [scoped, deliverLabel, acctStatus, acctFunds, fbAccounts, fOwner])
 
   // ── TOP MOVERS — 3 pinakamalaki ang tubo, 3 pinakamalaki ang lugi ──────────
   const qualified = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend), [withNet, rules])
@@ -604,22 +647,25 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
       const e = m.get(o) ?? { owner: o, spend: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
       const net = roasOf(r.purchaseValue, r.spend)
       e.spend += r.spend; e.value += r.purchaseValue; e.purchases += r.purchases
-      if (/active/i.test(r.status)) e.budget += r.budget
+      // Parehong batas ng hero KPI: ang maghahatid NGAYON lang ang may badyet.
+      { const l = deliverLabel(r); if (l === "Active" || l === "Scheduled") e.budget += r.budget }
       e.brands.add(r.accountName)
       if (r.spend >= rules.evalMinSpend && net >= rules.scaleRoas) e.win++
       if (r.spend >= rules.evalMinSpend && net < rules.killRoas) e.lose++
       m.set(o, e)
     }
-    // Pangalawang pass: budget ng mga AKTIBO, kasama ang wala pang gastos.
+    // Pangalawang pass: budget ng mga MAGHAHATID, kasama ang wala pang gastos.
     for (const r of rows) {
-      if (!/active/i.test(r.status) || r.spend > 0) continue
+      if (r.spend > 0) continue
+      const l = deliverLabel(r)
+      if (l !== "Active" && l !== "Scheduled") continue
       const o = r.accountOwner || "—"
       const e = m.get(o) ?? { owner: o, spend: 0, value: 0, purchases: 0, budget: 0, brands: new Set<string>(), win: 0, lose: 0 }
       e.budget += r.budget; e.brands.add(r.accountName)
       m.set(o, e)
     }
     return [...m.values()].sort((a, b) => b.spend - a.spend)
-  }, [rows, rules])
+  }, [rows, rules, deliverLabel])
 
   // ── FUNNEL — Testing → Moved → Scaling (galing sa registry, all-time) ──────
   const funnel = useMemo(() => ({
@@ -769,9 +815,15 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                       hindi ipagulat. Ang pula ay nakalaan sa tunay na sira. */}
                   {/* Problema ng ACCOUNT — mas malakas kaysa anumang bilang:
                       ang "1 active" sa may payment error ay walang naipapadala. */}
-                  {b.issue && (
+                  {b.issue ? (
                     <p className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5 inline-block">
                       ⚠ {b.issue}
+                    </p>
+                  ) : b.low != null && (
+                    // Paubos na ang prepaid — hindi pa sira, pero ito ang
+                    // susunod na "Out of funds" kung walang magta-top-up.
+                    <p className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-0.5 inline-block">
+                      ⚠ Low balance · {peso(b.low)} left
                     </p>
                   )}
                   <p className="text-[11px] text-slate-400">
@@ -891,7 +943,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
           {/* ── TREND — makabuluhan lang kapag higit sa isang araw ang saklaw ── */}
           {trendData.length > 1 ? (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <ChartCard title="ROAS Trend (gross)">
+              <ChartCard title="ROAS Trend (incl. VAT)">
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={trendData} margin={{ left: -10, right: 10, top: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
@@ -1152,7 +1204,23 @@ function PerfTable({ rows, objective, loading, level, onLevel, sel, onToggle, on
 // ════════════════════════════════════════════════════════════════════════════════
 // DAILY AD SPEND
 // ════════════════════════════════════════════════════════════════════════════════
-function DailySpend({ daily, loading }: { daily: { date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]; loading: boolean }) {
+function DailySpend({ daily, loading, acctStatus, acctFunds }: {
+  daily: { date: string; accountId?: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]
+  loading: boolean
+  acctStatus: Record<string, number>
+  acctFunds: Record<string, number | null>
+}) {
+  // Ang chip ay dapat magsabi ng TOTOONG kalusugan — hindi ang registration
+  // status na berde kahit disabled o ubos na ang pondo (review, Ago 31 2026).
+  const healthChip = (accountId?: string): { label: string; cls: string } | null => {
+    if (!accountId) return null
+    const iss = ACCT_ISSUE[acctStatus[accountId] ?? -1]
+    if (iss) return { label: iss, cls: "text-rose-700 bg-rose-50" }
+    const funds = acctFunds[accountId]
+    if (funds != null && funds <= 0) return { label: "Out of funds", cls: "text-rose-700 bg-rose-50" }
+    if (funds != null && funds < 500) return { label: `Low balance ₱${Math.round(funds)}`, cls: "text-amber-700 bg-amber-50" }
+    return null
+  }
   const [fAccount, setFAccount] = useState("All")
   const [fOwner, setFOwner] = useState("All")
   const [fStatus, setFStatus] = useState("All")
@@ -1194,13 +1262,17 @@ function DailySpend({ daily, loading }: { daily: { date: string; accountName: st
                   // key sa DATOS, hindi sa index — kapag index ang key, ini-reuse
                   // ni React ang maling row pagkatapos mag-filter.
                   : filtered.map((d, i) => (
-                    <tr key={`${d.date}|${d.accountName}`} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40`}>
+                    <tr key={`${d.date}|${d.accountId || d.accountName}`} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50/40`}>
                       <td className="px-4 py-2.5 whitespace-nowrap">{d.date}</td>
                       <td className="px-4 py-2.5 font-medium">{d.accountName}</td>
                       <td className="px-4 py-2.5 text-slate-600">{d.owner || "—"}</td>
                       <td className="px-4 py-2.5 tabular-nums text-slate-500">{d.budget > 0 ? peso(d.budget) : "—"}</td>
                       <td className="px-4 py-2.5 tabular-nums font-semibold text-blue-600">{peso(d.spend)}</td>
-                      <td className="px-4 py-2.5"><span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${statusColor(d.status)}`}>{d.status.toLowerCase()}</span></td>
+                      <td className="px-4 py-2.5">
+                        {(() => { const h = healthChip(d.accountId); return h
+                          ? <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${h.cls}`}>⚠ {h.label}</span>
+                          : <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${statusColor(d.status)}`}>{d.status.toLowerCase()}</span> })()}
+                      </td>
                     </tr>
                   ))}
             </tbody>

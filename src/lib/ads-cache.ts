@@ -21,13 +21,28 @@ export const MGR_INFLIGHT = new Map<string, Promise<any[]>>()
 export type DashPart = {
   rows: any[]
   trend: { date: string; spend: number; sales: number }[]
-  daily: { date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]
+  daily: { date: string; accountId?: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]
   spendByDate: Record<string, number>
-  /** account_status ni Meta (3 = payment error). -1 = hindi alam. */
-  accountStatus?: number
 }
 export const DASH_CACHE = new Map<string, { ts: number; part: DashPart }>()
 export const DASH_INFLIGHT = new Map<string, Promise<DashPart>>()
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KALUSUGAN NG ACCOUNT — HIWALAY SA DATE RANGE. Dating nakapirmi sa bawat
+// DashPart kada range: ang paglipat ng saklaw ay bumubuhay ng LUMANG snapshot —
+// nagbalik ang "Payment error" na na-top-up na, o nawala ang totoong problema
+// (nahuli ng review, Ago 31 2026). Ang pinakabagong tunay na sagot ang panalo,
+// anuman ang range; ang -1/null (hindi alam) ay hindi pumapatay ng alam.
+// ─────────────────────────────────────────────────────────────────────────────
+export const ACCT_HEALTH = new Map<string, { ts: number; status: number; funds: number | null }>()
+export function noteAcctHealth(accountId: string, status: number, funds: number | null) {
+  const prev = ACCT_HEALTH.get(accountId)
+  ACCT_HEALTH.set(accountId, {
+    ts: Date.now(),
+    status: status !== -1 ? status : (prev?.status ?? -1),
+    funds: funds != null ? funds : (status !== -1 ? funds : (prev?.funds ?? null)),
+  })
+}
 
 export const LVL_CACHE = new Map<string, { ts: number; rows: any[] }>()
 export const LVL_INFLIGHT = new Map<string, Promise<any[]>>()
@@ -61,7 +76,9 @@ export async function prefetchMgrLevel(accounts: FBAccount[], from: string, to: 
       const j = await fetch(`/api/fb/insights?rich=1&level=${level}&parent=${encodeURIComponent(acct)}`
         + `&token=${encodeURIComponent(a.token)}&account_id=${encodeURIComponent(acct)}&from=${from}&to=${to}`).then(r => r.json())
       const rows = j.success ? (j.rows || []).map((r: any) => ({ ...r, __accId: a.id })) : []
-      MGR_CACHE.set(k, { ts: Date.now(), rows })
+      // Palya = walang cache: ang 30 minutong sariwang-BLANGKO ay tahimik na
+      // nagpapalaho ng buong account sa Ads Manager (review, Ago 31 2026).
+      if (j.success) MGR_CACHE.set(k, { ts: Date.now(), rows })
       return rows
     })()
     MGR_INFLIGHT.set(k, run)
@@ -87,14 +104,16 @@ export async function prefetchDashboard(accounts: FBAccount[], from: string, to:
         fetch(`/api/fb/insights?${q}`).then(r => r.json()),
       ])
       const acctBudget = (rc.campaigns || []).filter((c: any) => /active/i.test(c.status)).reduce((s: number, c: any) => s + (c.budget || 0), 0)
-      const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {}, accountStatus: Number(rc.accountStatus ?? -1) }
+      const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {} }
+      noteAcctHealth(a.id, Number(rc.accountStatus ?? -1), rc.accountFunds ?? null)
       if (rc.success) for (const c of rc.campaigns) part.rows.push(toRow(c, a.id, a.name, a.owner))
       if (tr.success) for (const d of tr.trend) part.trend.push({ date: d.date, spend: d.spend, sales: d.sales })
       if (db.success) for (const [d, amt] of Object.entries(db.byDate || {})) {
-        part.daily.push({ date: d, accountName: a.name, owner: a.owner, status: a.status, budget: acctBudget, spend: amt as number })
+        part.daily.push({ date: d, accountId: a.id, accountName: a.name, owner: a.owner, status: a.status, budget: acctBudget, spend: amt as number })
         part.spendByDate[d] = amt as number
       }
-      DASH_CACHE.set(k, { ts: Date.now(), part })
+      // Palya ang pangunahing hila = walang cache (parehong dahilan ng MGR).
+      if (rc.success) DASH_CACHE.set(k, { ts: Date.now(), part })
       return part
     })()
     DASH_INFLIGHT.set(k, run)

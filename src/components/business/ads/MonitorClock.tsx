@@ -58,7 +58,11 @@ export function MonitorClock() {
       const setting = rounds.settings.find(x => x.owner === s.owner)
       const w = windowFor(setting, s)
       if (!w || slotStateAt(w) !== "missed") continue
-      const unchecked = rounds.checks.filter(c => c.slot_id === s.id && !c.checked_at).length
+      // ⚠ Ang account na inalis/na-archive HABANG bukas ang bintana ay wala
+      // sa anumang tanawin ng partner — hindi siya dapat ma-"missed" sa tsek
+      // na walang nag-alok (review, Ago 31 2026).
+      const usableIds = new Set(fb.accounts.filter(a => !a.archived && a.token && a.ad_account_id).map(a => a.id))
+      const unchecked = rounds.checks.filter(c => c.slot_id === s.id && !c.checked_at && usableIds.has(c.account_id)).length
       // ⚠ Ang TAPOS na round na lumagpas lang ng oras ay HINDI missed — ang
       // "0 of N unchecked" na balita ay maling alarma sa admin.
       if (unchecked > 0) void rounds.claimMissed(s, unchecked)

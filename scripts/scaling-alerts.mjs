@@ -56,13 +56,31 @@ function parsed(actions = [], values = []) {
 const accounts = (await sbGet("fb_accounts?select=name,ad_account_id,token,page_name,archived"))
   .filter(a => !a.archived && a.token && a.ad_account_id)
 
+// ── 48h cooldown mula sa registry — ang tab ay nagsasabing "hold", kaya ang
+// Discord ay hindi dapat mag-utos ng kill sa parehong campaign (Ago 31 2026).
+// Huling TUNAY na scale (applied) lang ang bumubuka ng cooldown; ang `at` ang
+// oras, ang lumang tala na petsa lang ay hatinggabi ang alam.
+const inCooldown = new Set()
+try {
+  const regs = await sbGet("scaling_registry?select=adset_id,scales,active&active=eq.true")
+  for (const r of regs) {
+    const last = [...(r.scales || [])].reverse().find(sc => sc && sc.applied !== false)
+    if (!last) continue
+    const t = last.at ? Date.parse(last.at) : Date.parse(`${last.date}T00:00:00+08:00`)
+    if (isFinite(t) && Date.now() - t < 48 * 3600_000) inCooldown.add(String(r.adset_id))
+  }
+} catch { /* walang registry — walang cooldown na malalaman */ }
+
 const scale = [], noSales = [], lowRoas = [], bleeding = []
 for (const a of accounts) {
   const acct = actId(a.ad_account_id)
   // ⚠ Meta metrics — walang RTS (hatol ng may-ari, Ago 25 2026).
   const net = (v, s) => s > 0 ? v / (s * VAT) : 0
   const tr = encodeURIComponent(JSON.stringify({ since: from31, until: today }))
-  let url = `https://graph.facebook.com/v21.0/${acct}/insights?level=adset&fields=adset_id,adset_name,spend,actions,action_values&time_range=${tr}&time_increment=1&limit=500&access_token=${encodeURIComponent(a.token)}`
+  // ⚠ CAMPAIGN level (Ago 31 2026): ang footer ay nagtuturo sa Scaling tab na
+  // CAMPAIGN ang antas — ang dating ad-set na ping ay itinuturo sa tab na
+  // hindi ito maipapakita.
+  let url = `https://graph.facebook.com/v21.0/${acct}/insights?level=campaign&fields=campaign_id,campaign_name,spend,actions,action_values&time_range=${tr}&time_increment=1&limit=500&access_token=${encodeURIComponent(a.token)}`
   const byId = new Map()
   try {
     while (url) {
@@ -70,27 +88,37 @@ for (const a of accounts) {
       if (j.error) break
       for (const r of j.data || []) {
         const p = parsed(r.actions, r.action_values)
-        const m = byId.get(r.adset_id) || { name: r.adset_name, days: new Map() }
+        const m = byId.get(r.campaign_id) || { id: r.campaign_id, name: r.campaign_name, days: new Map() }
         m.days.set(r.date_start, { spend: Number(r.spend || 0), ...p })
-        byId.set(r.adset_id, m)
+        byId.set(r.campaign_id, m)
       }
       url = j.paging?.next || ""
     }
   } catch { continue }
 
+  // ⚠ STATUS — ang insights ay bulag sa on/off: ang pinatay kahapon ay may
+  // gastos pa rin sa series, kaya ang "BLEEDING — kill now" ay dating
+  // pumupunta sa kampanyang PATAY NA (Ago 31 2026). Pumalyang status pull =
+  // laktawan ang account: mas mabuting walang ping kaysa maling ping.
+  const statusById = new Map()
+  try {
+    let su = `https://graph.facebook.com/v21.0/${acct}/campaigns?fields=id,effective_status&limit=500&access_token=${encodeURIComponent(a.token)}`
+    for (let sp = 0; su && sp < 6; sp++) {
+      const j = await jf(await fetch(su, { signal: AbortSignal.timeout(12000) }))
+      if (j.error) break
+      for (const c of j.data || []) statusById.set(String(c.id), String(c.effective_status || ""))
+      su = j.paging?.next || ""
+    }
+  } catch { continue }
+  if (statusById.size === 0) continue
+
   const dates = []
   for (let i = 30; i >= 0; i--) dates.push(dstr(new Date(phNow.getTime() - i * 86400_000)))
   for (const [, m] of byId) {
+    if (!/^ACTIVE$/i.test(statusById.get(String(m.id)) || "")) continue
+    if (inCooldown.has(String(m.id))) continue
     const tD = m.days.get(today) || { spend: 0, purchases: 0, purchaseValue: 0 }
     const w3 = dates.slice(-3).reduce((s, d) => { const x = m.days.get(d); if (x) { s.spend += x.spend; s.value += x.purchaseValue } return s }, { spend: 0, value: 0 })
-    // streak (laktaw today kung maliit pa ang gastos)
-    let streak = 0
-    const start = tD.spend >= RULES.minDailySpend ? dates.length - 1 : dates.length - 2
-    for (let i = start; i >= 0; i--) {
-      const d = m.days.get(dates[i])
-      if (!d || d.spend < RULES.minDailySpend || net(d.purchaseValue, d.spend) < RULES.scaleRoas) break
-      streak++
-    }
     const label = `**${m.name}** (${a.name})`
     // 3-araw na AVERAGE mula ika-3 araw ng takbo (hatol Ago 25 2026) — ang
     // edad dito ay mula sa unang araw na may datos (walang start_time ang

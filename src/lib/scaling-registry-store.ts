@@ -13,6 +13,10 @@ import { getBusinessId } from "@/lib/business"
 
 export interface ScaleEvent {
   date: string        // YYYY-MM-DD (PHT)
+  /** ISO timestamp ng mismong sandali ng scale — ang 48h cooldown ay dating
+   * nakasandal sa hatinggabi ng `date`, kaya 24-48h lang ang tunay na palugit
+   * (nahuli ng review, Ago 31 2026). Wala ito sa mga lumang tala. */
+  at?: string
   pct: number         // 10, 20, 30…
   from: number        // budget bago (pesos)
   to: number          // budget pagkatapos (pesos)

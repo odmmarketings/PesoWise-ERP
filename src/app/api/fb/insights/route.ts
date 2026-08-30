@@ -109,8 +109,8 @@ export async function GET(req: NextRequest) {
     const cached = (k: string) => { const h = CACHE.get(k); return h && Date.now() - h.ts < CACHE_TTL_MS && !sp.get("nocache") ? h.data : null }
 
     // ── Daily series per ad set — pinagbabatayan ng Scaling Tracker ──────────
-    // Isang tawag = 30 araw × bawat ad set, para makwenta ang streak ("3-5 araw
-    // na ≥3.9"), ang mga window (3/7/15/30), at ang kill rules nang hindi
+    // Isang tawag = 30 araw × bawat ad set, para makwenta ang 3-araw na
+    // average (Ago 25 2026), ang mga window (3/7/15/30), at ang kill rules nang hindi
     // tumatawag kada window. Hindi kasama ang frequency/reach — hindi iyon
     // ma-a-aggregate mula sa daily rows (dedup ng reach); sa fatigue check
     // (rich level=ad) iyon nakukuha nang tama mula kay Meta mismo.
@@ -158,20 +158,47 @@ export async function GET(req: NextRequest) {
       // kapag wala o lumipas na, HINIHILA — hindi -1 ang isinasagot habang may
       // rich cache pa (dating nawawala ang "Payment error" badge kada 5 minuto,
       // nahuli ng review Ago 25 2026). Ang -1 ay para lang sa tunay na palya.
-      const acctStatusOf = async (): Promise<number> => {
-        if (level !== "campaign") return -1
-        const sck = `acctstatus|${accountId}|${tokenKey}`
+      // ⚠ ANG "PAYMENT ERROR" NG PREPAID AY WALA SA account_status. Si Auripet
+      // (nasukat Ago 31 2026): status=1 ACTIVE, pero "Available Balance
+      // (PHP0.00)" — tigil ang paghahatid at pula ang Ads Manager. Kaya bukod
+      // sa status, hinuhugot din ang natitirang pondo ng prepaid mula sa
+      // funding_source_details (walang tuwirang numerong field si Meta —
+      // ang display_string ang may dala). null = hindi prepaid o hindi alam.
+      const acctHealthOf = async (): Promise<{ status: number; funds: number | null }> => {
+        if (level !== "campaign") return { status: -1, funds: null }
+        const sck = `accthealth|${accountId}|${tokenKey}`
         const sc = cached(sck)
-        if (sc != null) return Number(sc)
+        if (sc != null) return sc as { status: number; funds: number | null }
+        // 60 segundong pahinga pagkatapos ng palya: kung hindi, ang bawat
+        // cached-rich na request ay maghihintay ng ~37s (3 tangka × 12s) sa
+        // panahon ng Meta outage — ang bilis mismo ng cached path ang mamamatay.
+        const fk = `accthealthfail|${accountId}|${tokenKey}`
+        const fh = CACHE.get(fk)
+        if (fh && Date.now() - fh.ts < 60_000) return { status: -1, funds: null }
         try {
-          const st = await fbGet(`${accountId}?fields=account_status&access_token=${enc}`)
-          const v = Number(st.account_status ?? -1)
-          if (v !== -1) CACHE.set(sck, { ts: Date.now(), data: v })
+          const st = await fbGet(`${accountId}?fields=account_status,is_prepay_account,funding_source_details{display_string}&access_token=${enc}`)
+          const status = Number(st.account_status ?? -1)
+          let funds: number | null = null
+          if (st.is_prepay_account) {
+            // Tanggap ang MINUS kahit saan sa loob ng panaklong: ang prepaid
+            // na lumagpas sa laman ("(PHP-25.10)") ang PINAKA-nangangailangan
+            // ng "Out of funds" na badge (nahuli ng review, Ago 31 2026).
+            const m = String(st.funding_source_details?.display_string || "").match(/\(\s*(-)?\s*[A-Za-z]{0,4}\s*(-?[\d,]+(?:\.\d+)?)\s*\)/)
+            funds = m ? Number(m[2].replace(/,/g, "")) * (m[1] ? -1 : 1) : null
+          }
+          const v = { status, funds }
+          if (status !== -1) CACHE.set(sck, { ts: Date.now(), data: v })
           return v
-        } catch { return -1 }
+        } catch {
+          CACHE.set(fk, { ts: Date.now(), data: 1 })
+          return { status: -1, funds: null }
+        }
       }
       const c = cached(ck)
-      if (c) return NextResponse.json({ success: true, rows: c, campaigns: c, cached: true, accountStatus: await acctStatusOf() })
+      if (c) {
+        const h = await acctHealthOf()
+        return NextResponse.json({ success: true, rows: c, campaigns: c, cached: true, accountStatus: h.status, accountFunds: h.funds })
+      }
 
       // Pull parent ids from insights too — so cross-level filtering survives even if the
       // meta edge call gets rate-limited (#17).
@@ -194,10 +221,24 @@ export async function GET(req: NextRequest) {
       // Ang AD ay walang sariling oras; nagmamana ito sa ad set niya, kaya
       // hinihila sa ibaba kasama ng learning.
       const metaFields = level === "ad" ? "id,name,status,effective_status,created_time,updated_time,adset_id,campaign_id,creative{thumbnail_url}"
-        : level === "adset" ? "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,optimization_goal,created_time,updated_time,start_time,stop_time,campaign_id,learning_stage_info"
+        // ⚠ ANG AD SET AY `end_time` ANG DOKUMENTADONG field (ang `stop_time`
+        // ay sa Campaign) — hinihila PAREHO at binabasa kung alin ang may
+        // laman, para hindi bulag ang "Completed" at ang budget gate sa ad set
+        // na may takdang katapusan (nahuli ng review, Ago 31 2026).
+        : level === "adset" ? "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,optimization_goal,created_time,updated_time,start_time,stop_time,end_time,campaign_id,learning_stage_info"
           : "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time,updated_time,start_time,stop_time"
       const meta: Record<string, any> = {}
-      try { const m = await fbGet(`${metaHost}/${edge}?fields=${metaFields}&limit=500&access_token=${enc}`); for (const x of m.data || []) meta[x.id] = x } catch {}
+      // #3: MAY PAHINA — 500 kada pahina; ang account na lampas doon ay
+      // nawawalan ng status/budget ang mga sumobra (may account nang 468 ads).
+      let metaOk = true
+      try {
+        let mu = `${metaHost}/${edge}?fields=${metaFields}&limit=500&access_token=${enc}`
+        for (let mp = 0; mu && mp < 10; mp++) {
+          const m = await fbGet(mu)
+          for (const x of m.data || []) meta[x.id] = x
+          mu = m.paging?.next ? m.paging.next.replace(`${BASE}/`, "") : ""
+        }
+      } catch { metaOk = false }
 
       // ABO campaigns hold budget on the ad sets — sum so campaign budget isn't 0.
       const adsetActive: Record<string, number> = {}, adsetAll: Record<string, number> = {}
@@ -333,9 +374,13 @@ export async function GET(req: NextRequest) {
       const parentAdset: Record<string, any> = {}
       if (level === "ad") {
         try {
-          const as = await fbGet(`${accountId}/adsets?fields=id,learning_stage_info,start_time,stop_time&limit=500&access_token=${enc}`)
-          for (const s of as.data || []) parentAdset[s.id] = s
-        } catch {}
+          let au = `${accountId}/adsets?fields=id,learning_stage_info,start_time,end_time&limit=500&access_token=${enc}`
+          for (let ap = 0; au && ap < 10; ap++) {
+            const as = await fbGet(au)
+            for (const s of as.data || []) parentAdset[s.id] = s
+            au = as.paging?.next ? as.paging.next.replace(`${BASE}/`, "") : ""
+          }
+        } catch { metaOk = false }
       }
       // Include objects that exist but had no spend in range.
       for (const id of Object.keys(meta)) if (!byId[id]) byId[id] = { [idF]: id, [nameF]: meta[id].name }
@@ -363,7 +408,7 @@ export async function GET(req: NextRequest) {
                 ? (cents(m.daily_budget) || adsetActive[id] || adsetAll[id] || 0)
                 : 0))
             : (level === "adset"
-              ? (!rangeIncludesToday ? cents(m.daily_budget) : (runsToday(m.start_time, m.stop_time) ? cents(m.daily_budget) : 0))
+              ? (!rangeIncludesToday ? cents(m.daily_budget) : (runsToday(m.start_time, m.stop_time || m.end_time) ? cents(m.daily_budget) : 0))
               : 0),
           // ownBudget = this object's own budget (0 → inherits from campaign/ad sets). budgetKind = daily|lifetime.
           ownBudget, budgetKind: ownDaily ? "daily" : ownLife ? "lifetime" : "",
@@ -393,7 +438,7 @@ export async function GET(req: NextRequest) {
           // Takdang oras — ito ang batayan ng "Scheduled" at "Completed". Sa ad
           // ay galing sa MAGULANG na ad set (wala itong sariling oras).
           startTime: level === "ad" ? (parentAdset[m.adset_id || r.adset_id || ""]?.start_time || "") : (m.start_time || ""),
-          stopTime: level === "ad" ? (parentAdset[m.adset_id || r.adset_id || ""]?.stop_time || "") : (m.stop_time || ""),
+          stopTime: level === "ad" ? (parentAdset[m.adset_id || r.adset_id || ""]?.end_time || "") : (m.stop_time || m.end_time || ""),
           bidStrategy: m.bid_strategy || "", optimizationGoal: m.optimization_goal || "",
           createdTime: m.created_time || "", updatedTime: m.updated_time || "",
           campaignId: m.campaign_id || r.campaign_id || "", adsetId: m.adset_id || r.adset_id || "",
@@ -407,11 +452,16 @@ export async function GET(req: NextRequest) {
           ...a,
         }
       }).sort((x: any, y: any) => y.spend - x.spend)
-      CACHE.set(ck, { ts: Date.now(), data: rows })
+      // ⚠ Kapag pumalya ang meta/kids pull (rate limit #17 ay HTTP 400 — hindi
+      // nire-retry ni fbGet), ang mga row ay walang status/budget/anak. Ang
+      // pag-cache niyon bilang buo ay 5 minutong kasinungalingan — hindi
+      // kinaka-cache, para ang susunod na request ay sariwang tangka.
+      if (metaOk) CACHE.set(ck, { ts: Date.now(), data: rows })
       // account_status — "Payment error" atbp. sa brand cards (hatol ng
       // may-ari, Ago 25 2026: "pag payment error sa ads manager, dito din
       // dapat"). Iisang helper sa itaas — pareho sa cached at fresh na landas.
-      return NextResponse.json({ success: true, rows, campaigns: rows, accountStatus: await acctStatusOf() })
+      const health = await acctHealthOf()
+      return NextResponse.json({ success: true, rows, campaigns: rows, accountStatus: health.status, accountFunds: health.funds })
     }
 
     // ── Daily trend (spend + sales) ─────────────────────────────────────────────
