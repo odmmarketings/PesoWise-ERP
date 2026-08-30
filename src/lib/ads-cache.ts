@@ -23,6 +23,8 @@ export type DashPart = {
   trend: { date: string; spend: number; sales: number }[]
   daily: { date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]
   spendByDate: Record<string, number>
+  /** account_status ni Meta (3 = payment error). -1 = hindi alam. */
+  accountStatus?: number
 }
 export const DASH_CACHE = new Map<string, { ts: number; part: DashPart }>()
 export const DASH_INFLIGHT = new Map<string, Promise<DashPart>>()
@@ -85,7 +87,7 @@ export async function prefetchDashboard(accounts: FBAccount[], from: string, to:
         fetch(`/api/fb/insights?${q}`).then(r => r.json()),
       ])
       const acctBudget = (rc.campaigns || []).filter((c: any) => /active/i.test(c.status)).reduce((s: number, c: any) => s + (c.budget || 0), 0)
-      const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {} }
+      const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {}, accountStatus: Number(rc.accountStatus ?? -1) }
       if (rc.success) for (const c of rc.campaigns) part.rows.push(toRow(c, a.id, a.name, a.owner))
       if (tr.success) for (const d of tr.trend) part.trend.push({ date: d.date, spend: d.spend, sales: d.sales })
       if (db.success) for (const [d, amt] of Object.entries(db.byDate || {})) {

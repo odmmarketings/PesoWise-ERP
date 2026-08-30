@@ -154,7 +154,24 @@ export async function GET(req: NextRequest) {
       const insightsHost = level === "campaign" ? accountId : parent
       const metaHost = level === "campaign" ? accountId : parent
       const ck = `rich|${level}|${parent}|${from}|${to}|${tokenKey}`
-      const c = cached(ck); if (c) return NextResponse.json({ success: true, rows: c, campaigns: c, cached: true })
+      // Ang account_status ay may SARILING buhay na hiwalay sa rich cache:
+      // kapag wala o lumipas na, HINIHILA — hindi -1 ang isinasagot habang may
+      // rich cache pa (dating nawawala ang "Payment error" badge kada 5 minuto,
+      // nahuli ng review Ago 25 2026). Ang -1 ay para lang sa tunay na palya.
+      const acctStatusOf = async (): Promise<number> => {
+        if (level !== "campaign") return -1
+        const sck = `acctstatus|${accountId}|${tokenKey}`
+        const sc = cached(sck)
+        if (sc != null) return Number(sc)
+        try {
+          const st = await fbGet(`${accountId}?fields=account_status&access_token=${enc}`)
+          const v = Number(st.account_status ?? -1)
+          if (v !== -1) CACHE.set(sck, { ts: Date.now(), data: v })
+          return v
+        } catch { return -1 }
+      }
+      const c = cached(ck)
+      if (c) return NextResponse.json({ success: true, rows: c, campaigns: c, cached: true, accountStatus: await acctStatusOf() })
 
       // Pull parent ids from insights too — so cross-level filtering survives even if the
       // meta edge call gets rate-limited (#17).
@@ -255,7 +272,13 @@ export async function GET(req: NextRequest) {
             }
             adsKnown = true   // ⚠ kapag pumalya ang hila, `kidsLive` ay -1 (hindi alam),
           } catch { adsKnown = false }   //   dahil ang 0 ay magsasabi ng "Ads off" sa LAHAT.
-          const as = await fbGet(`${accountId}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,status,effective_status,start_time,end_time&limit=500&access_token=${enc}`)
+          // ⚠ MAY PAHINA RIN DITO. 500 kada pahina; ang account na lampas
+          // doon ay mapuputol ang bilang ng anak — at ang kulang na kidsOn ay
+          // nagiging maling "Ad set off" (parehong bug class ng ads pull sa
+          // itaas; nahuli ng review, Ago 25 2026).
+          let asU = `${accountId}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,status,effective_status,start_time,end_time&limit=500&access_token=${enc}`
+          for (let asPage = 0; asU && asPage < 10; asPage++) {
+          const as = await fbGet(asU)
           for (const s of as.data || []) {
             const cid = s.campaign_id
             kidsTotal[cid] = (kidsTotal[cid] || 0) + 1
@@ -280,6 +303,8 @@ export async function GET(req: NextRequest) {
             if (rangeIncludesToday && !runsToday(s.start_time, s.end_time)) continue
             adsetAll[cid] = (adsetAll[cid] || 0) + b
             if (/active/i.test(s.effective_status)) adsetActive[cid] = (adsetActive[cid] || 0) + b
+          }
+          asU = as.paging?.next ? as.paging.next.replace(`${BASE}/`, "") : ""
           }
         } catch {}
       }
@@ -383,7 +408,10 @@ export async function GET(req: NextRequest) {
         }
       }).sort((x: any, y: any) => y.spend - x.spend)
       CACHE.set(ck, { ts: Date.now(), data: rows })
-      return NextResponse.json({ success: true, rows, campaigns: rows })
+      // account_status — "Payment error" atbp. sa brand cards (hatol ng
+      // may-ari, Ago 25 2026: "pag payment error sa ads manager, dito din
+      // dapat"). Iisang helper sa itaas — pareho sa cached at fresh na landas.
+      return NextResponse.json({ success: true, rows, campaigns: rows, accountStatus: await acctStatusOf() })
     }
 
     // ── Daily trend (spend + sales) ─────────────────────────────────────────────

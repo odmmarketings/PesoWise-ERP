@@ -4,6 +4,7 @@ import { ShieldCheck, AlertTriangle, RefreshCw, X } from "lucide-react"
 import type { FBAccount } from "@/lib/fb-store"
 import { makeSpendChoices, windowFor, type MonitorCheck, type MonitorSetting, useMonitorRounds } from "@/lib/monitor-store"
 import { slotStateAt } from "@/lib/manila"
+import { deliveryOf } from "@/lib/fb-delivery"
 import { scanSound } from "@/lib/scan-sound"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,7 +119,14 @@ export function MonitorCheckButton({ account, rounds, onDone }: { account: FBAcc
       if (!j?.success) throw new Error(j?.error || "fetch failed")
       const rows: any[] = j.rows || j.campaigns || []
       const spend = rows.reduce((s, x) => s + (Number(x.spend) || 0), 0)
-      const active = rows.filter(x => /active/i.test(String(x.status || ""))).length
+      // KAPAREHONG hatol ng Dashboard at Ads Manager: TUNAY na naghahatid —
+      // hindi ang effective_status na nananatiling ACTIVE kahit patay lahat ng
+      // anak (review, Ago 25 2026: iisang bilang sa buong app).
+      const active = rows.filter(x => deliveryOf({
+        status: String(x.status || ""), configuredStatus: String(x.configuredStatus || x.status || ""),
+        kidsOn: x.kidsOn, kidsTotal: x.kidsTotal, kidsLive: x.kidsLive, kidsStart: x.kidsStart,
+        startTime: x.startTime, stopTime: x.stopTime, learning: null,
+      }, "campaign").label === "Active").length
       setPulled({ spend, active, at: new Date().toISOString() })
       setFails(0)
       setChoices(makeSpendChoices(spend))

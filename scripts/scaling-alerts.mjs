@@ -92,7 +92,21 @@ for (const a of accounts) {
       streak++
     }
     const label = `**${m.name}** (${a.name})`
-    if (streak >= RULES.scaleDays) scale.push(`${label} — ${streak} days ≥ ${RULES.scaleRoas} net`)
+    // 3-araw na AVERAGE mula ika-3 araw ng takbo (hatol Ago 25 2026) — ang
+    // edad dito ay mula sa unang araw na may datos (walang start_time ang
+    // insights pull na ito; ang unang gastos ang pinakamabuting alam).
+    const first = [...m.days.keys()].sort()[0] || today
+    const fIdx = dates.indexOf(first)
+    const ageDays = fIdx < 0 ? dates.length : dates.length - fIdx
+    // EKSAKTONG kapareho ng Scaling tab (Ago 25 2026): hindi hinuhusgahan ang
+    // umagang hindi pa tapos; floor = ₱500/day sa mga TAPOS na araw, cap 3 —
+    // ang 9AM na ping ay hindi dapat magturo ng hindi kikilalanin ng tab.
+    const todayMature = tD.spend >= RULES.minDailySpend
+    const jw = todayMature ? w3 : dates.slice(-4, -1).reduce((s, d) => { const x = m.days.get(d); if (x) { s.spend += x.spend; s.value += x.purchaseValue } return s }, { spend: 0, value: 0 })
+    const completeDays = Math.max(1, Math.min(Math.min(3, RULES.scaleDays), ageDays - (todayMature ? 0 : 1)))
+    const jAvg = net(jw.value, jw.spend)
+    if (ageDays >= RULES.scaleDays && jAvg >= RULES.scaleRoas && jw.spend >= RULES.minDailySpend * completeDays)
+      scale.push(`${label} — 3d avg ROAS ${dec(jAvg)} on ${peso(jw.spend)} (day ${ageDays})`)
     else if (net(w3.value, w3.spend) < RULES.bleedRoas && w3.spend >= RULES.bleedSpend) bleeding.push(`${label} — 3d net ${dec(net(w3.value, w3.spend))} on ${peso(w3.spend)}`)
     else if (phHour >= 9 && phHour < 12 && tD.spend >= RULES.evalMinSpend && tD.purchases === 0) noSales.push(`${label} — ${peso(tD.spend)} spent, 0 sales`)
     else if (phHour >= 21 && tD.spend >= RULES.evalMinSpend && net(tD.purchaseValue, tD.spend) < RULES.killRoas) lowRoas.push(`${label} — today net ${dec(net(tD.purchaseValue, tD.spend))}`)

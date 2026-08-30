@@ -13,6 +13,7 @@ import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
 import { useFBAccounts, actId, type FBAccount } from "@/lib/fb-store"
+import { deliveryOf } from "@/lib/fb-delivery"
 import { useActivePages } from "@/lib/pages-store"
 import { useAdspent } from "@/lib/adspent-store"
 import { DateRangePicker } from "@/components/business/PancakeDatePicker"
@@ -53,6 +54,10 @@ interface RawCampaign {
   inlineLinkClicks: number; linkCtr: number; frequency: number; videoAvgPlay: number; video3s: number
   purchases: number; websitePurchases: number; metaPurchases: number
   purchaseValue: number; addToCart: number; initiateCheckout: number; contentViews: number; linkClicks: number; messaging: number; purchaseRoas: number
+  // Delivery — mula sa rich response; kailangan ng `deliveryOf` para malaman
+  // kung TUNAY na tumatakbo (hindi lang "Active" ang effective_status).
+  configuredStatus?: string; kidsOn?: number; kidsTotal?: number; kidsLive?: number
+  kidsStart?: string; startTime?: string; stopTime?: string
 }
 interface Row extends RawCampaign { accountId: string; accountName: string; accountOwner: string; spendVat: number; roas: number; cpa: number; avgValue: number; costPerCheckout: number; convRate: number; costPerMsg: number }
 
@@ -90,118 +95,6 @@ function objBucket(o: string): Exclude<Obj, "All"> {
 }
 const statusColor = (s: string) => /active/i.test(s) ? "text-emerald-600 bg-emerald-50" : /paus/i.test(s) ? "text-amber-600 bg-amber-50" : "text-slate-500 bg-slate-100"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DELIVERY — ang hanay na "Status" ni Meta, gaya ng Ads Manager.
-//
-// ⚠ ANG `effective_status` NG CAMPAIGN AY HINDI TUMITINGIN PABABA. Nananatili
-// itong ACTIVE kahit patay na ang lahat ng ad set nito, kaya "Active" ang
-// nakikita mo sa campaign na wala nang naipapadala. Binibilang ng Ads Manager
-// ang mga anak para dito — ganoon din tayo (`kidsOn`/`kidsTotal` mula sa API).
-//
-// Ang mga anak naman ay SINASABI ni Meta kung sino ang may sala sa itaas:
-// CAMPAIGN_PAUSED at ADSET_PAUSED — ginagamit natin nang deretso.
-const DELIVERY_MAP: Record<string, string> = {
-  CAMPAIGN_PAUSED: "Campaign off",
-  ADSET_PAUSED: "Ad set off",
-  PENDING_REVIEW: "In review",
-  PENDING_BILLING_INFO: "Needs billing info",
-  DISAPPROVED: "Rejected",
-  PREAPPROVED: "Scheduled",
-  WITH_ISSUES: "Not delivering",
-  IN_PROCESS: "Processing",
-  ARCHIVED: "Archived",
-  DELETED: "Deleted",
-}
-// LEARNING — sa AD SET nangyayari (ang ad ay nagmamana). Ang `status` ni Meta:
-//   LEARNING  → nag-aaral pa, hindi pa matatag ang delivery
-//   FAIL      → "Learning limited": lumabas sa learning nang KULANG ang events
-//               (~50 kada 7 araw ang kailangan), kaya mahina ang optimization
-//   SUCCESS   → tapos na; normal na "Active" ang ipapakita
-const LEARN_TARGET = 50
-type Learning = { status: string; conversions: number } | null
-type DeliveryRow = { status: string; configuredStatus: string; kidsOn?: number; kidsTotal?: number; kidsLive?: number; kidsStart?: string; learning?: Learning; startTime?: string; stopTime?: string }
-export function deliveryOf(r: DeliveryRow, level: "campaign" | "adset" | "ad", now = Date.now()): { label: string; tone: "on" | "off" | "warn" | "bad" } {
-  const eff = String(r.status || "").toUpperCase()
-  const own = String(r.configuredStatus || r.status || "").toUpperCase()
-
-  // 1. Ang sarili mong switch ang unang sagot — kung patay ka, "Off" ka.
-  if (/PAUSED/.test(own) && own !== "CAMPAIGN_PAUSED" && own !== "ADSET_PAUSED") return { label: "Off", tone: "off" }
-  // 2. May sinasabi ba si Meta na natatangi?
-  if (eff === "DISAPPROVED") return { label: "Rejected", tone: "bad" }
-  if (eff === "WITH_ISSUES") return { label: "Not delivering", tone: "bad" }
-  if (DELIVERY_MAP[eff] && eff !== "ACTIVE") {
-    const bad = eff === "PENDING_BILLING_INFO"
-    return { label: DELIVERY_MAP[eff], tone: bad ? "bad" : eff === "CAMPAIGN_PAUSED" || eff === "ADSET_PAUSED" || eff === "ARCHIVED" || eff === "DELETED" ? "off" : "warn" }
-  }
-  // 3. Buhay ang switch — pero dumating na ba ang oras? Ang `effective_status`
-  //    ay HINDI tumitingin sa orasan: ACTIVE na agad ang isinasagot ni Meta sa
-  //    isang bagong gawang campaign na sa Lunes pa magsisimula, kaya "Active"
-  //    ang lumalabas sa hindi pa umaandar (iniulat ng may-ari, Ago 17 2026).
-  //    Nauuna ang pause at ang tanggi rito — kapag hinintuan mo ang naka-schedule
-  //    ay "Off" ang sabi ng Ads Manager, hindi "Scheduled".
-  //    BERDE ang Scheduled, kapareho ng Active — hatol ng may-ari (Ago 17 2026).
-  //    Malusog ito: nakabukas, tama ang pagkakatakda, wala lang gagawin hangga't
-  //    hindi sumasapit ang oras. Ang kulay-abo ay para sa hindi na tatakbo, at
-  //    hindi iyon ang kalagayan nito. (Kulay-abo ito sa Ads Manager ni Meta —
-  //    sinadya nating lumihis.) Ang COMPLETED ay kulay-abo pa rin: tapos na iyon.
-  const start = r.startTime ? Date.parse(r.startTime) : NaN
-  const stop = r.stopTime ? Date.parse(r.stopTime) : NaN
-  if (!Number.isNaN(start) && start > now) return { label: "Scheduled", tone: "on" }
-  if (!Number.isNaN(stop) && stop <= now) return { label: "Completed", tone: "off" }
-  //    ⚠ SA AD SET ITINATAKDA ANG ORAS, HINDI SA CAMPAIGN. Ang campaign ay
-  //    maaaring may lumipas nang `start_time` (o wala) habang ang lahat ng
-  //    BUKAS na ad set nito ay bukas pa magsisimula — kaya "Scheduled" ang
-  //    mababasa mo sa ad set pero "Active" sa campaign sa itaas niya
-  //    (iniulat ng may-ari, Ago 21 2026). `kidsStart` ang PINAKAMAAGANG simula
-  //    sa mga bukas na ad set: kapag ang pinakamaaga ay wala pa, wala pang
-  //    kahit isa — naka-schedule ang buong campaign. Blangko = hindi alam.
-  //    Nauuna ito sa bilang ng anak: ang "Ad set off"/"Ads off" sa isang hindi
-  //    pa nagsisimula ay maling babala, kapareho ng dahilan sa taas.
-  const kidStart = r.kidsStart ? Date.parse(r.kidsStart) : NaN
-  if (level === "campaign" && (r.kidsOn ?? -1) > 0 && !Number.isNaN(kidStart) && kidStart > now) {
-    return { label: "Scheduled", tone: "on" }
-  }
-  // 4. Buhay ako — pero may naipapadala ba talaga? Tanungin ang mga anak.
-  //    -1 = walang datos ng anak; huwag manghula.
-  const on = r.kidsOn ?? -1, total = r.kidsTotal ?? -1
-  if (level !== "ad" && total > 0 && on === 0) {
-    return { label: level === "campaign" ? "Ad set off" : "Ads off", tone: "warn" }
-  }
-  //    ⚠ DALAWANG HAKBANG PABABA ANG CAMPAIGN. Hindi sapat na may bukas na ad
-  //    set: kung ang bukas na ad set na iyon ay walang kahit isang bukas na ad,
-  //    wala pa ring lumalabas — pero "Active" ang mababasa (iniulat ng may-ari,
-  //    Ago 21 2026: 1/3 ang bukas na ad set, at ang isang iyon ay 0/3 ang ad).
-  //    `kidsLive` = bukas na ad set na may bukas na ad. Kapag wala ni isa, ang
-  //    ADS ang dahilan, hindi ang ad set — kaya "Ads off" ang sinasabi natin,
-  //    tulad ng hiling: ad set ang patay → "Ad set off"; ads ang patay → "Ads off".
-  //    -1 = hindi alam (pumalya ang hila) — huwag manghula.
-  const live = r.kidsLive ?? -1
-  if (level === "campaign" && total > 0 && on > 0 && live === 0) {
-    return { label: "Ads off", tone: "warn" }
-  }
-  // 5. Buhay at may naipapadala — pero nag-aaral pa ba? Ang learning ay
-  //    pumapalit sa "Active" sa Ads Manager, hindi dinadagdag sa tabi nito.
-  //    Campaign lang ang walang ganito (walang learning sa antas na iyon).
-  const L = r.learning
-  if (level !== "campaign" && L) {
-    if (L.status === "LEARNING") {
-      // ⚠ ANG BILANG AY SA AD SET LANG. Ang mga event ay naiipon sa AD SET, kaya
-      // ang paglalagay ng "12/50" sa bawat ad sa ilalim nito ay pag-uulit ng
-      // iisang numero — at mukhang sariling progreso ng ad, gayong hindi.
-      // Sa ad, "Learning" lang: totoo, at hindi nagsisinungaling kung kanino
-      // ang bilang.
-      if (level !== "adset") return { label: "Learning", tone: "warn" }
-      return { label: `Learning ${Math.max(0, L.conversions)}/${LEARN_TARGET}`, tone: "warn" }
-    }
-    // FAIL = "Learning limited" sa wika ng Ads Manager. Hindi ito error kaya
-    // hindi pula — pero babala: hindi na mag-o-optimize nang maayos hangga't
-    // hindi tumaas ang events (dagdagan ang budget, palawakin ang audience,
-    // o pagsamahin ang mga ad set).
-    if (L.status === "FAIL") return { label: "Learning limited", tone: "warn" }
-  }
-  if (/ACTIVE/.test(own) || /ACTIVE/.test(eff)) return { label: "Active", tone: "on" }
-  return { label: eff ? eff.replace(/_/g, " ").toLowerCase() : "—", tone: "off" }
-}
 const DELIVERY_TONE: Record<string, string> = {
   on: "text-emerald-600 bg-emerald-50",
   off: "text-slate-500 bg-slate-100",
@@ -386,6 +279,8 @@ export default function FacebookAdsPage() {
   const [trackerFocus, setTrackerFocus] = useState<TrackerFocus | null>(null)
   const jumpToTracker = useCallback((t: Tab, f: TrackerFocus) => { setTrackerFocus(f); setTab(t) }, [])
   const [trend, setTrend] = useState<{ date: string; spend: number; sales: number }[]>(dashBoot.trend)
+  // account_status kada ad account (3 = payment error) — para sa brand cards.
+  const [acctStatus, setAcctStatus] = useState<Record<string, number>>({})
   const [daily, setDaily] = useState<{ date: string; accountName: string; owner: string; status: string; budget: number; spend: number }[]>(dashBoot.daily)
   const [loading, setLoading] = useState(false)
   // ⚠ Hiwalay sa `loading`: ang Refresh ay sinadyang WALANG skeleton (nakatayo
@@ -403,13 +298,23 @@ export default function FacebookAdsPage() {
   // ginagamit ng Dashboard at Daily Ad Spend.
   const applyDash = useCallback((accts: FBAccount[]) => {
     const allRows: Row[] = [], trendByDate: Record<string, { spend: number; sales: number }> = {}, dailyRows: DashPart["daily"] = []
+    const st: Record<string, number> = {}
     for (const a of accts) {
       const part = DASH_CACHE.get(`${a.id}|${from}|${to}`)?.part
       if (!part) continue
       allRows.push(...part.rows)
       for (const d of part.trend) { trendByDate[d.date] = trendByDate[d.date] || { spend: 0, sales: 0 }; trendByDate[d.date].spend += d.spend; trendByDate[d.date].sales += d.sales }
       dailyRows.push(...part.daily)
+      st[a.id] = part.accountStatus ?? -1
     }
+    // ⚠ Ang -1 ay "hindi alam", HINDI "gumaling na": ang isang pumalyang
+    // status fetch ay hindi dapat magbura ng alam nang problema (30 minutong
+    // nawawala ang badge kung hindi — nahuli ng review, Ago 25 2026).
+    setAcctStatus(prev => {
+      const merged = { ...prev }
+      for (const [k, v] of Object.entries(st)) if (v !== -1 || merged[k] == null) merged[k] = v
+      return merged
+    })
     setRows(allRows)
     setTrend(Object.entries(trendByDate).map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date)))
     setDaily(dailyRows.sort((a, b) => a.date.localeCompare(b.date) || a.accountName.localeCompare(b.accountName)))
@@ -444,7 +349,7 @@ export default function FacebookAdsPage() {
           fetch(`/api/fb/insights?${q}${fresh ? "&nocache=1" : ""}`).then(r => r.json()),
         ])
         const acctBudget = (rc.campaigns || []).filter((c: any) => /active/i.test(c.status)).reduce((s: number, c: any) => s + (c.budget || 0), 0)
-        const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {} }
+        const part: DashPart = { rows: [], trend: [], daily: [], spendByDate: {}, accountStatus: Number(rc.accountStatus ?? -1) }
         if (rc.success) for (const c of rc.campaigns) part.rows.push(toRow(c, a.id, a.name, a.owner))
         if (tr.success) for (const d of tr.trend) part.trend.push({ date: d.date, spend: d.spend, sales: d.sales })
         if (db.success) for (const [d, amt] of Object.entries(db.byDate || {})) {
@@ -532,7 +437,7 @@ export default function FacebookAdsPage() {
           <Link2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
           <p className="text-slate-500 text-sm">No connected ad accounts. Register them in <strong>Ad Accounts</strong> first.</p>
         </div>
-      ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} onOpen={openInManager} goTab={setTab} />
+      ) : tab === "dashboard" ? <Dashboard rows={rows} trend={trend} loading={loading} accounts={dataAccounts} from={from} to={to} onOpen={openInManager} goTab={setTab} acctStatus={acctStatus} />
         : tab === "daily" ? <DailySpend daily={daily} loading={loading} />
           : tab === "testing" ? <ScalingTracker key="testing" mode="testing" accounts={dataAccounts} onSignals={setTestingCount} onOpenInManager={openInManager} focus={trackerFocus} />
             : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} focus={trackerFocus} />
@@ -572,10 +477,19 @@ function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?
 // Ang buong listahan ng campaigns ay nasa Ads Manager / Monitoring — hindi na
 // inuulit dito. Top 3 / Worst 3 lang ayon sa perang epekto.
 // ─────────────────────────────────────────────────────────────────────────────
-function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpen, goTab }: {
+// account_status ni Meta → salitang makikita. 1 = maayos (walang badge);
+// -1 = hindi alam (huwag manghula). Ang natitira ay problema ng ACCOUNT na
+// hindi kailanman sasabihin ng status ng campaign.
+const ACCT_ISSUE: Record<number, string> = {
+  2: "Account disabled", 3: "Payment error", 7: "In risk review",
+  8: "Pending settlement", 9: "Payment grace period", 100: "Closing", 101: "Closed",
+}
+
+function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpen, goTab, acctStatus }: {
   rows: Row[]; trend: { date: string; spend: number; sales: number }[]; loading: boolean
   accounts: FBAccount[]; from: string; to: string
   onOpen: (f: MgrFocus) => void; goTab: (t: Tab) => void
+  acctStatus: Record<string, number>
 }) {
   const [fOwner, setFOwner] = useState("All")
   const rules = useMemo(() => loadHouseRules(), [])
@@ -608,8 +522,23 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
   const netAll = roasOf(agg.value, agg.spend)
   const totalValue = agg.value
   const cpp = agg.purchases > 0 ? agg.spend / agg.purchases : 0
-  const budgetInPlay = useMemo(() => scoped.filter(r => /active/i.test(r.status)).reduce((s, r) => s + r.budget, 0), [scoped])
-  const activeCount = scoped.filter(r => /active/i.test(r.status)).length
+  // ⚠ "Active" = TUNAY na naghahatid. Ang effective_status ng campaign ay
+  // nananatiling ACTIVE kahit patay lahat ng ad set/ads nito — kaya "1 active"
+  // ang mababasa sa account na wala namang tumatakbo (iniulat ng may-ari,
+  // Ago 25 2026, Auripet). Ang `deliveryOf` — ang mismong hatol ng Ads
+  // Manager tab — ang ginagamit: Active lang ang bilang; hiwalay ang Scheduled.
+  const deliverLabel = useCallback((r: Row) => deliveryOf({
+    status: r.status, configuredStatus: r.configuredStatus || r.status,
+    kidsOn: r.kidsOn, kidsTotal: r.kidsTotal, kidsLive: r.kidsLive, kidsStart: r.kidsStart,
+    startTime: r.startTime, stopTime: r.stopTime, learning: null,
+  }, "campaign").label, [])
+  // Ang badyet na "nasa laro" = ang maghahatid NGAYONG ARAW: Active, o
+  // Scheduled na magsisimula pa (ang server na ang nagze-zero ng hindi tatakbo
+  // ngayon). Ang "Ads off" na campaign ay ACTIVE ang status pero walang
+  // gagastos — hindi dapat pumasok sa pacing (review, Ago 25 2026: iisang
+  // batayan ng "N active" at ng badyet sa iisang card).
+  const budgetInPlay = useMemo(() => scoped.filter(r => { const l = deliverLabel(r); return l === "Active" || l === "Scheduled" }).reduce((s, r) => s + r.budget, 0), [scoped, deliverLabel])
+  const activeCount = useMemo(() => scoped.filter(r => deliverLabel(r) === "Active").length, [scoped, deliverLabel])
 
   // ── ACTION QUEUE — house rules, hindi opinyon ──────────────────────────────
   const losers = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend && x.net < rules.killRoas), [withNet, rules])
@@ -625,17 +554,38 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
   // araw ay ₱0 pa ang lahat, at ang blangkong hilera ng brand ay mukhang sira.
   // Ang walang gastos AT walang aktibo ay hindi pa rin kasama — patay iyon.
   const brands = useMemo(() => {
-    const m = new Map<string, { name: string; accountId: string; owner: string; spend: number; value: number; purchases: number; active: number; total: number }>()
+    type Brand = { name: string; accountId: string; owner: string; spend: number; value: number; purchases: number; active: number; sched: number; total: number; issue: string }
+    const m = new Map<string, Brand>()
     for (const r of scoped) {
-      const b = m.get(r.accountName) ?? { name: r.accountName, accountId: r.accountId, owner: r.accountOwner, spend: 0, value: 0, purchases: 0, active: 0, total: 0 }
+      const b = m.get(r.accountName) ?? { name: r.accountName, accountId: r.accountId, owner: r.accountOwner, spend: 0, value: 0, purchases: 0, active: 0, sched: 0, total: 0, issue: "" }
       b.spend += r.spend; b.value += r.purchaseValue; b.purchases += r.purchases
       b.total++
-      if (/active/i.test(r.status)) b.active++
+      const d = deliverLabel(r)
+      if (d === "Active") b.active++
+      else if (d === "Scheduled") b.sched++
+      // Problema ng account — mula sa SARILING account ng row na ito, hindi sa
+      // unang row ng card: dalawang account na magkapangalan ay hindi dapat
+      // maghawa ng badge (nahuli ng review, Ago 25 2026).
+      const iss = ACCT_ISSUE[acctStatus[r.accountId] ?? -1]
+      if (iss && !b.issue) b.issue = iss
       m.set(b.name, b)
     }
-    return [...m.values()].filter(b => b.spend > 0 || b.active > 0)
+    // Ang account na may problema pero WALANG campaign row (bagong disable,
+    // blangkong hila) ay dapat pa ring makita — sintetikong card na zero lahat
+    // maliban sa badge. Kung hindi, ang pinakamalalang kalagayan ang
+    // pinakatahimik.
+    for (const a of fbAccounts) {
+      const iss = ACCT_ISSUE[acctStatus[a.id] ?? -1]
+      if (!iss) continue
+      if (fOwner !== "All" && a.owner !== fOwner) continue
+      if ([...m.values()].some(b => b.accountId === a.id)) continue
+      m.set(`__acct:${a.id}`, { name: a.name, accountId: a.id, owner: a.owner || "", spend: 0, value: 0, purchases: 0, active: 0, sched: 0, total: 0, issue: iss })
+    }
+    // Ang account na may PROBLEMA (payment error atbp.) ay hindi nawawala
+    // kahit walang gastos o walang aktibo — iyon mismo ang dapat makita.
+    return [...m.values()].filter(b => b.spend > 0 || b.active > 0 || b.sched > 0 || !!b.issue)
       .sort((a, b) => b.spend - a.spend || b.active - a.active)
-  }, [scoped])
+  }, [scoped, deliverLabel, acctStatus, fbAccounts, fOwner])
 
   // ── TOP MOVERS — 3 pinakamalaki ang tubo, 3 pinakamalaki ang lugi ──────────
   const qualified = useMemo(() => withNet.filter(x => x.r.spend >= rules.evalMinSpend), [withNet, rules])
@@ -723,7 +673,7 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                 (Ago 25 2026). Ang natitirang pagkakaiba sa Meta ay VAT lang. */}
             <Kpi label={`ROAS ${rangeLabel}`}
               value={agg.spend > 0 ? dec(netAll) + "x" : "—"}
-              sub={agg.spend > 0 ? "purchase ROAS · spend incl. 12% VAT" : "no spend yet"}
+              sub={agg.spend > 0 ? `${dec(agg.value / agg.spend)}x without VAT — Meta's figure` : "no spend yet"}
               accent={agg.spend === 0 ? "from-slate-600 to-slate-700"
                 : netAll >= rules.scaleRoas ? "from-emerald-500 to-emerald-600" : netAll < rules.killRoas ? "from-rose-500 to-rose-600" : "from-amber-500 to-orange-600"} />
             {/* Ang budget ni Meta ay PRE-VAT, kaya ang pacing (% spent) ay
@@ -817,12 +767,20 @@ function Dashboard({ rows, trend, loading, accounts: fbAccounts, from, to, onOpe
                       HINDI pula — hindi iyon error, kaya amber lang: "may
                       gastos ngayon pero wala nang tumatakbo" ay dapat mapansin,
                       hindi ipagulat. Ang pula ay nakalaan sa tunay na sira. */}
+                  {/* Problema ng ACCOUNT — mas malakas kaysa anumang bilang:
+                      ang "1 active" sa may payment error ay walang naipapadala. */}
+                  {b.issue && (
+                    <p className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5 inline-block">
+                      ⚠ {b.issue}
+                    </p>
+                  )}
                   <p className="text-[11px] text-slate-400">
                     {b.owner || "—"} ·{" "}
                     <span className={`font-semibold ${b.active > 0 ? "text-emerald-600" : "text-amber-600"}`}>
                       {b.active} active
                     </span>
-                    {b.total > b.active && <span className="text-slate-400"> · {b.total - b.active} off</span>}
+                    {b.sched > 0 && <span className="text-emerald-600"> · {b.sched} scheduled</span>}
+                    {b.total > b.active + b.sched && <span className="text-slate-400"> · {b.total - b.active - b.sched} off</span>}
                   </p>
                 </button>
               ))}

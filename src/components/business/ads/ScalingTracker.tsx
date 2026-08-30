@@ -22,7 +22,9 @@ import { playToggle, playError } from "@/lib/ui-feedback"
 //     less RTS eh... basta meta metrics tayo"). Ang purchase value ay kung ano
 //     ang iniuulat ni Meta; VAT lang ang idinaragdag natin sa gastos.
 //   • AD SET ang antas ng scale/kill; kada AD ang fatigue.
-//   • Ready to scale = ROAS ≥ 3.9 sa 3+ magkakasunod na araw na may spend.
+//   • Ready to scale = 3-araw na AVERAGE ROAS ≥ 3.9 mula ika-3 araw ng takbo
+//     (hatol Ago 25 2026 — hindi na per-araw na streak: "basta 3.9 roas,
+//     average 3 days, from the day na na-run papuntang 3rd day onwards").
 //
 // LIMITASYON NA SADYANG HAYAG: ang auto-pause ay tumatakbo lang kapag BUKAS ang
 // tab na ito (client-side). Ang naka-schedule na 9AM/11PM na bantay ay ang
@@ -745,11 +747,39 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         continue
       }
 
-      if (isActive && streak >= rules.scaleDays) {
+      // ── HANDA NANG I-SCALE: 3-ARAW NA AVERAGE, MULA IKA-3 ARAW NG TAKBO ──
+      // Dating per-araw na streak: ang isang 3.7 na araw sa gitna ng 4.5 na
+      // average ay pumipigil, kaya WALANG lumalabas kahit maganda ang resulta
+      // (iniulat ng may-ari, Ago 25 2026). Ngayon: ang 3-araw na pinagsamang
+      // ROAS ang hinuhusgahan, at ang edad ay mula sa TUNAY na araw ng takbo
+      // (runAge — start_time, hindi created_time).
+      //
+      // ⚠ ANG UMAGANG HINDI PA TAPOS AY HINDI HINUHUSGAHAN (review, Ago 25
+      // 2026): ang w3 ay laging may kasamang bahagi ng araw na ito, kaya kada
+      // umaga ay kulang ang gastos at diluted ang average — nawawala't
+      // bumabalik ang "Ready" araw-araw. Kapag maliit pa ang gastos ngayon,
+      // ang huling 3 TAPOS na araw ang hinuhusgahan (parehong prinsipyo ng
+      // lumang streak na lumalaktaw sa batang today).
+      //
+      // Ang floor ay ₱500/day sa mga TAPOS na araw na nasa bintana, naka-CAP
+      // sa 3 (ang haba ng bintana): ang pagtaas ng "days" sa Rules ay edad
+      // lang ang tinataas — kung sasabay ang floor, imposibleng maabot sa min
+      // budget (5×₱500 mula sa 3-araw na bintana; nahuli ng review).
+      const age = runAge(m.startTime, m.createdTime)
+      const todayMature = todaySpend >= rules.minDailySpend
+      const judged = todayMature ? windows.w3 : (() => {
+        let js = 0, jv = 0
+        for (const dt of dates.slice(-4, -1)) { const d = m.dailies.get(dt); if (d) { js += d.spend; jv += d.purchaseValue } }
+        return { spend: js, netRoas: netOf(jv, js) }
+      })()
+      const completeDays = Math.max(1, Math.min(Math.min(3, rules.scaleDays), age.day - (todayMature ? 0 : 1)))
+      const spendFloor = rules.minDailySpend * completeDays
+      const avgReady = judged.netRoas >= rules.scaleRoas && judged.spend >= spendFloor
+      if (isActive && avgReady && age.started && age.day >= rules.scaleDays) {
         const bt = budgetTarget(m)
         const n = (reg?.scales.length || 0) + 1
         out.push({ ...base, kind: "scale", rule: "ready_to_scale",
-          reason: `ROAS ≥ ${rules.scaleRoas} for ${streak} straight days (7d: ${dec(windows.w7.netRoas)}).`
+          reason: `3-day avg ROAS ${dec(judged.netRoas)} ≥ ${rules.scaleRoas} on ${peso(judged.spend)} · day ${age.day} of its run (7d: ${dec(windows.w7.netRoas)}).`
             + (reg ? ` This would be scale #${n}.` : "")
             + (isMonitoring
               // Walang Scale na buton dito — huwag mangako ng aksyong wala rito.
@@ -815,13 +845,20 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           reason: `3-day CPP ${peso(windows.w3.cpp)} > ${peso(rules.cppMax)} ceiling.` })
         continue
       }
-      // watch: nasa loob ng 10% ng kill o ng scale
-      if ((todaySpend >= rules.evalMinSpend && todayNet < rules.killRoas * 1.1)
-        || (streak >= 1 && streak < rules.scaleDays && windows.w3.netRoas >= rules.scaleRoas * 0.9)) {
+      // watch: nasa loob ng 10% ng kill o ng scale — o handa na sana pero
+      // bata pa / kulang pa ang gastos sa bintana. TATLONG magkaibang "malapit"
+      // na may TATLONG magkaibang paliwanag: ang "within 10% of the line" sa
+      // average na LAMPAS na sa linya ay kasinungalingan (nahuli ng review).
+      const avgNear = judged.netRoas >= rules.scaleRoas * 0.9 && judged.spend >= rules.minDailySpend
+      if ((todaySpend >= rules.evalMinSpend && todayNet < rules.killRoas * 1.1) || avgNear) {
         out.push({ ...base, kind: "watch", rule: "near",
-          reason: streak >= 1
-            ? `${streak}/${rules.scaleDays} days toward scale (needs ${rules.scaleDays - streak} more ≥ ${rules.scaleRoas}).`
-            : `Today's ROAS ${dec(todayNet)} is within 10% of the ${rules.killRoas} kill line.` })
+          reason: judged.netRoas >= rules.scaleRoas && age.day < rules.scaleDays
+            ? `On pace: 3-day avg ROAS ${dec(judged.netRoas)} ≥ ${rules.scaleRoas}, but this is day ${Math.max(1, age.day)} of its run — eligible on day ${rules.scaleDays}.`
+            : judged.netRoas >= rules.scaleRoas
+              ? `3-day avg ROAS ${dec(judged.netRoas)} clears ${rules.scaleRoas}, but the window holds ${peso(judged.spend)} of the ${peso(spendFloor)} spend floor — it qualifies as spend fills in.`
+              : avgNear
+                ? `3-day avg ROAS ${dec(judged.netRoas)} is within 10% of the ${rules.scaleRoas} scale line.`
+                : `Today's ROAS ${dec(todayNet)} is within 10% of the ${rules.killRoas} kill line.` })
         continue
       }
       // Ang inirehistro ay LAGING may row kahit walang signal — kung hindi,
@@ -831,7 +868,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
         out.push({ ...base, kind: "watch", rule: "monitoring",
           reason: sinceReg && sinceReg.spend > 0
             ? `Day ${sinceReg.days} since registered · ROAS ${dec(sinceReg.netRoas)} on ${peso(sinceReg.spend)}. `
-              + `Needs ${rules.scaleRoas}+ for ${rules.scaleDays} straight days to qualify (currently ${streak}).`
+              + `Needs a 3-day average ROAS of ${rules.scaleRoas}+ from day ${rules.scaleDays} of its run (3-day avg now: ${dec(judged.netRoas)}).`
             : `Registered ${reg.registered_at} — no spend recorded yet.` })
       } else if (isMonitoring) {
         out.push({ ...base, kind: "watch", rule: "monitoring",
@@ -1776,7 +1813,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           <p className="font-bold text-slate-800">Rules — saved on this browser</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2 text-slate-600">
             <label className="flex items-center justify-between gap-2">Scale: ROAS ≥ {num(rules.scaleRoas, n => saveRules({ ...rules, scaleRoas: n }))}</label>
-            <label className="flex items-center justify-between gap-2">…for days {num(rules.scaleDays, n => saveRules({ ...rules, scaleDays: n }))}</label>
+            <label className="flex items-center justify-between gap-2">…from day {num(rules.scaleDays, n => saveRules({ ...rules, scaleDays: n }))}</label>
             <label className="flex items-center justify-between gap-2">Min daily spend {num(rules.minDailySpend, n => saveRules({ ...rules, minDailySpend: n }))}</label>
             <label className="flex items-center justify-between gap-2">Kill: day ROAS &lt; {num(rules.killRoas, n => saveRules({ ...rules, killRoas: n }))}</label>
             <label className="flex items-center justify-between gap-2">No-sales check hour {num(rules.noSalesHour, n => saveRules({ ...rules, noSalesHour: n }))}</label>
@@ -2037,7 +2074,7 @@ export function ScalingTracker({ accounts, onSignals, mode, onOpenInManager, foc
           {/* Sa Monitoring ay walang Scale na buton, kaya "Winning" ang tawag —
               hindi "Ready to Scale", na nangangako ng aksyong wala rito. */}
           {Section({ title: isMonitoring ? "Winning" : "Ready to Scale", icon: TrendingUp, color: "text-emerald-600", accent: "border-emerald-500", rows: scaleRows,
-            empty: `None yet — needs ROAS ≥ ${rules.scaleRoas} for ${rules.scaleDays}+ straight days with ≥ ${peso(rules.minDailySpend)}/day.` })}
+            empty: `None yet — needs a 3-day average ROAS ≥ ${rules.scaleRoas} (~${peso(rules.minDailySpend)}/day) from day ${rules.scaleDays} of its run.` })}
           {Section({ title: "Kill Suggestions", icon: Skull, color: "text-rose-600", accent: "border-rose-500", rows: killRows,
             empty: "Nothing hits the kill rules right now." })}
           {Section({ title: isMonitoring ? "Everything else" : "Monitoring / Watch", icon: Eye, color: "text-amber-600", accent: "border-amber-400", rows: watchRows,
