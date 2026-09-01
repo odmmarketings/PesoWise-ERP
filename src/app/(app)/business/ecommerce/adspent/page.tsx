@@ -380,7 +380,14 @@ export default function AdspentROASSummaryPage() {
       {appliedRange && !loading && rows.length > 0 && (
         <div className="rounded-xl border border-gray-200 overflow-x-auto xl:overflow-visible inline-block max-w-full align-top">
           <table className="w-auto border-collapse text-sm">
-            <thead className="sticky top-0 z-20">
+            {/* ⚠ NEGATIBONG offset na katapat ng padding ng <main> (pt-4/pb-6).
+                Ang sticky rectangle ay UMUURONG ng kasing-laki ng padding ng
+                scroller — kaya ang header ay lumulutang 16px pababa at ang
+                totals ay 24px pataas, at may mga row na sumisilip sa puwang
+                (iniulat ng may-ari, Ago 31 2026; nasukat sa browser: 16/24px,
+                naging 0 sa offset na ito). Kapag binago ang padding ng main
+                sa layout, dapat sumabay ang -top-4 / -bottom-6 dito. */}
+            <thead className="sticky -top-4 z-20">
               {/* Span header */}
               <tr>
                 <th className="bg-[#4a7eb5] text-white text-xs font-bold uppercase tracking-wide px-4 py-2.5 text-left border-r border-[#5b8fc7] w-36">
@@ -411,7 +418,7 @@ export default function AdspentROASSummaryPage() {
                 </tr>
               ))}
             </tbody>
-            <tfoot className="sticky bottom-0 z-20">
+            <tfoot className="sticky -bottom-6 z-20">
               {/* Total Amount row */}
               <tr style={{ background: "#f5c842" }}>
                 <td className="px-4 py-2.5 text-xs font-bold text-gray-800 uppercase border-r border-[#e0b030]">Total Amount</td>
