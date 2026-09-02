@@ -471,7 +471,7 @@ export default function FacebookAdsPage() {
             : tab === "scaling" ? <ScalingTracker key="scaling" mode="scaling" accounts={dataAccounts} onSignals={setScalingCount} onOpenInManager={openInManager} focus={trackerFocus} />
               : tab === "monitoring" ? <ScalingTracker key="monitoring" mode="monitoring" accounts={dataAccounts} onSignals={setMonitorCount} onOpenInManager={openInManager} focus={trackerFocus} />
               : tab === "tasks" ? <PartnerTasks accounts={dataAccounts} onSignals={setTasksCount} rounds={monitorRounds} />
-              : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} onJump={jumpToTracker} rounds={monitorRounds} />}
+              : <AdsManager fb={fb} from={from} to={to} focus={mgrFocus} onJump={jumpToTracker} rounds={monitorRounds} acctStatus={acctStatus} acctFunds={acctFunds} />}
     </div>
   )
 }
@@ -1347,11 +1347,14 @@ const PREVIEW_FORMATS = [
 // kaya hindi naaabot ang FB #17 rate limit. `load(true)` (pagkatapos ng tunay
 // na pagbabago sa Meta) ang naglilinis ng LAHAT.
 
-function AdsManager({ fb, from, to, focus, onJump, rounds }: {
+function AdsManager({ fb, from, to, focus, onJump, rounds, acctStatus, acctFunds }: {
   fb: ReturnType<typeof useFBAccounts>; from: string; to: string; focus?: MgrFocus | null
   /** Paglundag papuntang Testing/Scaling/Monitoring, sala na sa ad account. */
   onJump: (tab: Tab, f: TrackerFocus) => void
   rounds: ReturnType<typeof useMonitorRounds>
+  /** Kalusugan ng account — ang "Payment error" ay nangingibabaw sa Status. */
+  acctStatus: Record<string, number>
+  acctFunds: Record<string, number | null>
 }) {
   const [accId, setAccId] = useState(focus?.accountId || "all")   // default: All ad accounts
   // Sinasabay ang Owner sa focus: kung ang ad account lang ang itatakda, ang
@@ -2370,9 +2373,22 @@ function AdsManager({ fb, from, to, focus, onJump, rounds }: {
                         </td>
                         <td className="px-4 py-3 border-r border-slate-100">
                           {(() => {
-                            const d = deliveryOf(r, level)
+                            const d0 = deliveryOf(r, level)
+                            // ⚠ ANG PROBLEMA NG ACCOUNT ANG NANGINGIBABAW
+                            // (hatol ng may-ari, Ago 31 2026): ang "Active" sa
+                            // account na walang pondo o disabled ay walang
+                            // naipapadala — "Payment error" ang sabi ng tunay
+                            // na Ads Manager, ganoon din tayo. Ang naka-Off na
+                            // row ay Off pa rin: totoo iyon anuman ang account.
+                            const rowFunds = acctFunds[r.accountId] ?? null
+                            const acctIss = ACCT_ISSUE[acctStatus[r.accountId] ?? -1]
+                              || (rowFunds != null && rowFunds <= 0 ? "Payment error" : "")
+                            const d = acctIss && d0.tone === "on"
+                              ? { label: acctIss, tone: "bad" as const }
+                              : d0
                             return (
-                              <span title={`Meta status: ${r.status}`
+                              <span title={(acctIss ? `Account issue: ${acctIss} — nothing delivers until it is fixed. · ` : "")
+                                + `Meta status: ${r.status}`
                                 + (r.kidsTotal >= 0 ? ` · ${r.kidsOn}/${r.kidsTotal} ${level === "campaign" ? "ad sets" : "ads"} on` : "")
                                 + (level === "campaign" && r.kidsLive >= 0 && r.kidsOn > 0 ? ` · ${r.kidsLive} of those ${r.kidsLive === 1 ? "has" : "have"} an ad on` : "")
                                 + (r.learning?.status === "LEARNING"
