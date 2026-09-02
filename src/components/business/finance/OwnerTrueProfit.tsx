@@ -1,9 +1,11 @@
 "use client"
 import { useMemo, useState } from "react"
-import { Eye, EyeOff, Lock, Pencil, Trash2, Check, X } from "lucide-react"
+import { useEffect } from "react"
+import { Eye, EyeOff, Lock, KeyRound, Pencil, Trash2, Check, X } from "lucide-react"
 import { useProductItems } from "@/lib/product-items-store"
 import { useProductBatches } from "@/lib/product-batches-store"
 import { useIsOwner, useTrueCosts, marginOf, monthKeyNow } from "@/lib/true-costs-store"
+import { fetchOwnerPass, saveOwnerPass, hashPass, type OwnerPassState } from "@/lib/owner-pass-store"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPPLIER MARGIN — ANG LIHIM NA SEKSYON NG MAY-ARI SA FINANCE.
@@ -21,6 +23,12 @@ import { useIsOwner, useTrueCosts, marginOf, monthKeyNow } from "@/lib/true-cost
 //   3. Eye toggle (ang tabing)     — kahit ikaw ang may-ari, nakamaskara ang
 //      mga halaga hangga't hindi mo pinipindot ang mata: bukas ang screen mo
 //      sa meeting nang mas madalas kaysa inaamin ng kahit sino.
+//   4. PASSWORD (ang susi sa tabing, hatol Ago 31 2026) — ang bawat "Show" ay
+//      humihingi ng password (PBKDF2 hash sa Supabase, may-ari-lang ang RLS;
+//      migration 0039). Mapapalitan ito sa loob mismo ng seksyon; ang
+//      nakalimutan ay burahin ang row sa owner_section_pass at magtakda muli.
+//      Kapag hindi pa tumatakbo ang 0039: gumagana ang Show nang WALANG
+//      password, may amber na paalala — hindi tayo nagkukunwaring may kandado.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const peso = (n: number) => "₱" + (isFinite(n) ? n : 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -34,6 +42,68 @@ export function OwnerTrueProfit() {
   const batches = useProductBatches()
   const tc = useTrueCosts()
   const [shown, setShown] = useState(false)
+  // ── Ang kandado ng "Show" ───────────────────────────────────────────────────
+  const [pass, setPass] = useState<OwnerPassState | null>(null)
+  const [dialog, setDialog] = useState<"" | "unlock" | "setup" | "change">("")
+  const [pwCur, setPwCur] = useState("")
+  const [pw1, setPw1] = useState("")
+  const [pw2, setPw2] = useState("")
+  const [pwErr, setPwErr] = useState("")
+  const [pwBusy, setPwBusy] = useState(false)
+  useEffect(() => {
+    if (isOwner !== true) return
+    let dead = false
+    fetchOwnerPass().then(p => { if (!dead) setPass(p) })
+    return () => { dead = true }
+  }, [isOwner])
+  const openDialog = (d: "unlock" | "setup" | "change") => {
+    setPwCur(""); setPw1(""); setPw2(""); setPwErr(""); setDialog(d)
+  }
+  // Ang pindot ng Show: may password na → unlock; wala pa → setup muna; wala
+  // pang 0039 → bukas agad (may paalala sa ibaba — walang pekeng kandado).
+  const onShowClick = () => {
+    if (shown) { setShown(false); return }
+    if (!pass || pass.status === "missing-table" || pass.status === "error") { setShown(true); return }
+    openDialog(pass.status === "set" ? "unlock" : "setup")
+  }
+  const submitUnlock = async () => {
+    if (pass?.status !== "set" || pwBusy) return
+    setPwBusy(true)
+    const h = await hashPass(pwCur, pass.salt)
+    if (h === pass.hash) { setShown(true); setDialog("") ; setPwBusy(false); return }
+    // Maling password: sandaling kandado — hindi mabilisang hulaan.
+    await new Promise(r => setTimeout(r, 1200))
+    setPwErr("Wrong password."); setPwBusy(false)
+  }
+  const submitSetup = async () => {
+    if (pwBusy) return
+    if (pw1.length < 4) { setPwErr("Use at least 4 characters."); return }
+    if (pw1 !== pw2) { setPwErr("The two entries don't match."); return }
+    setPwBusy(true)
+    const err = await saveOwnerPass(pw1)
+    setPwBusy(false)
+    if (err) { setPwErr(err); return }
+    setPass({ status: "set", salt: "", hash: "" })
+    // Kunin ang bagong salt/hash para sa susunod na unlock ngayong session.
+    fetchOwnerPass().then(setPass)
+    setShown(true); setDialog("")
+  }
+  const submitChange = async () => {
+    if (pass?.status !== "set" || pwBusy) return
+    setPwBusy(true)
+    const h = await hashPass(pwCur, pass.salt)
+    if (h !== pass.hash) {
+      await new Promise(r => setTimeout(r, 1200))
+      setPwErr("Wrong current password."); setPwBusy(false); return
+    }
+    if (pw1.length < 4) { setPwErr("Use at least 4 characters."); setPwBusy(false); return }
+    if (pw1 !== pw2) { setPwErr("The two new entries don't match."); setPwBusy(false); return }
+    const err = await saveOwnerPass(pw1)
+    setPwBusy(false)
+    if (err) { setPwErr(err); return }
+    fetchOwnerPass().then(setPass)
+    setDialog("")
+  }
   const [editId, setEditId] = useState("")
   const [editVal, setEditVal] = useState("")
   const [busy, setBusy] = useState(false)
@@ -76,12 +146,26 @@ export function OwnerTrueProfit() {
             Only you can see this section — declared COG vs your true cost, per received batch.
           </span>
         </span>
-        <button onClick={() => setShown(v => !v)} title={shown ? "Hide amounts" : "Show amounts"}
-          className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0">
-          {shown ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-          {shown ? "Hide" : "Show"}
-        </button>
+        <span className="ml-auto flex items-center gap-1.5 shrink-0">
+          {/* Palitan ang password — sa loob mismo, gaya ng hiling. */}
+          {pass?.status === "set" && (
+            <button onClick={() => openDialog("change")} title="Change the password of this section"
+              className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-blue-600">
+              <KeyRound className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button onClick={onShowClick} title={shown ? "Hide amounts" : pass?.status === "set" ? "Show amounts — asks for the password" : "Show amounts"}
+            className="flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+            {shown ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {shown ? "Hide" : "Show"}
+          </button>
+        </span>
       </div>
+      {pass?.status === "missing-table" && (
+        <p className="px-5 py-2 text-[12px] text-amber-700 bg-amber-50 border-b border-amber-200">
+          The password lock needs migration <b>0039_owner_section_pass.sql</b> in Supabase — until then, Show works without one.
+        </p>
+      )}
 
       {tc.error && (
         <p className="px-5 py-3 text-[13px] text-amber-700 bg-amber-50 border-b border-amber-200">{tc.error}</p>
@@ -194,6 +278,50 @@ export function OwnerTrueProfit() {
           are not counted.
         </p>
       </div>
+
+      {/* ── PASSWORD DIALOGS ─────────────────────────────────────────────── */}
+      {dialog && (
+        <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4"
+          onClick={() => !pwBusy && setDialog("")}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-xs p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <p className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+              <Lock className="w-4 h-4 text-slate-400" />
+              {dialog === "unlock" ? "Enter password" : dialog === "setup" ? "Set a password" : "Change password"}
+            </p>
+            {dialog === "setup" && (
+              <p className="text-[11px] text-slate-400 leading-snug">
+                This locks the Show button of Supplier margin. Only a hash is stored — if you forget it, delete the
+                row in <b>owner_section_pass</b> (Supabase) and set a new one.
+              </p>
+            )}
+            {(dialog === "unlock" || dialog === "change") && (
+              <input autoFocus type="password" value={pwCur} onChange={e => setPwCur(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && dialog === "unlock") submitUnlock() }}
+                placeholder={dialog === "unlock" ? "Password" : "Current password"}
+                className="w-full h-9 rounded-lg border border-slate-300 px-3 text-sm" />
+            )}
+            {(dialog === "setup" || dialog === "change") && (
+              <>
+                <input autoFocus={dialog === "setup"} type="password" value={pw1} onChange={e => setPw1(e.target.value)}
+                  placeholder="New password" className="w-full h-9 rounded-lg border border-slate-300 px-3 text-sm" />
+                <input type="password" value={pw2} onChange={e => setPw2(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") (dialog === "setup" ? submitSetup() : submitChange()) }}
+                  placeholder="Repeat new password" className="w-full h-9 rounded-lg border border-slate-300 px-3 text-sm" />
+              </>
+            )}
+            {pwErr && <p className="text-[12px] text-rose-600">{pwErr}</p>}
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setDialog("")} disabled={pwBusy}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-[13px] font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button disabled={pwBusy}
+                onClick={() => dialog === "unlock" ? submitUnlock() : dialog === "setup" ? submitSetup() : submitChange()}
+                className="h-8 px-3.5 rounded-lg bg-blue-600 text-white text-[13px] font-semibold hover:bg-blue-700 disabled:opacity-50">
+                {pwBusy ? "…" : dialog === "unlock" ? "Unlock" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
